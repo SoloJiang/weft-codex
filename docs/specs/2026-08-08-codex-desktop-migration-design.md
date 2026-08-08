@@ -259,8 +259,9 @@ Desktop 相关（1、3）待验；app-server 相关（2、4、5）**已于 2026-
   Tauri 客户端同期继续可用。
 - Stage 2：orchestrator——`codex_app_server.rs` Stage 2 接线 + lead/worker
   spawn + bus 投递 + 事件 → 状态推导。本迁移最大的一块。
-- Stage 3：扩展 UI v1——workspace home + kanban + issue detail（web app 先行，
-  注入嵌入随后）。
+- Stage 3：扩展 UI v1——workspace home + kanban + issue detail（**web app 已
+  完成并浏览器实测**：三视图、拖拽、SSE 自刷新、codex:// 深链；注入嵌入
+  随后，依赖 Desktop spike）。
 - Stage 4：切换——新 issue 全走新流程；停发 Tauri 客户端；删除清单落地。
 
 ## 11. 风险与对冲
