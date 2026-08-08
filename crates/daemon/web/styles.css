@@ -1,22 +1,72 @@
-/* Theme aligned with Codex Desktop's own design tokens (extracted from the
-   shipped app bundle, 2026-08-09): gray-900 #181818 main surface, #131313
-   window chrome, blue-500 #0169cc accent, hairline borders at 8%/5% white,
-   13px chat font, 10px/6px radii. Dark only — matches the desktop dark
-   theme; a light variant would mirror codex-light's scale. */
+/* Theme = REFERENCE Codex Desktop's own CSS tokens, never snapshot them.
+   Every semantic var below reads `var(--color-token-…, fallback)`: embedded
+   in the Codex app (Weft mode) the host's live tokens win, so host theme
+   switches (dark/light, corner-radius scale) propagate to us for free;
+   standalone in a browser the fallbacks render — codex-dark resolved values
+   by default, codex-light under `prefers-color-scheme: light`. Token names
+   verified present in the shipped bundle (ChatGPT.app webview assets,
+   2026-08-09); fallback values extracted from codex-dark / codex-light. */
 :root {
-  --bg: #131313;
-  --panel: #181818;
-  --panel-2: #212121;
-  --border: rgba(252, 252, 252, 0.08);
-  --border-strong: rgba(252, 252, 252, 0.16);
-  --text: #fcfcfc;
-  --dim: rgba(252, 252, 252, 0.65);
-  --accent: #0169cc;
-  --accent-hover: #0285ff;
-  --link: #339cff;
-  --warn: #ffc300;
-  --danger: #fa423e;
-  --ok: #04b84c;
+  color-scheme: dark;
+  /* fallback layer (standalone only) */
+  --fb-bg: #131313;
+  --fb-panel: #181818;
+  --fb-panel-2: #212121;
+  --fb-border: rgba(252, 252, 252, 0.08);
+  --fb-border-strong: rgba(252, 252, 252, 0.16);
+  --fb-text: #fcfcfc;
+  --fb-dim: rgba(252, 252, 252, 0.65);
+  --fb-accent: #0169cc;
+  --fb-accent-hover: #0285ff;
+  --fb-on-accent: #ffffff;
+  --fb-link: #339cff;
+  --fb-warn: #ffc300;
+  --fb-danger: #fa423e;
+  --fb-ok: #04b84c;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --fb-bg: #fcfcfc;
+    --fb-panel: #ffffff;
+    --fb-panel-2: #f3f3f3;
+    --fb-border: rgba(13, 13, 13, 0.1);
+    --fb-border-strong: rgba(13, 13, 13, 0.2);
+    --fb-text: #0d0d0d;
+    --fb-dim: rgba(13, 13, 13, 0.6);
+    --fb-accent: #0169cc;
+    --fb-accent-hover: #0285ff;
+    --fb-on-accent: #ffffff;
+    --fb-link: #0169cc;
+    --fb-warn: #b88a00;
+    --fb-danger: #e02e2a;
+    --fb-ok: #008635;
+  }
+}
+
+:root {
+  --bg: var(--vscode-sideBar-background, var(--fb-bg));
+  --panel: var(--color-token-main-surface-primary, var(--fb-panel));
+  --panel-2: var(--color-token-dropdown-background, var(--fb-panel-2));
+  --border: var(--color-token-border, var(--fb-border));
+  --border-strong: var(--color-token-border-heavy, var(--fb-border-strong));
+  --text: var(--color-token-foreground, var(--fb-text));
+  --dim: var(--color-token-text-secondary, var(--fb-dim));
+  --accent: var(--color-token-primary, var(--fb-accent));
+  --accent-hover: var(--vscode-button-hoverBackground, var(--fb-accent-hover));
+  --on-accent: var(--color-token-button-foreground, var(--fb-on-accent));
+  --link: var(--color-token-text-link-foreground, var(--fb-link));
+  --warn: var(--color-token-charts-yellow, var(--fb-warn));
+  --danger: var(--color-token-charts-red, var(--fb-danger));
+  --ok: var(--color-token-charts-green, var(--fb-ok));
+  /* radius/font sync: codex scales radii by its --corner-radius-scale and
+     fonts by its chat font settings — referencing the tokens tracks both */
+  --r-lg: var(--radius-lg, 10px);
+  --r-md: var(--radius-md, 8px);
+  --r-sm: var(--radius-sm, 6px);
+  --font: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif);
+  --mono: var(--font-mono, ui-monospace, "SFMono-Regular", "SF Mono", Menlo, monospace);
   font-size: 13px;
 }
 
@@ -26,7 +76,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+  font-family: var(--font);
 }
 
 #topbar {
@@ -48,14 +98,14 @@ button {
   background: var(--panel-2);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-sm, 6px);
   padding: 5px 12px;
   cursor: pointer;
   font-size: 13px;
 }
 button:hover { border-color: var(--border-strong); }
 button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 button:disabled { opacity: 0.45; cursor: default; }
 
@@ -67,10 +117,10 @@ button:disabled { opacity: 0.45; cursor: default; }
 }
 
 select, input, textarea {
-  background: var(--panel-2);
+  background: var(--color-token-input-background, var(--panel-2));
   color: var(--text);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: 1px solid var(--color-token-input-border, var(--border));
+  border-radius: var(--r-sm, 6px);
   padding: 5px 9px;
   font-size: 13px;
 }
@@ -100,7 +150,7 @@ main { padding: 16px; }
 .issue {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-lg, 10px);
   margin-bottom: 16px;
   overflow: hidden;
 }
@@ -127,7 +177,7 @@ main { padding: 16px; }
 .col {
   background: var(--bg);
   border: 1px dashed var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-md, 8px);
   min-height: 72px;
   padding: 6px;
 }
@@ -143,7 +193,7 @@ main { padding: 16px; }
 .card {
   background: var(--panel-2);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-md, 8px);
   padding: 8px 10px;
   margin-bottom: 6px;
   cursor: grab;
@@ -171,7 +221,7 @@ a { color: var(--link); text-decoration: none; }
 
 .detail-head {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-lg, 10px);
   margin-bottom: 6px;
 }
 
@@ -186,7 +236,7 @@ a { color: var(--link); text-decoration: none; }
 .dir-detail {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-lg, 10px);
   padding: 10px 12px;
   margin-bottom: 10px;
 }
@@ -195,7 +245,7 @@ a { color: var(--link); text-decoration: none; }
 .dir-detail .spec {
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-md, 8px);
   padding: 10px 12px;
   margin: 8px 0 0;
   white-space: pre-wrap;
@@ -208,7 +258,7 @@ a { color: var(--link); text-decoration: none; }
 .timeline .msg {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-lg, 10px);
   padding: 8px 12px;
   margin-bottom: 8px;
 }
@@ -230,7 +280,7 @@ a { color: var(--link); text-decoration: none; }
 .repo {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-lg, 10px);
   padding: 12px 14px;
   margin-bottom: 10px;
 }
@@ -255,7 +305,7 @@ a { color: var(--link); text-decoration: none; }
 #repo-map-doc {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-lg, 10px);
   padding: 14px;
   white-space: pre-wrap;
   line-height: 1.55;
@@ -274,7 +324,7 @@ a { color: var(--link); text-decoration: none; }
 .modal-body {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-lg, 10px);
   padding: 18px;
   width: 460px;
   max-width: 92vw;
@@ -291,7 +341,7 @@ a { color: var(--link); text-decoration: none; }
   background: var(--panel-2);
   border: 1px solid var(--danger);
   color: var(--text);
-  border-radius: 8px;
+  border-radius: var(--r-md, 8px);
   padding: 10px 14px;
   z-index: 30;
   max-width: 420px;
