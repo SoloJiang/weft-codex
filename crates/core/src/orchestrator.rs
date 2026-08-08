@@ -344,6 +344,47 @@ impl Orchestrator {
         }
     }
 
+    /// Boot re-attach: subscribe watchers for every thread that outlived a
+    /// daemon restart (threads persist in ~/.codex; watchers do not).
+    /// Without this, post-restart TurnEnds never reach the kanban.
+    /// Returns the number of re-attached threads.
+    pub async fn reattach_all(&self) -> anyhow::Result<usize> {
+        if !runtime::agents_allowed() {
+            return Ok(0);
+        }
+        let client = codex::client().await?;
+        let mut count = 0usize;
+        for d in self.store.list_live_directions().await? {
+            if client.is_subscribed(&d.codex_thread_id).await {
+                continue;
+            }
+            let rx = client.subscribe(&d.codex_thread_id).await;
+            tokio::spawn(watch(
+                self.clone(),
+                client.clone(),
+                WatchTarget::Direction(d.id),
+                d.codex_thread_id.clone(),
+                rx,
+            ));
+            count += 1;
+        }
+        for issue in self.store.list_live_leads().await? {
+            if client.is_subscribed(&issue.lead_codex_thread_id).await {
+                continue;
+            }
+            let rx = client.subscribe(&issue.lead_codex_thread_id).await;
+            tokio::spawn(watch(
+                self.clone(),
+                client.clone(),
+                WatchTarget::Lead(issue.id),
+                issue.lead_codex_thread_id.clone(),
+                rx,
+            ));
+            count += 1;
+        }
+        Ok(count)
+    }
+
     // ── human input (the kanban UI's talk buttons) ────────────────────────
 
     /// Inject a human message into a direction's thread. Audit-logged as

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>weft-codex</title>
+  <link rel="stylesheet" href="/web/styles.css">
+</head>
+<body>
+  <header id="topbar">
+    <span class="brand">weft-codex</span>
+    <nav>
+      <button data-view="kanban" class="nav-btn active" data-i18n="nav.kanban"></button>
+      <button data-view="repos" class="nav-btn" data-i18n="nav.repos"></button>
+    </nav>
+    <span class="spacer"></span>
+    <select id="workspace-select"></select>
+    <button id="add-workspace" data-i18n="ws.add"></button>
+    <button id="lang-toggle">中/EN</button>
+    <span id="conn" class="conn down" title="events"></span>
+  </header>
+
+  <main>
+    <section id="view-kanban" class="view active">
+      <div class="actions">
+        <input id="new-issue-title" data-i18n-ph="issue.titlePh">
+        <button id="create-issue" data-i18n="issue.create"></button>
+      </div>
+      <div id="issues"></div>
+    </section>
+
+    <section id="view-repos" class="view">
+      <div class="actions">
+        <input id="new-repo-name" data-i18n-ph="repo.namePh">
+        <input id="new-repo-path" data-i18n-ph="repo.pathPh">
+        <button id="add-repo" data-i18n="repo.add"></button>
+        <button id="analyze-ws" data-i18n="repo.analyzeAll"></button>
+        <button id="analyze-relations" data-i18n="repo.analyzeRelations"></button>
+      </div>
+      <div id="repo-list"></div>
+      <h2 data-i18n="repo.mapDoc"></h2>
+      <pre id="repo-map-doc"></pre>
+    </section>
+  </main>
+
+  <div id="modal" class="modal hidden">
+    <div class="modal-body">
+      <h2 id="modal-title"></h2>
+      <div id="modal-content"></div>
+      <div class="modal-actions">
+        <button id="modal-cancel" data-i18n="modal.cancel"></button>
+        <button id="modal-ok" class="primary" data-i18n="modal.ok"></button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/web/i18n.js"></script>
+  <script src="/web/app.js"></script>
+</body>
+</html>

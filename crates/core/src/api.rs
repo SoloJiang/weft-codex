@@ -122,7 +122,10 @@ async fn create_workspace(
     Json(body): Json<CreateWorkspace>,
 ) -> Response {
     match state.store.create_workspace(&body.name, &body.slug).await {
-        Ok(id) => ok(json!({ "id": id })),
+        Ok(id) => {
+            events::emit("workspace.updated", json!({ "id": id }));
+            ok(json!({ "id": id }))
+        }
         Err(e) => fail(e),
     }
 }
@@ -152,7 +155,10 @@ async fn add_repo(
         .add_repo(workspace_id, &body.name, &body.path, &base_ref)
         .await
     {
-        Ok(id) => ok(json!({ "id": id })),
+        Ok(id) => {
+            events::emit("repo.added", json!({ "id": id, "workspaceId": workspace_id }));
+            ok(json!({ "id": id }))
+        }
         Err(e) => fail(e),
     }
 }
@@ -180,7 +186,10 @@ async fn create_issue(
         .create_issue(body.workspace_id, &body.title, &body.slug)
         .await
     {
-        Ok(id) => ok(json!({ "id": id })),
+        Ok(id) => {
+            events::emit("issue.updated", json!({ "id": id }));
+            ok(json!({ "id": id }))
+        }
         Err(e) => fail(e),
     }
 }
@@ -241,7 +250,10 @@ async fn add_direction(
         )
         .await
     {
-        Ok(id) => ok(json!({ "id": id })),
+        Ok(id) => {
+            events::emit("direction.updated", json!({ "id": id, "status": "queued" }));
+            ok(json!({ "id": id }))
+        }
         Err(e) => fail(e),
     }
 }

@@ -411,6 +411,27 @@ impl Store {
         .context("list_directions")
     }
 
+    /// Directions with a live Codex thread (boot re-attach source).
+    pub async fn list_live_directions(&self) -> anyhow::Result<Vec<DirectionRow>> {
+        sqlx::query_as::<_, DirectionRow>(
+            "SELECT * FROM direction WHERE codex_thread_id != '' ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("list_live_directions")
+    }
+
+    /// Issues with a live lead thread (boot re-attach source).
+    pub async fn list_live_leads(&self) -> anyhow::Result<Vec<IssueRow>> {
+        sqlx::query_as::<_, IssueRow>(
+            "SELECT id, workspace_id, title, slug, lead_codex_thread_id, created_at
+             FROM issue WHERE lead_codex_thread_id != '' ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("list_live_leads")
+    }
+
     pub async fn set_direction_status(&self, id: i64, status: &str) -> anyhow::Result<()> {
         sqlx::query("UPDATE direction SET status = ? WHERE id = ?")
             .bind(status)

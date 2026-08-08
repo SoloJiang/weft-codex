@@ -6,6 +6,8 @@
 //! (default 127.0.0.1:47810, `WEFTD_ADDR` override) → orchestrator bus
 //! delivery loop → ctrl-c shutdown.
 
+use axum::response::{IntoResponse, Response};
+use axum::routing::get;
 use weft_core::{
     api, bus::BusRegistry, events, mcp, orchestrator::Orchestrator, runtime, store::Store,
 };
@@ -44,16 +46,26 @@ async fn main() {
 
     tokio::spawn(orch.clone().run_bus_delivery());
 
+    // Threads persist in ~/.codex across restarts; watchers don't.
+    match orch.reattach_all().await {
+        Ok(0) => {}
+        Ok(n) => eprintln!("[weftd] re-attached {n} thread watchers"),
+        Err(e) => eprintln!("[weftd] re-attach failed (bus delivery still works): {e:#}"),
+    }
+
     let state = mcp::McpState {
         bus,
         store: store.clone(),
     };
     let app = mcp::router(state).merge(api::router(api::ApiState { store, orch }));
+    let app = app
+        .route("/", get(web_index))
+        .route("/web/{*path}", get(web_file));
 
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .unwrap_or_else(|e| fatal(&format!("bind {addr}"), e));
-    eprintln!("[weftd] thread bus MCP + kanban API on http://{addr} (http + SSE)");
+    eprintln!("[weftd] thread bus MCP + kanban API + web app on http://{addr}");
 
     let server = axum::serve(listener, app);
     tokio::select! {
@@ -66,4 +78,40 @@ async fn main() {
             eprintln!("[weftd] shutting down");
         }
     }
+}
+
+/// Web app root directory: `WEFT_WEB_DIR` override, else the crate's web/.
+fn web_dir() -> std::path::PathBuf {
+    match std::env::var("WEFT_WEB_DIR") {
+        Ok(dir) => std::path::PathBuf::from(dir),
+        Err(_) => std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/web")),
+    }
+}
+
+async fn web_index() -> Response {
+    web_serve("index.html").await
+}
+
+async fn web_file(axum::extract::Path(path): axum::extract::Path<String>) -> Response {
+    web_serve(&path).await
+}
+
+async fn web_serve(rel: &str) -> Response {
+    let clean = rel.trim_start_matches('/');
+    if clean.is_empty() || clean.split('/').any(|seg| seg == "..") {
+        return axum::http::StatusCode::BAD_REQUEST.into_response();
+    }
+    let path = web_dir().join(clean);
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(b) => b,
+        Err(_) => return axum::http::StatusCode::NOT_FOUND.into_response(),
+    };
+    let mime = match path.extension().and_then(|e| e.to_str()) {
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") => "text/javascript; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("svg") => "image/svg+xml",
+        _ => "application/octet-stream",
+    };
+    ([("content-type", mime)], bytes).into_response()
 }
