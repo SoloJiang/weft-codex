@@ -65,6 +65,25 @@ impl BusRegistry {
             .unwrap_or_default()
     }
 
+    /// Put previously-drained messages back at the FRONT of the inbox
+    /// (preserving order), WITHOUT firing a wake. Used by the orchestrator
+    /// when injecting into the recipient's Codex thread failed: the messages
+    /// stay pullable via `bus_read`, and the next `post` to this party fires
+    /// a wake that re-attempts delivery of the whole inbox.
+    pub fn requeue_front(&self, issue: i64, party: &str, msgs: Vec<Msg>) {
+        if msgs.is_empty() {
+            return;
+        }
+        let mut g = match self.0.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let inbox = g.inboxes.entry((issue, party.to_string())).or_default();
+        let mut restored = msgs;
+        restored.append(inbox);
+        *inbox = restored;
+    }
+
     /// Subscribe to wake signals `(issue, to_party)` fired on every post.
     pub fn subscribe_wake(&self) -> broadcast::Receiver<(i64, String)> {
         let g = match self.0.lock() {
@@ -112,5 +131,23 @@ mod tests {
         assert!(bus.drain(7, "3").is_empty());
         // The other inbox is untouched.
         assert_eq!(bus.drain(7, "lead").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn requeue_restores_order_and_stays_silent() {
+        let bus = BusRegistry::new();
+        bus.post(7, "3", msg("lead", "one"));
+        bus.post(7, "3", msg("lead", "two"));
+        let drained = bus.drain(7, "3");
+        // A wake fired per post; requeue must NOT add another (a wake loop
+        // would re-deliver forever when the recipient thread is down).
+        let mut wakes = bus.subscribe_wake();
+        bus.requeue_front(7, "3", drained);
+        assert!(wakes.try_recv().is_err());
+        // A later post lands BEHIND the requeued messages.
+        bus.post(7, "3", msg("lead", "three"));
+        let all = bus.drain(7, "3");
+        let texts: Vec<&str> = all.iter().map(|m| m.text.as_str()).collect();
+        assert_eq!(texts, ["one", "two", "three"]);
     }
 }

@@ -44,6 +44,17 @@ fn tool_list() -> Value {
         {
             "name": "bus_post",
             "description": "Post a message to another participant's inbox in this issue. `to` is \"lead\" or a direction's numeric id. Your own identity comes from the connection URL — you cannot impersonate anyone.",
+            // Codex core treats annotation-less MCP tools as
+            // destructive/open-world and demands an approval that
+            // approvalPolicy=never auto-rejects ("user rejected MCP tool
+            // call"). Declaring the hints below makes the call run
+            // unconditionally (verified against codex-rs
+            // requires_mcp_tool_approval, 2026-08-08).
+            "annotations": {
+                "readOnlyHint": false,
+                "destructiveHint": false,
+                "openWorldHint": false
+            },
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -56,6 +67,11 @@ fn tool_list() -> Value {
         {
             "name": "bus_read",
             "description": "Drain your own inbox (oldest first). Destructive: read messages leave the live inbox (they remain in the durable audit log).",
+            "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "openWorldHint": false
+            },
             "inputSchema": { "type": "object", "properties": {} }
         }
     ]})
@@ -183,6 +199,20 @@ mod tests {
         .await
         .expect("list resp");
         assert_eq!(list["result"]["tools"][0]["name"], "bus_post");
+        // Codex auto-rejects annotation-less MCP tools under
+        // approvalPolicy=never; both hints must be explicitly false.
+        assert_eq!(
+            list["result"]["tools"][0]["annotations"]["destructiveHint"],
+            false
+        );
+        assert_eq!(
+            list["result"]["tools"][0]["annotations"]["openWorldHint"],
+            false
+        );
+        assert_eq!(
+            list["result"]["tools"][1]["annotations"]["readOnlyHint"],
+            true
+        );
 
         // lead posts to direction 3; identity comes from the URL (party).
         let post = handle_rpc(&st, 1, "lead", &json!({

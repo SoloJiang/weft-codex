@@ -80,6 +80,27 @@ pub fn thread_start_params(cwd: &str) -> Value {
     json!({ "cwd": cwd })
 }
 
+/// thread/start with the full launch config weft-codex uses for orchestrated
+/// threads: explicit approval policy + sandbox, and an optional per-thread
+/// `weft-bus` MCP server. Wire shape spike-verified 2026-08-08
+/// (`config.mcp_servers.<name>.url`; see docs/spike-app-server).
+pub fn thread_start_params_configured(
+    cwd: &str,
+    approval_policy: &str,
+    sandbox: &str,
+    bus_mcp_url: Option<&str>,
+) -> Value {
+    let mut params = json!({
+        "cwd": cwd,
+        "approvalPolicy": approval_policy,
+        "sandbox": sandbox,
+    });
+    if let Some(url) = bus_mcp_url {
+        params["config"] = json!({ "mcp_servers": { "weft-bus": { "url": url } } });
+    }
+    params
+}
+
 pub fn thread_resume_params(thread_id: &str) -> Value {
     json!({ "threadId": thread_id })
 }
@@ -132,6 +153,18 @@ pub fn turn_start_params_with_images(thread_id: &str, text: &str, image_paths: &
 /// omitting it fails to deserialize server-side).
 pub fn turn_interrupt_params(thread_id: &str, turn_id: &str) -> Value {
     json!({ "threadId": thread_id, "turnId": turn_id })
+}
+
+/// turn/steer params: redirect an IN-FLIGHT turn. `expectedTurnId` is a
+/// precondition — the server rejects the steer when the active turn doesn't
+/// match. (Spike-verified 2026-08-08: `turn/start` while busy returns success
+/// but the turn never runs — steer is the only reliable mid-turn injection.)
+pub fn turn_steer_params(thread_id: &str, expected_turn_id: &str, text: &str) -> Value {
+    json!({
+        "threadId": thread_id,
+        "expectedTurnId": expected_turn_id,
+        "input": [{ "type": "text", "text": text }],
+    })
 }
 
 /// A classified incoming line from the app-server's stdout.
@@ -1221,6 +1254,20 @@ impl Client {
             .await
             .map(|_| ())
     }
+
+    /// Steer the in-flight turn (see [`turn_steer_params`]). Returns the turn
+    /// id acknowledged by the server.
+    pub async fn steer_turn(
+        &self,
+        thread_id: &str,
+        expected_turn_id: &str,
+        text: &str,
+    ) -> anyhow::Result<String> {
+        let r = self
+            .request("turn/steer", turn_steer_params(thread_id, expected_turn_id, text))
+            .await?;
+        Ok(r["turnId"].as_str().unwrap_or(expected_turn_id).to_string())
+    }
     /// Answer a server→client request with a raw `result` payload. Each ask kind
     /// has its own shape: approval `{decision}`, permissions `{permissions}`,
     /// elicitation `{action}` — the caller builds the right one.
@@ -1308,6 +1355,35 @@ mod tests {
         assert_eq!(v["params"]["input"][0]["type"], "text");
         assert_eq!(v["params"]["input"][0]["text"], "hello");
         assert!(v.get("jsonrpc").is_none()); // codex envelope has no jsonrpc field
+    }
+
+    #[test]
+    fn encodes_turn_steer_with_expected_turn_precondition() {
+        let v = turn_steer_params("t_1", "turn_9", "redirect");
+        assert_eq!(v["threadId"], "t_1");
+        assert_eq!(v["expectedTurnId"], "turn_9");
+        assert_eq!(v["input"][0]["type"], "text");
+        assert_eq!(v["input"][0]["text"], "redirect");
+    }
+
+    #[test]
+    fn encodes_thread_start_with_full_launch_config() {
+        let v = thread_start_params_configured(
+            "/tmp/wt",
+            "never",
+            "workspace-write",
+            Some("http://127.0.0.1:47810/bus/1/3/mcp"),
+        );
+        assert_eq!(v["cwd"], "/tmp/wt");
+        assert_eq!(v["approvalPolicy"], "never");
+        assert_eq!(v["sandbox"], "workspace-write");
+        assert_eq!(
+            v["config"]["mcp_servers"]["weft-bus"]["url"],
+            "http://127.0.0.1:47810/bus/1/3/mcp"
+        );
+        // No bus URL → the config key is omitted entirely.
+        let bare = thread_start_params_configured("/tmp/wt", "never", "read-only", None);
+        assert!(bare.get("config").is_none());
     }
 
     /// turn_start_params_with_images: the text item stays first (unchanged
