@@ -165,15 +165,47 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
   线程列表读这里）；`session_index.jsonl` 有滞后，不作为可见性依据。
   API 建线程 source 默认 "vscode"，名称留空（Desktop 显示回退名）。
 
+**已验证（2026-08-09，human takeover 边界与溯源）**：
+
+- 溯源标注：codex 0.145.0 **没有** `--session-source` CLI 旗标（该参数只
+  存在于更新的 codex-rs git 源码），`threads.source` 只能是 "vscode"。
+  可用杠杆是 `thread/start { threadSource }`（v2 协议的自由串字段），
+  原样落库到 `threads.thread_source`（probe_thread_source.py）。weft-codex
+  全部线程携带 `threadSource: "weft-codex"`，可与人手开的 vscode/Desktop
+  线程区分。注意：thread/start 只建句柄，sqlite 行要首个 turn 才物化。
+- turn 生命周期通知**不跨 app-server 进程**（probe_takeover.py）：第二个
+  app-server 模拟 Desktop 接管（thread/resume + turn/start），weftd 的
+  watcher 收不到对方的 `turn/started`/`turn/completed`。因此 foreign-turn
+  检测只对同进程启动生效；真正的静默丢弃防线是**启动确认**：同进程
+  `turn/started` 必然到达（probe_turn_started.py），inject 在每次
+  `turn/start` 后等 watcher 路由到匹配 id（3s 超时），缺确认即判定丢弃、
+  清除幻影 active_turn、消息留 inbox 并发 `bus.undelivered`。真机复核：
+  接管期间发消息 → 状态停在 review（不再出现幻影 working）→
+  bus.undelivered 到达。局限：外部 turn 结束无信号，积压消息要等下一次
+  wake 才补投（agent 侧始终可 `bus_read` 拉取）。
+- 同一 watcher 上的 `turn/started` 若 id 与己方 active_turn 不符仍标记
+  foreign（同进程接管场景），其 TurnEnd 时清标并冲刷积压——该路径保留，
+  若 codex 将来提供跨进程线程通知即自动激活。
+
 ## 7. UI 表面（weftd serve 的 web app）
 
 - Workspace home：workspace 切换、repo 注册与状态。
 - Kanban：direction 卡片按 status 分列；卡片显示 repo / branch / mandate /
   attention 信号；拖拽改状态。
 - Issue detail：lead 卡片 + direction 卡片列表，各自跳转 Desktop 原生线程；
-  bus 活动时间线（v1.1）。
+  bus 活动时间线（**已完成 2026-08-09**：看板标题点击进入独立详情视图，
+  时间线聊天式渲染 + `bus.message` SSE 实时刷新）。
 - Repo map：仓库依赖图与 components 展开视图（RepoMapView / RepoGraph 平移）。
 - 全部 i18n 字符串沿用 en/zh 双文件约束。
+- **主题对齐（2026-08-09 落定）**：web app 的设计令牌直接取自 Codex
+  Desktop 发行包（ChatGPT.app → app.asar → webview/assets）而非凭印象：
+  主表面 gray-900 `#181818`、窗口铬 `#131313`、accent blue-500 `#0169cc`
+  （hover `#0285ff`、链接 `#339cff`）、hairline 边框为 8%/5% 白、
+  状态色绿 `#04b84c`/黄 `#ffc300`/红 `#fa423e`、13px 基础字号、
+  字体 `-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`、
+  圆角 10px/6px、激活导航为淡填充行（sidebar 惯例）。仅 dark——与桌面
+  暗色主题一致；light 变体需另取 codex-light 标尺。这为将来 Weft mode
+  内嵌进 Desktop 提供观感连续性。
 
 ## 7.5 模式切换（Weft mode）
 
