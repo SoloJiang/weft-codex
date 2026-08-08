@@ -14,6 +14,7 @@ const state = {
   board: [],
   repoMap: null,
   view: "kanban",
+  detailIssueId: null,
 };
 
 // ── i18n ────────────────────────────────────────────────────────────────
@@ -158,10 +159,18 @@ async function loadRepos() {
 async function refresh() {
   try {
     if (state.view === "kanban") await loadKanban();
+    else if (state.view === "issue") await loadIssueDetail();
     else await loadRepos();
   } catch (e) {
     toast(e.message);
   }
+}
+
+// Cards/dialogs are shared between the kanban and the issue detail view;
+// their action handlers reload whichever is showing.
+async function reloadCurrent() {
+  if (state.view === "issue") await loadIssueDetail();
+  else await loadKanban();
 }
 
 // ── kanban ───────────────────────────────────────────────────────────────
@@ -184,7 +193,7 @@ function directionCard(dir) {
   const btns = el("div", { class: "btns" });
   if (!dir.codex_thread_id) {
     const spawn = el("button", { text: t("dir.spawn") });
-    spawn.onclick = () => api(`/api/directions/${dir.id}/spawn`, { method: "POST", body: "{}" }).then(loadKanban).catch((e) => toast(e.message));
+    spawn.onclick = () => api(`/api/directions/${dir.id}/spawn`, { method: "POST", body: "{}" }).then(reloadCurrent).catch((e) => toast(e.message));
     btns.appendChild(spawn);
   } else {
     const link = threadLink(dir.codex_thread_id);
@@ -195,7 +204,7 @@ function directionCard(dir) {
   }
   if (dir.attention) {
     const clear = el("button", { text: t("dir.clearAttention") });
-    clear.onclick = () => api(`/api/directions/${dir.id}/attention/clear`, { method: "POST", body: "{}" }).then(loadKanban).catch((e) => toast(e.message));
+    clear.onclick = () => api(`/api/directions/${dir.id}/attention/clear`, { method: "POST", body: "{}" }).then(reloadCurrent).catch((e) => toast(e.message));
     btns.appendChild(clear);
   }
   card.appendChild(btns);
@@ -230,7 +239,9 @@ function issueBlock(entry) {
   const { issue, directions } = entry;
   const block = el("div", { class: "issue" });
   const head = el("div", { class: "issue-head" });
-  head.appendChild(el("h3", { text: issue.title }));
+  const title = el("h3", { class: "issue-link", text: issue.title, title: t("issue.open") });
+  title.onclick = () => openIssueDetail(issue.id);
+  head.appendChild(title);
   head.appendChild(el("span", { class: "meta", text: `#${issue.id} ${issue.slug}` }));
   if (issue.lead_codex_thread_id) {
     const link = threadLink(issue.lead_codex_thread_id);
@@ -240,12 +251,12 @@ function issueBlock(entry) {
     head.appendChild(msgLead);
   } else {
     const spawn = el("button", { text: t("issue.spawnLead") });
-    spawn.onclick = () => api(`/api/issues/${issue.id}/spawn-lead`, { method: "POST", body: "{}" }).then(loadKanban).catch((e) => toast(e.message));
+    spawn.onclick = () => api(`/api/issues/${issue.id}/spawn-lead`, { method: "POST", body: "{}" }).then(reloadCurrent).catch((e) => toast(e.message));
     head.appendChild(spawn);
   }
-  const bus = el("button", { text: t("issue.busLog") });
-  bus.onclick = () => showBusLog(issue.id);
-  head.appendChild(bus);
+  const open = el("button", { text: t("issue.open") });
+  open.onclick = () => openIssueDetail(issue.id);
+  head.appendChild(open);
   const addDir = el("button", { text: t("issue.addDirection") });
   addDir.onclick = () => directionDialog(issue.id);
   head.appendChild(addDir);
@@ -276,7 +287,7 @@ async function messageDialog(send) {
   if (!text.trim()) return;
   try {
     await send(text);
-    await loadKanban();
+    await reloadCurrent();
   } catch (e) {
     toast(e.message);
   }
@@ -312,22 +323,93 @@ async function directionDialog(issueId) {
   body.repo_id = Number(body.repo_id);
   try {
     await api(`/api/issues/${issueId}/directions`, { method: "POST", body: JSON.stringify(body) });
-    await loadKanban();
+    await reloadCurrent();
   } catch (e) {
     toast(e.message);
   }
 }
 
-async function showBusLog(issueId) {
-  try {
-    const rows = await api(`/api/issues/${issueId}/bus`);
-    const pre = el("pre", {
-      text: rows.map((r) => `${r.ts}  ${r.from_party} → ${r.to_party || "?"}:  ${r.text}`).join("\n\n") || "—",
-    });
-    await openModal("issue.busLog", pre);
-  } catch (e) {
-    toast(e.message);
+// ── issue detail view ──────────────────────────────────────────────────────
+
+function openIssueDetail(issueId) {
+  state.detailIssueId = issueId;
+  switchView("issue");
+}
+
+function fmtTs(ts) {
+  const ms = Number(ts) * 1000;
+  if (!Number.isFinite(ms) || ms <= 0) return ts || "";
+  return new Date(ms).toLocaleString();
+}
+
+function directionDetail(dir) {
+  const wrap = el("div", { class: "dir-detail" });
+  wrap.appendChild(directionCard(dir));
+  if (dir.reason) {
+    wrap.appendChild(el("div", { class: "sub", text: dir.reason }));
   }
+  if (dir.spec) {
+    wrap.appendChild(el("pre", { class: "spec", text: dir.spec }));
+  }
+  return wrap;
+}
+
+function busTimeline(rows) {
+  const wrap = el("div", { class: "timeline" });
+  if (!rows.length) {
+    wrap.appendChild(el("p", { class: "meta", text: t("detail.emptyBus") }));
+    return wrap;
+  }
+  for (const r of rows) {
+    const cls = r.from_party === "human" ? "msg human" : "msg";
+    wrap.appendChild(
+      el("div", { class: cls }, [
+        el("div", { class: "msg-meta", text: `${r.from_party} → ${r.to_party || "?"} · ${fmtTs(r.ts)}` }),
+        el("div", { class: "msg-text", text: r.text }),
+      ])
+    );
+  }
+  return wrap;
+}
+
+async function loadIssueDetail() {
+  if (!state.detailIssueId || !state.workspaceId) return;
+  state.board = await api(`/api/issues?workspace_id=${state.workspaceId}`);
+  const entry = state.board.find((e) => e.issue.id === state.detailIssueId);
+  const root = document.getElementById("issue-detail");
+  root.innerHTML = "";
+  if (!entry) {
+    root.appendChild(el("p", { class: "meta", text: `#${state.detailIssueId}` }));
+    return;
+  }
+  const { issue, directions } = entry;
+  const head = el("div", { class: "issue-head detail-head" });
+  head.appendChild(el("h3", { text: issue.title }));
+  head.appendChild(el("span", { class: "meta", text: `#${issue.id} ${issue.slug}` }));
+  if (issue.lead_codex_thread_id) {
+    const link = threadLink(issue.lead_codex_thread_id);
+    if (link) head.appendChild(link);
+    const msgLead = el("button", { text: t("issue.msgLead") });
+    msgLead.onclick = () => messageDialog((text) => api(`/api/issues/${issue.id}/message`, { method: "POST", body: JSON.stringify({ text }) }));
+    head.appendChild(msgLead);
+  } else {
+    const spawn = el("button", { text: t("issue.spawnLead") });
+    spawn.onclick = () => api(`/api/issues/${issue.id}/spawn-lead`, { method: "POST", body: "{}" }).then(reloadCurrent).catch((e) => toast(e.message));
+    head.appendChild(spawn);
+  }
+  const addDir = el("button", { text: t("issue.addDirection") });
+  addDir.onclick = () => directionDialog(issue.id);
+  head.appendChild(addDir);
+  root.appendChild(head);
+
+  root.appendChild(el("h2", { text: t("detail.directions") }));
+  const dirs = el("div", { class: "dir-list" });
+  for (const dir of directions) dirs.appendChild(directionDetail(dir));
+  root.appendChild(dirs);
+
+  root.appendChild(el("h2", { text: t("detail.busTimeline") }));
+  const rows = await api(`/api/issues/${issue.id}/bus`);
+  root.appendChild(busTimeline(rows));
 }
 
 // ── repos view ─────────────────────────────────────────────────────────────
@@ -397,7 +479,10 @@ function connectEvents() {
     "repo.added",
     "repo.profile",
     "repo.relations",
+    "bus.message",
+    "bus.parked",
     "bus.undelivered",
+    "thread.human-active",
   ];
   for (const name of names) {
     src.addEventListener(name, poke);
@@ -413,6 +498,7 @@ function switchView(view) {
   document.querySelectorAll(".nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
   document.getElementById("view-kanban").classList.toggle("active", view === "kanban");
   document.getElementById("view-repos").classList.toggle("active", view === "repos");
+  document.getElementById("view-issue").classList.toggle("active", view === "issue");
   refresh();
 }
 
@@ -425,11 +511,17 @@ async function boot() {
     applyI18n();
     renderKanban();
     renderRepos();
+    if (state.view === "issue") loadIssueDetail().catch((e) => toast(e.message));
   };
   document.getElementById("workspace-select").onchange = async (e) => {
     state.workspaceId = Number(e.target.value);
     state.repos = await api(`/api/workspaces/${state.workspaceId}/repos`);
-    refresh();
+    state.detailIssueId = null;
+    switchView("kanban");
+  };
+  document.getElementById("issue-back").onclick = () => {
+    state.detailIssueId = null;
+    switchView("kanban");
   };
   document.getElementById("add-workspace").onclick = async () => {
     const form = formFields([{ key: "name", label: "field.name" }]);

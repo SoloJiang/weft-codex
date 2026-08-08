@@ -188,6 +188,7 @@ pub struct DirectionRow {
 pub struct BusRow {
     pub id: i64,
     pub from_party: String,
+    pub to_party: String,
     pub text: String,
     pub kind: String,
     pub ts: String,
@@ -719,13 +720,20 @@ impl Store {
         .fetch_one(&self.pool)
         .await
         .context("bus_append")?;
+        // Single choke point for ALL bus traffic (MCP bus_post and human
+        // messages both append here) — the advisory UI event lives here so
+        // every writer gets it, letting timeline views refresh live.
+        crate::events::emit(
+            "bus.message",
+            serde_json::json!({ "issueId": issue_id, "from": from, "to": to }),
+        );
         Ok(row.get::<i64, _>("id"))
     }
 
     /// Durable inbox rows for `(issue, party)`, oldest first.
     pub async fn bus_inbox(&self, issue_id: i64, party: &str) -> anyhow::Result<Vec<BusRow>> {
         let rows = sqlx::query_as::<_, BusRow>(
-            "SELECT id, from_party, text, kind, ts FROM bus_message
+            "SELECT id, from_party, to_party, text, kind, ts FROM bus_message
              WHERE issue_id = ? AND to_party = ? ORDER BY id",
         )
         .bind(issue_id)
@@ -740,7 +748,7 @@ impl Store {
     /// audit feed the kanban UI renders.
     pub async fn bus_log(&self, issue_id: i64) -> anyhow::Result<Vec<BusRow>> {
         let rows = sqlx::query_as::<_, BusRow>(
-            "SELECT id, from_party, text, kind, ts FROM bus_message
+            "SELECT id, from_party, to_party, text, kind, ts FROM bus_message
              WHERE issue_id = ? ORDER BY id",
         )
         .bind(issue_id)
