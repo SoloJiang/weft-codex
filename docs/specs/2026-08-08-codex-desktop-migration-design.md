@@ -105,6 +105,22 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
   `repo_profile`；RepoMapView / RepoGraph（含 components 展开视图）作为
   扩展 web app 的第四个表面保留。
 
+**已验证（2026-08-08 晚，Stage 2.5 真机冒烟）**：
+
+- `outputSchema` 在 ChatGPT 后端**非严格**：管线完整（turn/start →
+  turn_context → prompt → Responses `text.format` json_schema strict），
+  但模型仍可能输出散文 + fenced ```json。weft 的平衡括号扫描作为兜底
+  解析保留（取最后一个含必需键的对象），brief 里显式要求"最终消息只
+  有 JSON"后收敛。Ephemeral 线程确认不落 rollout 文件、不进 Desktop
+  线程列表。
+- agent 的 layers 自然产出是**分组形** `{label, rank, repos: [...]}`，
+  而非 weft 时代的单库形 `{repo_id, label, rank}`——schema 改为分组形，
+  解析两种都容。repo 引用按名字或数字 id 双通道解析。
+- stack/components 需容错包装：agent 会把 array 字段产出成裸字符串
+  （weft `lenient_confidence` 同类经验）。
+- relations-only 重跑（`POST /api/workspaces/{id}/analyze-relations`）
+  独立于全量分析，供画像未变时快速迭代。
+
 ## 6. Bus 通信机制
 
 现有设计平移，仅投递侧更换：
