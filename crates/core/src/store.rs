@@ -71,6 +71,30 @@ CREATE TABLE IF NOT EXISTS bus_message (
     ts TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_bus_inbox ON bus_message(issue_id, to_party);
+CREATE TABLE IF NOT EXISTS repo_profile (
+    repo_id INTEGER PRIMARY KEY,
+    run_state TEXT NOT NULL DEFAULT 'idle',
+    run_error TEXT NOT NULL DEFAULT '',
+    tier TEXT NOT NULL DEFAULT '',
+    stack TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '',
+    components TEXT NOT NULL DEFAULT '',
+    layer TEXT NOT NULL DEFAULT '',
+    layer_rank INTEGER NOT NULL DEFAULT 0,
+    codex_thread_id TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS repo_relation (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    workspace_id INTEGER NOT NULL,
+    from_repo TEXT NOT NULL,
+    to_repo TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT '',
+    via TEXT NOT NULL DEFAULT '',
+    confidence INTEGER NOT NULL DEFAULT 0,
+    rationale TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_relation_ws ON repo_relation(workspace_id);
 ";
 
 /// A connected store handle. Cheap to clone (Arc inside the pool).
@@ -169,6 +193,33 @@ pub struct BusRow {
     pub ts: String,
 }
 
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct ProfileRow {
+    pub repo_id: i64,
+    pub run_state: String,
+    pub run_error: String,
+    pub tier: String,
+    pub stack: String,
+    pub summary: String,
+    pub components: String,
+    pub layer: String,
+    pub layer_rank: i64,
+    pub codex_thread_id: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct RelationRow {
+    pub id: i64,
+    pub workspace_id: i64,
+    pub from_repo: String,
+    pub to_repo: String,
+    pub kind: String,
+    pub via: String,
+    pub confidence: i64,
+    pub rationale: String,
+}
+
 impl Store {
     /// Open (creating if needed) the store at `path` and bootstrap the schema.
     pub async fn open(path: &Path) -> anyhow::Result<Self> {
@@ -193,6 +244,7 @@ impl Store {
         // Additive guards for databases created before a column existed
         // (SQLite has no ADD COLUMN IF NOT EXISTS, so probe the pragma).
         ensure_column(&pool, "direction", "spec", "TEXT NOT NULL DEFAULT ''").await?;
+        ensure_column(&pool, "workspace", "repo_map", "TEXT NOT NULL DEFAULT ''").await?;
         Ok(Self { pool })
     }
 
@@ -453,6 +505,175 @@ impl Store {
         .await
         .context("record_worktree")?;
         Ok(row.get::<i64, _>("id"))
+    }
+
+    // ── repo profiles / relations (curator) ───────────────────────────────
+
+    /// Mark a repo's analysis running (idempotent upsert).
+    pub async fn profile_mark_running(&self, repo_id: i64, thread_id: &str) -> anyhow::Result<()> {
+        sqlx::query(
+            "INSERT INTO repo_profile (repo_id, run_state, codex_thread_id, updated_at)
+             VALUES (?, 'running', ?, ?)
+             ON CONFLICT(repo_id) DO UPDATE SET
+               run_state = 'running', run_error = '', codex_thread_id = ?, updated_at = ?",
+        )
+        .bind(repo_id)
+        .bind(thread_id)
+        .bind(now_unix())
+        .bind(thread_id)
+        .bind(now_unix())
+        .execute(&self.pool)
+        .await
+        .context("profile_mark_running")?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn profile_complete(
+        &self,
+        repo_id: i64,
+        tier: &str,
+        stack: &str,
+        summary: &str,
+        components: &str,
+    ) -> anyhow::Result<()> {
+        sqlx::query(
+            "UPDATE repo_profile SET run_state = 'done', run_error = '',
+               tier = ?, stack = ?, summary = ?, components = ?, updated_at = ?
+             WHERE repo_id = ?",
+        )
+        .bind(tier)
+        .bind(stack)
+        .bind(summary)
+        .bind(components)
+        .bind(now_unix())
+        .bind(repo_id)
+        .execute(&self.pool)
+        .await
+        .context("profile_complete")?;
+        Ok(())
+    }
+
+    pub async fn profile_fail(&self, repo_id: i64, error: &str) -> anyhow::Result<()> {
+        sqlx::query(
+            "UPDATE repo_profile SET run_state = 'failed', run_error = ?, updated_at = ?
+             WHERE repo_id = ?",
+        )
+        .bind(error)
+        .bind(now_unix())
+        .bind(repo_id)
+        .execute(&self.pool)
+        .await
+        .context("profile_fail")?;
+        Ok(())
+    }
+
+    /// Boot recovery: a `running` profile outlived its daemon — mark it
+    /// failed so the UI doesn't spin forever. Returns rows fixed.
+    pub async fn reset_running_profiles(&self) -> anyhow::Result<u64> {
+        let result = sqlx::query(
+            "UPDATE repo_profile SET run_state = 'failed',
+               run_error = 'daemon restarted mid-analysis', updated_at = ?
+             WHERE run_state = 'running'",
+        )
+        .bind(now_unix())
+        .execute(&self.pool)
+        .await
+        .context("reset_running_profiles")?;
+        Ok(result.rows_affected())
+    }
+
+    pub async fn profile_set_layer(
+        &self,
+        repo_id: i64,
+        layer: &str,
+        rank: i64,
+    ) -> anyhow::Result<()> {
+        sqlx::query(
+            "UPDATE repo_profile SET layer = ?, layer_rank = ?, updated_at = ?
+             WHERE repo_id = ?",
+        )
+        .bind(layer)
+        .bind(rank)
+        .bind(now_unix())
+        .bind(repo_id)
+        .execute(&self.pool)
+        .await
+        .context("profile_set_layer")?;
+        Ok(())
+    }
+
+    pub async fn get_profile(&self, repo_id: i64) -> anyhow::Result<Option<ProfileRow>> {
+        sqlx::query_as::<_, ProfileRow>("SELECT * FROM repo_profile WHERE repo_id = ?")
+            .bind(repo_id)
+            .fetch_optional(&self.pool)
+            .await
+            .context("get_profile")
+    }
+
+    /// Atomically replace a workspace's relation edges with a fresh analysis.
+    pub async fn replace_relations(
+        &self,
+        workspace_id: i64,
+        relations: &[RelationRow],
+    ) -> anyhow::Result<()> {
+        let mut tx = self.pool.begin().await.context("begin replace_relations")?;
+        sqlx::query("DELETE FROM repo_relation WHERE workspace_id = ?")
+            .bind(workspace_id)
+            .execute(&mut *tx)
+            .await
+            .context("clear relations")?;
+        for rel in relations {
+            sqlx::query(
+                "INSERT INTO repo_relation
+                 (workspace_id, from_repo, to_repo, kind, via, confidence, rationale)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(workspace_id)
+            .bind(&rel.from_repo)
+            .bind(&rel.to_repo)
+            .bind(&rel.kind)
+            .bind(&rel.via)
+            .bind(rel.confidence)
+            .bind(&rel.rationale)
+            .execute(&mut *tx)
+            .await
+            .context("insert relation")?;
+        }
+        tx.commit().await.context("commit replace_relations")?;
+        Ok(())
+    }
+
+    pub async fn list_relations(&self, workspace_id: i64) -> anyhow::Result<Vec<RelationRow>> {
+        sqlx::query_as::<_, RelationRow>(
+            "SELECT * FROM repo_relation WHERE workspace_id = ? ORDER BY id",
+        )
+        .bind(workspace_id)
+        .fetch_all(&self.pool)
+        .await
+        .context("list_relations")
+    }
+
+    pub async fn set_workspace_repo_map(&self, workspace_id: i64, doc: &str) -> anyhow::Result<()> {
+        sqlx::query("UPDATE workspace SET repo_map = ? WHERE id = ?")
+            .bind(doc)
+            .bind(workspace_id)
+            .execute(&self.pool)
+            .await
+            .context("set_workspace_repo_map")?;
+        Ok(())
+    }
+
+    pub async fn get_workspace_repo_map(&self, workspace_id: i64) -> anyhow::Result<String> {
+        let row = sqlx::query("SELECT repo_map FROM workspace WHERE id = ?")
+            .bind(workspace_id)
+            .fetch_optional(&self.pool)
+            .await
+            .context("get_workspace_repo_map")?;
+        let doc = row
+            .and_then(|r| r.try_get::<String, _>("repo_map").ok())
+            .unwrap_or_default();
+        Ok(doc)
     }
 
     // ── bus durability ────────────────────────────────────────────────────

@@ -7,6 +7,7 @@
 pub mod api;
 pub mod brief;
 pub mod bus;
+pub mod curator;
 pub mod events;
 pub mod mcp;
 pub mod orchestrator;

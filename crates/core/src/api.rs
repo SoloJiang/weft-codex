@@ -8,15 +8,20 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    response::{IntoResponse, Response},
+    response::{
+        sse::{Event, Sse},
+        IntoResponse, Response,
+    },
     routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use tokio_stream::StreamExt;
 
 use crate::orchestrator::Orchestrator;
 use crate::store::Store;
+use crate::{curator, events};
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -43,7 +48,31 @@ pub fn router(state: ApiState) -> Router {
             "/api/directions/{id}/attention/clear",
             post(clear_attention),
         )
+        .route("/api/repos/{id}/analyze", post(analyze_repo))
+        .route("/api/repos/{id}/profile", get(repo_profile))
+        .route("/api/workspaces/{id}/analyze", post(analyze_workspace))
+        .route(
+            "/api/workspaces/{id}/analyze-relations",
+            post(analyze_relations),
+        )
+        .route("/api/workspaces/{id}/repo-map", get(repo_map))
+        .route("/api/events", get(sse_events))
         .with_state(state)
+}
+
+/// Live UI event feed (Stage 3's kanban subscribes here). Lagged frames are
+/// skipped — events are advisory, never load-bearing.
+async fn sse_events() -> Response {
+    let Some(rx) = events::subscribe() else {
+        return fail(anyhow::anyhow!("invalid: events channel not installed"));
+    };
+    let stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(|item| {
+        let (event, value) = item.ok()?;
+        Some(Ok::<_, std::convert::Infallible>(
+            Event::default().event(event).data(value.to_string()),
+        ))
+    });
+    Sse::new(stream).into_response()
 }
 
 fn fail(e: anyhow::Error) -> Response {
@@ -297,6 +326,103 @@ async fn bus_log(State(state): State<ApiState>, Path(issue_id): Path<i64>) -> Re
         Ok(rows) => ok(json!(rows)),
         Err(e) => fail(e),
     }
+}
+
+/// Kick a per-repo curator analysis (background task; watch `repo.profile`
+/// events / poll the profile endpoint for the result).
+async fn analyze_repo(State(state): State<ApiState>, Path(repo_id): Path<i64>) -> Response {
+    match state.store.get_repo(repo_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return fail(anyhow::anyhow!("unknown repo {repo_id}")),
+        Err(e) => return fail(e),
+    }
+    match state.store.get_profile(repo_id).await {
+        Ok(Some(p)) if p.run_state == "running" => {
+            return fail(anyhow::anyhow!("repo {repo_id} already has a running analysis"));
+        }
+        Ok(_) => {}
+        Err(e) => return fail(e),
+    }
+    let store = state.store.clone();
+    tokio::spawn(async move {
+        if let Err(e) = curator::analyze_repo(&store, repo_id).await {
+            events::emit(
+                "repo.profile",
+                json!({ "repoId": repo_id, "runState": "failed", "error": format!("{e:#}") }),
+            );
+        }
+    });
+    (StatusCode::ACCEPTED, Json(json!({ "queued": true }))).into_response()
+}
+
+async fn repo_profile(State(state): State<ApiState>, Path(repo_id): Path<i64>) -> Response {
+    match state.store.get_profile(repo_id).await {
+        Ok(Some(p)) => ok(json!(p)),
+        Ok(None) => fail(anyhow::anyhow!("unknown profile for repo {repo_id}")),
+        Err(e) => fail(e),
+    }
+}
+
+/// Kick the full workspace pass: profile every repo, then cross-repo
+/// relations + layers + the repo-map document.
+async fn analyze_workspace(State(state): State<ApiState>, Path(workspace_id): Path<i64>) -> Response {
+    match state.store.list_repos(workspace_id).await {
+        Ok(repos) if repos.is_empty() => {
+            return fail(anyhow::anyhow!("invalid analyze: workspace {workspace_id} has no repos"));
+        }
+        Ok(_) => {}
+        Err(e) => return fail(e),
+    }
+    let store = state.store.clone();
+    tokio::spawn(async move {
+        if let Err(e) = curator::analyze_workspace(&store, workspace_id).await {
+            events::emit(
+                "repo.relations",
+                json!({ "workspaceId": workspace_id, "error": format!("{e:#}") }),
+            );
+        }
+    });
+    (StatusCode::ACCEPTED, Json(json!({ "queued": true }))).into_response()
+}
+
+/// Re-run ONLY the cross-repo pass (profiles must already be done).
+async fn analyze_relations(State(state): State<ApiState>, Path(workspace_id): Path<i64>) -> Response {
+    let store = state.store.clone();
+    tokio::spawn(async move {
+        if let Err(e) = curator::analyze_relations(&store, workspace_id).await {
+            events::emit(
+                "repo.relations",
+                json!({ "workspaceId": workspace_id, "error": format!("{e:#}") }),
+            );
+        }
+    });
+    (StatusCode::ACCEPTED, Json(json!({ "queued": true }))).into_response()
+}
+
+/// The repo-map payload: every repo with its profile, all relation edges,
+/// and the synthesized markdown document.
+async fn repo_map(State(state): State<ApiState>, Path(workspace_id): Path<i64>) -> Response {
+    let repos = match state.store.list_repos(workspace_id).await {
+        Ok(r) => r,
+        Err(e) => return fail(e),
+    };
+    let mut entries = Vec::with_capacity(repos.len());
+    for repo in repos {
+        let profile = match state.store.get_profile(repo.id).await {
+            Ok(p) => p,
+            Err(e) => return fail(e),
+        };
+        entries.push(json!({ "repo": repo, "profile": profile }));
+    }
+    let relations = match state.store.list_relations(workspace_id).await {
+        Ok(r) => r,
+        Err(e) => return fail(e),
+    };
+    let doc = match state.store.get_workspace_repo_map(workspace_id).await {
+        Ok(d) => d,
+        Err(e) => return fail(e),
+    };
+    ok(json!({ "repos": entries, "relations": relations, "repoMap": doc }))
 }
 
 #[cfg(test)]

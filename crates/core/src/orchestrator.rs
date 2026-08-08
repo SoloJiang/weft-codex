@@ -164,6 +164,7 @@ impl Orchestrator {
                     "never",
                     "workspace-write",
                     Some(&url),
+                    false,
                 ),
             )
             .await?;
@@ -237,7 +238,7 @@ impl Orchestrator {
         let result = client
             .request(
                 "thread/start",
-                codex::thread_start_params_configured(&cwd, "never", "read-only", Some(&url)),
+                codex::thread_start_params_configured(&cwd, "never", "read-only", Some(&url), false),
             )
             .await?;
         let thread_id = codex::thread_id_of(&result)

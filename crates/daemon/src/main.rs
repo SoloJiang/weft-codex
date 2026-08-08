@@ -26,6 +26,13 @@ async fn main() {
         .await
         .unwrap_or_else(|e| fatal("open store", e));
 
+    // A `running` profile outlived its daemon — fail it so the UI recovers.
+    match store.reset_running_profiles().await {
+        Ok(0) => {}
+        Ok(n) => eprintln!("[weftd] marked {n} interrupted repo analyses failed"),
+        Err(e) => eprintln!("[weftd] reset running profiles failed: {e:#}"),
+    }
+
     let (tx, _rx) = tokio::sync::broadcast::channel(256);
     events::install(tx);
 

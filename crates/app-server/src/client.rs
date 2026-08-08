@@ -89,6 +89,7 @@ pub fn thread_start_params_configured(
     approval_policy: &str,
     sandbox: &str,
     bus_mcp_url: Option<&str>,
+    ephemeral: bool,
 ) -> Value {
     let mut params = json!({
         "cwd": cwd,
@@ -97,6 +98,9 @@ pub fn thread_start_params_configured(
     });
     if let Some(url) = bus_mcp_url {
         params["config"] = json!({ "mcp_servers": { "weft-bus": { "url": url } } });
+    }
+    if ephemeral {
+        params["ephemeral"] = json!(true);
     }
     params
 }
@@ -122,6 +126,19 @@ pub fn turn_start_params(thread_id: &str, text: &str) -> Value {
     json!({
         "threadId": thread_id,
         "input": [ { "type": "text", "text": text } ]
+    })
+}
+
+/// turn/start with `outputSchema` (JSON Schema constraining the final
+/// assistant message) — the curator's structured-output channel, replacing
+/// weft's tolerant free-text parsing (`parse_curator_output` et al). Wire
+/// name verified in codex-rs `app-server-protocol` v2 turn.rs
+/// (`output_schema` → camelCase `outputSchema`).
+pub fn turn_start_params_with_schema(thread_id: &str, text: &str, schema: Value) -> Value {
+    json!({
+        "threadId": thread_id,
+        "input": [ { "type": "text", "text": text } ],
+        "outputSchema": schema,
     })
 }
 
@@ -1373,6 +1390,7 @@ mod tests {
             "never",
             "workspace-write",
             Some("http://127.0.0.1:47810/bus/1/3/mcp"),
+            false,
         );
         assert_eq!(v["cwd"], "/tmp/wt");
         assert_eq!(v["approvalPolicy"], "never");
@@ -1381,9 +1399,20 @@ mod tests {
             v["config"]["mcp_servers"]["weft-bus"]["url"],
             "http://127.0.0.1:47810/bus/1/3/mcp"
         );
+        assert!(v.get("ephemeral").is_none());
         // No bus URL → the config key is omitted entirely.
-        let bare = thread_start_params_configured("/tmp/wt", "never", "read-only", None);
+        let bare = thread_start_params_configured("/tmp/wt", "never", "read-only", None, true);
         assert!(bare.get("config").is_none());
+        assert_eq!(bare["ephemeral"], true);
+    }
+
+    #[test]
+    fn encodes_turn_start_with_output_schema() {
+        let schema = json!({ "type": "object", "properties": { "tier": { "type": "string" } } });
+        let v = turn_start_params_with_schema("t_1", "analyze", schema.clone());
+        assert_eq!(v["threadId"], "t_1");
+        assert_eq!(v["input"][0]["type"], "text");
+        assert_eq!(v["outputSchema"], schema);
     }
 
     /// turn_start_params_with_images: the text item stays first (unchanged

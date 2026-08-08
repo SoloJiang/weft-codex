@@ -12,6 +12,7 @@ serde_json.workspace = true
 anyhow.workspace = true
 axum = "0.8"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 
 [dev-dependencies]
 tempfile = "3"
