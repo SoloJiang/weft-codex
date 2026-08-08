@@ -80,10 +80,19 @@ pub fn thread_start_params(cwd: &str) -> Value {
     json!({ "cwd": cwd })
 }
 
+/// Provenance marker every weft-codex thread carries. Verified 2026-08-08
+/// (docs/spike-app-server/probe_thread_source.py): it lands verbatim in the
+/// shared state db as `threads.thread_source`, while `threads.source` stays
+/// "vscode" — codex 0.145.0 has NO `--session-source` flag (that only exists
+/// in newer codex-rs git), so threadSource is the only honest provenance
+/// lever. Lets tooling tell orchestrated threads apart from genuinely
+/// human-opened vscode/Desktop ones.
+pub const THREAD_SOURCE: &str = "weft-codex";
+
 /// thread/start with the full launch config weft-codex uses for orchestrated
-/// threads: explicit approval policy + sandbox, and an optional per-thread
-/// `weft-bus` MCP server. Wire shape spike-verified 2026-08-08
-/// (`config.mcp_servers.<name>.url`; see docs/spike-app-server).
+/// threads: explicit approval policy + sandbox, our provenance marker, and
+/// an optional per-thread `weft-bus` MCP server. Wire shape spike-verified
+/// 2026-08-08 (`config.mcp_servers.<name>.url`; see docs/spike-app-server).
 pub fn thread_start_params_configured(
     cwd: &str,
     approval_policy: &str,
@@ -95,6 +104,7 @@ pub fn thread_start_params_configured(
         "cwd": cwd,
         "approvalPolicy": approval_policy,
         "sandbox": sandbox,
+        "threadSource": THREAD_SOURCE,
     });
     if let Some(url) = bus_mcp_url {
         params["config"] = json!({ "mcp_servers": { "weft-bus": { "url": url } } });
@@ -673,6 +683,11 @@ pub enum ThreadMsg {
     /// carries no timeline change — the consumer uses it only to refresh the
     /// runaway-guard's last-activity clock so a busy command isn't idle-killed.
     Heartbeat,
+    /// The server started a turn on this thread (`turn/started`). The consumer
+    /// compares `turn_id` against its own active-turn bookkeeping: a mismatch
+    /// means someone ELSE is driving (human takeover in Desktop) — mid-turn
+    /// injection must then stand down (turn/start would be silently dropped).
+    TurnStarted { turn_id: String },
     /// An approval ask the session must answer via [`Client::reply_approval`]
     /// (echoing `id`), else the turn hangs. `decision` ∈ accept | acceptForSession
     /// | decline | cancel.
@@ -1032,6 +1047,14 @@ impl Client {
                         // A long command is still producing output; forward its
                         // activity telemetry.
                         self.route_resolved(tid.as_deref(), ThreadMsg::Heartbeat)
+                            .await;
+                    } else if method == "turn/started" {
+                        // TurnStartedNotification { threadId, turn: { id, .. } }.
+                        // Routed so the orchestrator can tell OUR turns from
+                        // foreign (human-takeover) turns — the silent-drop
+                        // avoidance depends on it.
+                        let turn_id = params["turn"]["id"].as_str().unwrap_or("").to_string();
+                        self.route_resolved(tid.as_deref(), ThreadMsg::TurnStarted { turn_id })
                             .await;
                     } else if method == "serverRequest/resolved" {
                         // The server cleared an open ask (e.g. on interrupt) — tell
@@ -1399,6 +1422,7 @@ mod tests {
             v["config"]["mcp_servers"]["weft-bus"]["url"],
             "http://127.0.0.1:47810/bus/1/3/mcp"
         );
+        assert_eq!(v["threadSource"], THREAD_SOURCE);
         assert!(v.get("ephemeral").is_none());
         // No bus URL → the config key is omitted entirely.
         let bare = thread_start_params_configured("/tmp/wt", "never", "read-only", None, true);

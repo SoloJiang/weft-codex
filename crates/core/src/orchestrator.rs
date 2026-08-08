@@ -11,9 +11,26 @@
 //! (spawn's first turn, bus delivery, human messages). Without it, a
 //! delivery racing a `start_turn` → `set_active_turn` window would see "no
 //! active turn" and fire a second `turn/start` — the silent-drop case above.
+//!
+//! Human takeover: a human can open any orchestrated thread in Desktop and
+//! drive it. The watcher flags such threads via `turn/started` whose id
+//! isn't ours (`foreign` map); while flagged, injection stands down and the
+//! bus inbox stays parked. When the human's turn ends, the flag clears and
+//! the backlog flushes through the normal delivery path. NOTE (verified
+//! 2026-08-08, docs/spike-app-server/probe_takeover.py): turn lifecycle
+//! notifications do NOT cross app-server processes, so a Desktop-driven
+//! turn never reaches our watcher — the foreign flag only fires for
+//! same-process starts. The REAL silent-drop guard is therefore start
+//! confirmation: after every `turn/start`, inject waits for OUR watcher to
+//! route the matching `turn/started` (same process → always arrives);
+//! absence within [`TURN_CONFIRM_TIMEOUT`] means the server silently
+//! dropped the start (busy with a foreign turn), the phantom active-turn
+//! record is cleared, and the message parks for a later wake.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
+use std::time::Duration;
 
 use serde_json::json;
 use tokio::sync::{mpsc::UnboundedReceiver, Mutex};
@@ -51,6 +68,41 @@ fn non_empty(s: String) -> Option<String> {
     }
 }
 
+/// How long inject waits for the watcher to confirm a `turn/start` via its
+/// routed `turn/started` before concluding the server silently dropped it
+/// (busy with a turn from another app-server, e.g. human takeover).
+pub const TURN_CONFIRM_TIMEOUT: Duration = Duration::from_millis(3000);
+
+/// Poll interval for [`await_turn_confirmation`].
+const TURN_CONFIRM_POLL: Duration = Duration::from_millis(100);
+
+/// Wait until the watcher records `turn/started` for `(thread, turn)` —
+/// proof the turn REALLY started — or `timeout` expires. Free fn (not a
+/// method) so tests drive it without a Client.
+async fn await_turn_confirmation(
+    confirmed: &StdMutex<HashMap<String, String>>,
+    thread_id: &str,
+    turn_id: &str,
+    timeout: Duration,
+) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        {
+            let g = match confirmed.lock() {
+                Ok(g) => g,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            if g.get(thread_id).map(String::as_str) == Some(turn_id) {
+                return true;
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(TURN_CONFIRM_POLL).await;
+    }
+}
+
 /// What a spawned watcher folds notifications into.
 #[derive(Clone, Copy)]
 enum WatchTarget {
@@ -68,6 +120,18 @@ pub struct Orchestrator {
     /// weft-codex home; direction worktrees live under `<home>/worktrees/`.
     home: PathBuf,
     inject_lock: Arc<Mutex<()>>,
+    /// Threads a HUMAN is currently driving in Desktop (thread_id → their
+    /// turn id). Detected via `turn/started` whose id isn't our tracked
+    /// active turn; while set, injection into that thread stands down
+    /// (turn/start would be silently dropped) and the bus inbox stays
+    /// parked until their turn ends. std Mutex like the bus — never held
+    /// across an await.
+    foreign: Arc<StdMutex<HashMap<String, String>>>,
+    /// thread_id → last turn id the watcher confirmed via `turn/started`.
+    /// inject cross-checks every `turn/start` against this to detect the
+    /// server's silent drop (Ok response, turn never runs). Bounded by
+    /// live-thread count; entries are overwritten per turn, never removed.
+    confirmed_turns: Arc<StdMutex<HashMap<String, String>>>,
 }
 
 impl Orchestrator {
@@ -78,7 +142,47 @@ impl Orchestrator {
             bus_base,
             home,
             inject_lock: Arc::new(Mutex::new(())),
+            foreign: Arc::new(StdMutex::new(HashMap::new())),
+            confirmed_turns: Arc::new(StdMutex::new(HashMap::new())),
         }
+    }
+
+    /// Watcher hook: a `turn/started` routed for this thread. Recorded
+    /// unconditionally — the foreign-vs-ours classification happens after,
+    /// and inject's confirmation check needs the id even when the
+    /// notification beat our own `set_active_turn` bookkeeping.
+    fn note_turn_started(&self, thread_id: &str, turn_id: &str) {
+        let mut g = match self.confirmed_turns.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        g.insert(thread_id.to_string(), turn_id.to_string());
+    }
+
+    fn set_foreign_turn(&self, thread_id: &str, turn_id: &str) {
+        let mut g = match self.foreign.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        g.insert(thread_id.to_string(), turn_id.to_string());
+    }
+
+    /// Returns true when a foreign turn WAS tracked — i.e. the caller just
+    /// witnessed the human's turn ending and should flush what parked.
+    fn clear_foreign_turn(&self, thread_id: &str) -> bool {
+        let mut g = match self.foreign.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        g.remove(thread_id).is_some()
+    }
+
+    fn foreign_turn(&self, thread_id: &str) -> Option<String> {
+        let g = match self.foreign.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        g.get(thread_id).cloned()
     }
 
     fn bus_url(&self, issue_id: i64, party: &str) -> String {
@@ -272,12 +376,15 @@ impl Orchestrator {
     // ── injection ───────────────────────────────────────────────────────────
 
     /// Steer-or-start: deliver `text` into `thread_id`. Returns false when
-    /// both paths errored (the caller requeues). One spike-documented hole
-    /// remains: `turn/start` while the server is busy with a turn WE did not
-    /// start (human manual takeover in Desktop) returns Ok but never runs —
-    /// the message still lands in the durable bus log and stays pullable via
-    /// `bus_read`, so nothing is lost, only delayed.
+    /// both paths errored or refused (the caller requeues/parks). Refuses
+    /// up front while a foreign turn is flagged: `turn/start` against a
+    /// human-driven busy thread returns Ok but never runs (the spike-
+    /// documented silent drop), so attempting it would fabricate a phantom
+    /// active turn. The TurnEnd watcher flushes what parked meanwhile.
     async fn inject(&self, client: &Client, thread_id: &str, text: &str) -> bool {
+        if self.foreign_turn(thread_id).is_some() {
+            return false;
+        }
         if let Some(turn_id) = client.active_turn(thread_id).await {
             if client.steer_turn(thread_id, &turn_id, text).await.is_ok() {
                 return true;
@@ -286,7 +393,24 @@ impl Orchestrator {
         match client.start_turn(thread_id, text).await {
             Ok(new_turn) => {
                 client.set_active_turn(thread_id, &new_turn).await;
-                true
+                // The server answers Ok even when it silently dropped the
+                // start (busy with a foreign turn from another app-server
+                // process — probe-verified). Only our own watcher's routed
+                // turn/started proves the turn is really running.
+                if await_turn_confirmation(
+                    &self.confirmed_turns,
+                    thread_id,
+                    &new_turn,
+                    TURN_CONFIRM_TIMEOUT,
+                )
+                .await
+                {
+                    return true;
+                }
+                // Dropped: clear the phantom so the next delivery doesn't
+                // steer into a turn that never existed.
+                client.clear_active_turn(thread_id).await;
+                false
             }
             Err(_) => false,
         }
@@ -300,6 +424,16 @@ impl Orchestrator {
             Ok(Some(t)) => t,
             _ => return,
         };
+        if self.foreign_turn(&thread_id).is_some() {
+            // A human is mid-turn on this thread in Desktop — leave the
+            // inbox intact (draining here would only requeue) and say so;
+            // the TurnEnd watcher flushes the backlog when they finish.
+            events::emit(
+                "bus.parked",
+                json!({ "issueId": issue_id, "party": party }),
+            );
+            return;
+        }
         let _gate = self.inject_lock.lock().await;
         let msgs = self.bus.drain(issue_id, party);
         if msgs.is_empty() {
@@ -509,6 +643,28 @@ impl Orchestrator {
             }
         }
     }
+
+    /// A turn ended on `thread_id`: if it was a FOREIGN turn (human drove),
+    /// flush whatever parked on the bus while injection stood down. No flag
+    /// → the turn was ours (or irrelevant) and normal delivery scheduling
+    /// already applies. With an empty inbox the flush delivery is a no-op
+    /// that never touches the app-server client.
+    async fn end_foreign_turn(&self, target: WatchTarget, thread_id: &str) {
+        if !self.clear_foreign_turn(thread_id) {
+            return;
+        }
+        match target {
+            WatchTarget::Direction(id) => {
+                if let Ok(Some(d)) = self.store.get_direction(id).await {
+                    let party = brief::direction_party(d.id);
+                    self.deliver(d.issue_id, &party).await;
+                }
+            }
+            WatchTarget::Lead(issue_id) => {
+                self.deliver(issue_id, brief::LEAD_PARTY).await;
+            }
+        }
+    }
 }
 
 /// Envelope-join a drained inbox into one turn input.
@@ -534,6 +690,27 @@ async fn watch(
             ThreadMsg::Event(ChatEvent::TurnEnd { is_error, .. }) => {
                 client.clear_active_turn(&thread_id).await;
                 orch.on_turn_end(target, is_error).await;
+                orch.end_foreign_turn(target, &thread_id).await;
+            }
+            ThreadMsg::TurnStarted { turn_id } => {
+                // Record unconditionally first: inject's silent-drop guard
+                // needs the id even when this notification beat our own
+                // set_active_turn bookkeeping.
+                orch.note_turn_started(&thread_id, &turn_id);
+                // A started turn whose id isn't our tracked active turn
+                // means someone ELSE is driving (human takeover in
+                // Desktop). Benign race: turn/started can beat our own
+                // set_active_turn by a hair and briefly misflag OUR turn
+                // as foreign — TurnEnd clears the flag and flushes, so
+                // the cost is latency, never loss.
+                let ours = client.active_turn(&thread_id).await;
+                if ours.as_deref() != Some(turn_id.as_str()) {
+                    orch.set_foreign_turn(&thread_id, &turn_id);
+                    events::emit(
+                        "thread.human-active",
+                        json!({ "threadId": thread_id }),
+                    );
+                }
             }
             ThreadMsg::Approval { id, method, .. } => {
                 let _ = client.reply_approval(&id, "decline").await;
@@ -672,5 +849,111 @@ mod tests {
         orch.set_direction_status(d, "done").await.expect("done");
         let row = orch.store.get_direction(d).await.expect("get").expect("some");
         assert_eq!(row.status, "done");
+    }
+
+    /// Seed a direction WITH a Codex thread id, so delivery paths resolve.
+    async fn seeded_direction(orch: &Orchestrator) -> (i64, i64) {
+        let ws = orch.store.create_workspace("W", "w").await.expect("ws");
+        let repo = orch
+            .store
+            .add_repo(ws, "api", "/tmp/api", "main")
+            .await
+            .expect("repo");
+        let issue = orch.store.create_issue(ws, "one", "one").await.expect("i");
+        let d = orch
+            .store
+            .add_direction(issue, "backend", "backend", repo, "impl-only", "main", "", "")
+            .await
+            .expect("d");
+        orch.store
+            .set_direction_thread(d, "t-dir")
+            .await
+            .expect("thread");
+        (issue, d)
+    }
+
+    fn parked_msg() -> Msg {
+        Msg {
+            from: "lead".to_string(),
+            text: "held".to_string(),
+            kind: "message".to_string(),
+            ts: "0".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn foreign_turn_flag_roundtrip() {
+        let (orch, _dir) = fixture().await;
+        assert!(orch.foreign_turn("t1").is_none());
+        assert!(!orch.clear_foreign_turn("t1"));
+        orch.set_foreign_turn("t1", "turn_x");
+        assert_eq!(orch.foreign_turn("t1").as_deref(), Some("turn_x"));
+        assert!(orch.clear_foreign_turn("t1"));
+        assert!(orch.foreign_turn("t1").is_none());
+    }
+
+    #[tokio::test]
+    async fn deliver_parks_while_human_drives() {
+        let (orch, _dir) = fixture().await;
+        let (issue, d) = seeded_direction(&orch).await;
+        let party = brief::direction_party(d);
+        orch.bus.post(issue, &party, parked_msg());
+        orch.set_foreign_turn("t-dir", "turn-human");
+        orch.deliver(issue, &party).await;
+        // Parked delivery must NOT have drained the inbox — the message
+        // survives for the TurnEnd flush.
+        let held = orch.bus.drain(issue, &party);
+        assert_eq!(held.len(), 1);
+        assert_eq!(held[0].text, "held");
+    }
+
+    #[tokio::test]
+    async fn end_foreign_turn_flushes_only_when_flagged() {
+        let (orch, _dir) = fixture().await;
+        let (issue, d) = seeded_direction(&orch).await;
+        // No flag → early return; an empty inbox would have made a flush
+        // harmless anyway, but nothing should even attempt delivery.
+        orch.end_foreign_turn(WatchTarget::Direction(d), "t-dir").await;
+        assert!(orch.foreign_turn("t-dir").is_none());
+        // Flagged + empty inbox → flag clears; the flush delivery drains
+        // nothing and returns before ever touching the app-server client.
+        orch.set_foreign_turn("t-dir", "turn-human");
+        orch.end_foreign_turn(WatchTarget::Direction(d), "t-dir").await;
+        assert!(orch.foreign_turn("t-dir").is_none());
+        assert!(orch.bus.drain(issue, &brief::direction_party(d)).is_empty());
+    }
+
+    #[tokio::test]
+    async fn turn_confirmation_waits_for_watcher_record() {
+        // No record within the window → silent drop detected.
+        let empty = StdMutex::new(HashMap::new());
+        assert!(
+            !await_turn_confirmation(&empty, "t", "turn-1", Duration::from_millis(250)).await
+        );
+        // A record landing mid-wait (watcher routed turn/started) confirms.
+        let shared = Arc::new(StdMutex::new(HashMap::new()));
+        let writer = shared.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let mut g = writer.lock().expect("lock");
+            g.insert("t".to_string(), "turn-2".to_string());
+        });
+        assert!(await_turn_confirmation(&shared, "t", "turn-2", Duration::from_secs(2)).await);
+        // A different turn id on the same thread is NOT a confirmation.
+        assert!(
+            !await_turn_confirmation(&shared, "t", "turn-3", Duration::from_millis(150)).await
+        );
+    }
+
+    #[tokio::test]
+    async fn note_turn_started_feeds_confirmation() {
+        let (orch, _dir) = fixture().await;
+        assert!(
+            !await_turn_confirmation(&orch.confirmed_turns, "t", "turn-9", Duration::from_millis(120)).await
+        );
+        orch.note_turn_started("t", "turn-9");
+        assert!(
+            await_turn_confirmation(&orch.confirmed_turns, "t", "turn-9", Duration::from_millis(120)).await
+        );
     }
 }
