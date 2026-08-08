@@ -349,9 +349,12 @@ a svg { width: 12px; height: 12px; }
   to { opacity: 1; transform: none; }
 }
 .modal-body h2 { margin: 0 0 12px; font-size: 15px; }
+/* Codex forms breathe on the 4px grid: label sits 6px above its control,
+   14px below the previous one. */
 .modal-body label {
-  display: block; font-size: 12px; color: var(--dim); margin: 10px 0 4px;
+  display: block; font-size: 12px; color: var(--dim); margin: 14px 0 6px;
 }
+.modal-body label:first-of-type { margin-top: 2px; }
 .modal-body input, .modal-body select { width: 100%; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
