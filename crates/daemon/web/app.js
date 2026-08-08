@@ -331,33 +331,63 @@ async function messageDialog(send) {
 }
 
 async function directionDialog(issueId) {
-  const form = formFields([
-    { key: "name", label: "field.name" },
-    {
-      key: "repo_id",
-      label: "field.repo",
-      type: "select",
-      options: state.repos.map((r) => [String(r.id), r.name]),
-    },
-    {
-      key: "mandate",
-      label: "field.mandate",
-      type: "select",
-      options: [
-        ["plan+impl", "plan+impl"],
-        ["impl-only", "impl-only"],
-      ],
-    },
-    { key: "base_branch", label: "field.baseBranch", value: "main" },
-    { key: "reason", label: "field.reason" },
-    { key: "spec", label: "field.spec", type: "textarea" },
-  ]);
-  const ok = await openModal("modal.directionTitle", form.wrap);
+  // Slim capture (codex idiom: progressive disclosure). Primary = the two
+  // things only a human can supply (name + what to do); everything else is
+  // defaulted — repo auto-picked when the workspace has exactly one,
+  // mandate defaults server-side to plan+impl, base branch prefills from
+  // the repo's recorded base_ref — tucked behind an Advanced disclosure.
+  if (!state.repos.length) {
+    toast(t("task.noRepo"));
+    return;
+  }
+  const multi = state.repos.length > 1;
+  const wrap = el("div");
+  const inputs = {};
+  const addField = (key, labelKey, node, host) => {
+    (host || wrap).appendChild(el("label", { text: t(labelKey) }));
+    (host || wrap).appendChild(node);
+    inputs[key] = node;
+  };
+  addField("name", "field.name", el("input"));
+  if (multi) {
+    const sel = el("select");
+    for (const r of state.repos) sel.appendChild(el("option", { value: r.id, text: r.name }));
+    addField("repo_id", "field.repo", sel);
+  }
+  addField("spec", "field.spec", el("textarea"));
+  const advanced = el("details", { class: "advanced" });
+  advanced.appendChild(el("summary", { text: t("field.advanced") }));
+  const mandate = el("select");
+  for (const v of ["plan+impl", "impl-only"]) {
+    mandate.appendChild(el("option", { value: v, text: v }));
+  }
+  addField("mandate", "field.mandate", mandate, advanced);
+  const repoFor = () => {
+    const id = multi ? Number(inputs.repo_id.value) : state.repos[0].id;
+    return state.repos.find((r) => r.id === id);
+  };
+  const base = el("input");
+  base.value = (repoFor() || {}).base_ref || "";
+  addField("base_branch", "field.baseBranch", base, advanced);
+  if (multi) {
+    inputs.repo_id.onchange = () => {
+      base.value = (repoFor() || {}).base_ref || "";
+    };
+  }
+  wrap.appendChild(advanced);
+  const ok = await openModal("modal.directionTitle", wrap);
   if (!ok) return;
-  const body = form.read();
-  if (!body.name.trim()) return;
-  body.slug = slugify(body.name);
-  body.repo_id = Number(body.repo_id);
+  const name = inputs.name.value.trim();
+  if (!name) return;
+  const repo = repoFor();
+  const body = {
+    name,
+    slug: slugify(name),
+    repo_id: repo.id,
+    spec: inputs.spec.value,
+    mandate: inputs.mandate.value,
+    base_branch: inputs.base_branch.value.trim() || repo.base_ref || "",
+  };
   try {
     await api(`/api/issues/${issueId}/directions`, { method: "POST", body: JSON.stringify(body) });
     await reloadCurrent();
