@@ -364,6 +364,8 @@ a svg { width: 12px; height: 12px; }
   user-select: none;
 }
 .modal-body details.advanced summary:hover { color: var(--text); }
+/* First field inside the disclosure hugs the summary, not the 14px grid. */
+.modal-body details.advanced label:first-of-type { margin-top: 6px; }
 .modal-body input, .modal-body select { width: 100%; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 

@@ -358,8 +358,8 @@ async function directionDialog(issueId) {
   const advanced = el("details", { class: "advanced" });
   advanced.appendChild(el("summary", { text: t("field.advanced") }));
   const mandate = el("select");
-  for (const v of ["plan+impl", "impl-only"]) {
-    mandate.appendChild(el("option", { value: v, text: v }));
+  for (const [v, labelKey] of [["plan+impl", "mandate.planImpl"], ["impl-only", "mandate.implOnly"]]) {
+    mandate.appendChild(el("option", { value: v, text: t(labelKey) }));
   }
   addField("mandate", "field.mandate", mandate, advanced);
   const repoFor = () => {
