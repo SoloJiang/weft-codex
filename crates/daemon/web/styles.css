@@ -1,15 +1,23 @@
+/* Theme aligned with Codex Desktop's own design tokens (extracted from the
+   shipped app bundle, 2026-08-09): gray-900 #181818 main surface, #131313
+   window chrome, blue-500 #0169cc accent, hairline borders at 8%/5% white,
+   13px chat font, 10px/6px radii. Dark only — matches the desktop dark
+   theme; a light variant would mirror codex-light's scale. */
 :root {
-  --bg: #0d1117;
-  --panel: #161b22;
-  --panel-2: #1c2330;
-  --border: #2b3342;
-  --text: #e6e9ef;
-  --dim: #8b95a5;
-  --accent: #4c8dff;
-  --warn: #e3b341;
-  --danger: #f47067;
-  --ok: #57ab5a;
-  font-size: 14px;
+  --bg: #131313;
+  --panel: #181818;
+  --panel-2: #212121;
+  --border: rgba(252, 252, 252, 0.08);
+  --border-strong: rgba(252, 252, 252, 0.16);
+  --text: #fcfcfc;
+  --dim: rgba(252, 252, 252, 0.65);
+  --accent: #0169cc;
+  --accent-hover: #0285ff;
+  --link: #339cff;
+  --warn: #ffc300;
+  --danger: #fa423e;
+  --ok: #04b84c;
+  font-size: 13px;
 }
 
 * { box-sizing: border-box; }
@@ -18,7 +26,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, "SF Pro Text", "Helvetica Neue", "PingFang SC", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
 }
 
 #topbar {
@@ -45,11 +53,18 @@ button {
   cursor: pointer;
   font-size: 13px;
 }
-button:hover { border-color: var(--accent); }
+button:hover { border-color: var(--border-strong); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 button:disabled { opacity: 0.45; cursor: default; }
 
-.nav-btn.active { border-color: var(--accent); color: var(--accent); }
+/* Codex sidebar idiom: the active nav item is a subtle filled row, not an
+   outlined/accented button. */
+.nav-btn.active {
+  background: rgba(252, 252, 252, 0.1);
+  border-color: transparent;
+}
 
 select, input, textarea {
   background: var(--panel-2);
@@ -58,6 +73,10 @@ select, input, textarea {
   border-radius: 6px;
   padding: 5px 9px;
   font-size: 13px;
+}
+select:focus-visible, input:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 textarea { width: 100%; min-height: 90px; font-family: inherit; }
 
@@ -95,6 +114,8 @@ main { padding: 16px; }
 .issue-head h3 { margin: 0; font-size: 14px; }
 .issue-head .meta { color: var(--dim); font-size: 12px; }
 .issue-head .thread-link { font-size: 12px; }
+.issue-link { cursor: pointer; }
+.issue-link:hover { color: var(--link); }
 
 .columns {
   display: grid;
@@ -144,7 +165,65 @@ main { padding: 16px; }
   margin-left: 6px;
 }
 
-a { color: var(--accent); text-decoration: none; }
+a { color: var(--link); text-decoration: none; }
+
+/* ── issue detail ───────────────────────────────────────────────────── */
+
+.detail-head {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 6px;
+}
+
+#issue-detail h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--dim);
+  margin: 18px 0 8px;
+}
+
+.dir-detail {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.dir-detail .card { cursor: default; margin-bottom: 0; }
+.dir-detail > .sub { color: var(--dim); font-size: 12px; margin-top: 8px; }
+.dir-detail .spec {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: 8px 0 0;
+  white-space: pre-wrap;
+  line-height: 1.55;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.timeline { max-width: 860px; }
+.timeline .msg {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+.timeline .msg.human { border-color: var(--accent); }
+.timeline .msg-meta {
+  color: var(--dim);
+  font-size: 11px;
+  margin-bottom: 4px;
+}
+.timeline .msg.human .msg-meta { color: var(--link); }
+.timeline .msg-text {
+  white-space: pre-wrap;
+  line-height: 1.55;
+  font-size: 13px;
+}
 
 /* ── repos ──────────────────────────────────────────────────────────── */
 
@@ -167,7 +246,7 @@ a { color: var(--accent); text-decoration: none; }
   padding: 1px 8px;
   color: var(--dim);
 }
-.tag.layer { color: var(--accent); border-color: var(--accent); }
+.tag.layer { color: var(--link); border-color: var(--link); }
 .runstate-running { color: var(--warn); }
 .runstate-failed { color: var(--danger); }
 .runstate-done { color: var(--ok); }
@@ -195,7 +274,7 @@ a { color: var(--accent); text-decoration: none; }
 .modal-body {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 10px;
   padding: 18px;
   width: 460px;
   max-width: 92vw;
