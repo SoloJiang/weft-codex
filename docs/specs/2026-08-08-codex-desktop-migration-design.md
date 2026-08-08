@@ -131,6 +131,24 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
   跟踪当前活跃 turn_id（与 `turn/interrupt` 的前置条件相同）。
 - 读完整历史用 `thread/resume`（`thread/read` 默认只回元数据）。
 
+**已验证（2026-08-08 晚，Stage 2 真机闭环，weftd + 真实 app-server）**：
+
+- MCP 工具 annotations 是硬性要求：codex core 把无 annotations 的工具视为
+  destructive/open-world（`requires_mcp_tool_approval`），在
+  approvalPolicy=never + Managed 沙箱下审批请求被自动拒绝，工具返回
+  "user rejected MCP tool call"。bus_post 须声明
+  `{destructiveHint: false, openWorldHint: false}`，bus_read 加
+  `readOnlyHint: true`。**注册成功 ≠ 可调用**，spike 只验证了前者。
+- 全链路闭环：direction 线程按 spec 建文件并提交 → bus_post 成功 →
+  orchestrator steer/start 注入 lead 活跃线程（消息以 user 身份入历史）→
+  lead 自主核验 direction 分支。watcher 把 TurnEnd 折成 kanban 状态
+  （working→review）。
+- direction 需要 `spec` 字段（任务正文）：无烟情况下 agent 只能从 direction
+  名字猜任务（把 hello.txt 建成了 hello）。已加列 + brief 渲染。
+- 线程落库：rollout 文件即写，`state_5.sqlite.threads` 表即见（Desktop
+  线程列表读这里）；`session_index.jsonl` 有滞后，不作为可见性依据。
+  API 建线程 source 默认 "vscode"，名称留空（Desktop 显示回退名）。
+
 ## 7. UI 表面（weftd serve 的 web app）
 
 - Workspace home：workspace 切换、repo 注册与状态。
