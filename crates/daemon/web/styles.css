@@ -99,7 +99,6 @@ body {
   z-index: 5;
 }
 
-.brand { font-weight: 700; letter-spacing: 0.4px; }
 .spacer { flex: 1; }
 
 /* Codex button idiom: secondary actions are borderless ghost fills (hover
