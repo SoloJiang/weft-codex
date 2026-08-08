@@ -1,5 +1,7 @@
 <!DOCTYPE html>
-<html lang="zh">
+<!-- No hardcoded lang: detection order is embedded-host html lang →
+     navigator.language; boot() writes the resolved value back here. -->
+<html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -16,7 +18,6 @@
     <span class="spacer"></span>
     <select id="workspace-select"></select>
     <button id="add-workspace" data-i18n="ws.add"></button>
-    <button id="lang-toggle">中/EN</button>
     <span id="conn" class="conn down" title="events"></span>
   </header>
 
@@ -24,7 +25,7 @@
     <section id="view-kanban" class="view active">
       <div class="actions">
         <input id="new-issue-title" data-i18n-ph="issue.titlePh">
-        <button id="create-issue" data-i18n="issue.create"></button>
+        <button id="create-issue" class="primary" data-i18n="issue.create"></button>
       </div>
       <div id="issues"></div>
     </section>

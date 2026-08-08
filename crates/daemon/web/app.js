@@ -6,8 +6,18 @@
 
 const STATUSES = ["queued", "planning", "working", "review", "done"];
 
+// Language follows the ENVIRONMENT, never a toggle of our own: embedded in
+// Codex the host document's lang wins (host locale = our locale);
+// standalone we take the browser's. Only the i18n TABLES are ours — Codex
+// can't translate our own strings ("任务", "消息动态").
+function detectLang() {
+  const host = document.documentElement.lang || "";
+  const raw = host || navigator.language || "en";
+  return raw.toLowerCase().startsWith("zh") ? "zh" : "en";
+}
+
 const state = {
-  lang: localStorage.getItem("weft.lang") || "zh",
+  lang: detectLang(),
   workspaces: [],
   workspaceId: null,
   repos: [],
@@ -80,7 +90,34 @@ function slugify(s) {
 
 function threadLink(threadId) {
   if (!threadId) return null;
-  return el("a", { href: `codex://threads/${threadId}`, class: "thread-link", text: t("dir.openThread") });
+  const a = el("a", { href: `codex://threads/${threadId}`, class: "thread-link", text: t("dir.openThread") });
+  a.prepend(icon("chat"));
+  return a;
+}
+
+// Minimal lucide-style inline icon set — codex surfaces are icon-led,
+// text-only buttons are a giveaway of a foreign UI.
+const ICONS = {
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  chat: '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>',
+  back: '<path d="M19 12H5M12 19l-7-7 7-7"/>',
+  chevron: '<path d="M9 18l6-6-6-6"/>',
+  play: '<path d="M6 4l14 8-14 8z" fill="currentColor" stroke="none"/>',
+  send: '<path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/>',
+  flag: '<path d="M4 15s1-1 4-1 5 2 5 2 3-1 3-2V3s-1 1-4 1-5-2-5-2-3 1-3 2z"/><path d="M4 22v-7"/>',
+  kanban: '<rect x="3" y="3" width="7" height="18" rx="1"/><rect x="14" y="3" width="7" height="12" rx="1"/>',
+  repo: '<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+};
+
+function icon(name) {
+  const span = document.createElement("span");
+  span.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+  return span.firstChild;
+}
+
+function withIcon(node, name) {
+  node.prepend(icon(name));
+  return node;
 }
 
 // ── modal ─────────────────────────────────────────────────────────────────
@@ -192,18 +229,18 @@ function directionCard(dir) {
   );
   const btns = el("div", { class: "btns" });
   if (!dir.codex_thread_id) {
-    const spawn = el("button", { text: t("dir.spawn") });
+    const spawn = withIcon(el("button", { text: t("dir.spawn") }), "play");
     spawn.onclick = () => api(`/api/directions/${dir.id}/spawn`, { method: "POST", body: "{}" }).then(reloadCurrent).catch((e) => toast(e.message));
     btns.appendChild(spawn);
   } else {
     const link = threadLink(dir.codex_thread_id);
     if (link) btns.appendChild(link);
-    const msg = el("button", { text: t("dir.msg") });
+    const msg = withIcon(el("button", { text: t("dir.msg") }), "send");
     msg.onclick = () => messageDialog((text) => api(`/api/directions/${dir.id}/message`, { method: "POST", body: JSON.stringify({ text }) }));
     btns.appendChild(msg);
   }
   if (dir.attention) {
-    const clear = el("button", { text: t("dir.clearAttention") });
+    const clear = withIcon(el("button", { text: t("dir.clearAttention") }), "flag");
     clear.onclick = () => api(`/api/directions/${dir.id}/attention/clear`, { method: "POST", body: "{}" }).then(reloadCurrent).catch((e) => toast(e.message));
     btns.appendChild(clear);
   }
@@ -246,18 +283,18 @@ function issueBlock(entry) {
   if (issue.lead_codex_thread_id) {
     const link = threadLink(issue.lead_codex_thread_id);
     if (link) head.appendChild(link);
-    const msgLead = el("button", { text: t("issue.msgLead") });
+    const msgLead = withIcon(el("button", { text: t("issue.msgLead") }), "send");
     msgLead.onclick = () => messageDialog((text) => api(`/api/issues/${issue.id}/message`, { method: "POST", body: JSON.stringify({ text }) }));
     head.appendChild(msgLead);
   } else {
-    const spawn = el("button", { text: t("issue.spawnLead") });
+    const spawn = withIcon(el("button", { text: t("issue.spawnLead") }), "play");
     spawn.onclick = () => api(`/api/issues/${issue.id}/spawn-lead`, { method: "POST", body: "{}" }).then(reloadCurrent).catch((e) => toast(e.message));
     head.appendChild(spawn);
   }
-  const open = el("button", { text: t("issue.open") });
+  const open = withIcon(el("button", { text: t("issue.open") }), "chevron");
   open.onclick = () => openIssueDetail(issue.id);
   head.appendChild(open);
-  const addDir = el("button", { text: t("issue.addDirection") });
+  const addDir = withIcon(el("button", { text: t("issue.addDirection") }), "plus");
   addDir.onclick = () => directionDialog(issue.id);
   head.appendChild(addDir);
   block.appendChild(head);
@@ -389,15 +426,15 @@ async function loadIssueDetail() {
   if (issue.lead_codex_thread_id) {
     const link = threadLink(issue.lead_codex_thread_id);
     if (link) head.appendChild(link);
-    const msgLead = el("button", { text: t("issue.msgLead") });
+    const msgLead = withIcon(el("button", { text: t("issue.msgLead") }), "send");
     msgLead.onclick = () => messageDialog((text) => api(`/api/issues/${issue.id}/message`, { method: "POST", body: JSON.stringify({ text }) }));
     head.appendChild(msgLead);
   } else {
-    const spawn = el("button", { text: t("issue.spawnLead") });
+    const spawn = withIcon(el("button", { text: t("issue.spawnLead") }), "play");
     spawn.onclick = () => api(`/api/issues/${issue.id}/spawn-lead`, { method: "POST", body: "{}" }).then(reloadCurrent).catch((e) => toast(e.message));
     head.appendChild(spawn);
   }
-  const addDir = el("button", { text: t("issue.addDirection") });
+  const addDir = withIcon(el("button", { text: t("issue.addDirection") }), "plus");
   addDir.onclick = () => directionDialog(issue.id);
   head.appendChild(addDir);
   root.appendChild(head);
@@ -504,15 +541,14 @@ function switchView(view) {
 
 async function boot() {
   applyI18n();
+  // Static-chrome icons (codex surfaces are icon-led).
+  withIcon(document.querySelector('[data-view="kanban"]'), "kanban");
+  withIcon(document.querySelector('[data-view="repos"]'), "repo");
+  withIcon(document.getElementById("add-workspace"), "plus");
+  withIcon(document.getElementById("create-issue"), "plus");
+  withIcon(document.getElementById("add-repo"), "plus");
+  withIcon(document.getElementById("issue-back"), "back");
   document.querySelectorAll(".nav-btn").forEach((b) => (b.onclick = () => switchView(b.dataset.view)));
-  document.getElementById("lang-toggle").onclick = () => {
-    state.lang = state.lang === "zh" ? "en" : "zh";
-    localStorage.setItem("weft.lang", state.lang);
-    applyI18n();
-    renderKanban();
-    renderRepos();
-    if (state.view === "issue") loadIssueDetail().catch((e) => toast(e.message));
-  };
   document.getElementById("workspace-select").onchange = async (e) => {
     state.workspaceId = Number(e.target.value);
     state.repos = await api(`/api/workspaces/${state.workspaceId}/repos`);
