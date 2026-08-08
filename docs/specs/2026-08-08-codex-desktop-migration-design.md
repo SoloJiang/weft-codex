@@ -197,15 +197,27 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
   时间线聊天式渲染 + `bus.message` SSE 实时刷新）。
 - Repo map：仓库依赖图与 components 展开视图（RepoMapView / RepoGraph 平移）。
 - 全部 i18n 字符串沿用 en/zh 双文件约束。
-- **主题对齐（2026-08-09 落定）**：web app 的设计令牌直接取自 Codex
-  Desktop 发行包（ChatGPT.app → app.asar → webview/assets）而非凭印象：
-  主表面 gray-900 `#181818`、窗口铬 `#131313`、accent blue-500 `#0169cc`
-  （hover `#0285ff`、链接 `#339cff`）、hairline 边框为 8%/5% 白、
-  状态色绿 `#04b84c`/黄 `#ffc300`/红 `#fa423e`、13px 基础字号、
-  字体 `-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`、
-  圆角 10px/6px、激活导航为淡填充行（sidebar 惯例）。仅 dark——与桌面
-  暗色主题一致；light 变体需另取 codex-light 标尺。这为将来 Weft mode
-  内嵌进 Desktop 提供观感连续性。
+- **主题同步（2026-08-09 落定，引用式而非快照式）**：Codex 本身的主题可
+  配置（dark/light、corner-radius scale），所以 web app 不硬编码颜色，
+  而是**引用宿主 CSS token**——每个语义变量形如
+  `var(--color-token-…, fallback)`：嵌入 Codex 应用（Weft mode）时宿主
+  实时 token 生效，宿主切主题我们零成本跟随；独立浏览器里 fallback
+  呈现 codex-dark 解析值（`prefers-color-scheme: light` 时切 codex-light
+  解析值）。token 名逐一核对自发行包（ChatGPT.app webview 资产）：
+  表面 `--color-token-main-surface-primary` /
+  `--color-token-dropdown-background` / `--vscode-sideBar-background`、
+  文本 `--color-token-foreground` / `--color-token-text-secondary`、
+  边框 `--color-token-border` / `--color-token-border-heavy`、
+  accent `--color-token-primary`（经 link-foreground → blue-500
+  `#0169cc`）/ `--vscode-button-hoverBackground` /
+  `--color-token-button-foreground`、链接
+  `--color-token-text-link-foreground`、状态色
+  `--color-token-charts-green|yellow|red`、表单
+  `--color-token-input-background|border`、字体 `--font-sans` /
+  `--font-mono`、圆角 `--radius-lg|md|sm`（随宿主 corner-radius-scale
+  缩放）。已实测三层：dark fallback（`#131313`/`#fcfcfc`/`#0169cc`）、
+  light fallback（`#fcfcfc`/`#0d0d0d`）、宿主注入任意主题（紫系 +
+  radius 20px）时全部变量跟随宿主而非 fallback。
 
 ## 7.5 模式切换（Weft mode）
 
