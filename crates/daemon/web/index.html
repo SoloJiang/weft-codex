@@ -4,62 +4,85 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>weft-codex</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title></title>
   <link rel="stylesheet" href="/web/styles.css">
 </head>
 <body>
   <header id="topbar">
-    <nav>
-      <button data-view="kanban" class="nav-btn active" data-i18n="nav.kanban"></button>
-      <button data-view="repos" class="nav-btn" data-i18n="nav.repos"></button>
+    <nav data-i18n-aria-label="nav.primary">
+      <button type="button" data-view="kanban" class="nav-btn active" data-i18n="nav.kanban"></button>
+      <button type="button" data-view="repos" class="nav-btn" data-i18n="nav.repos"></button>
     </nav>
-    <span class="spacer"></span>
-    <select id="workspace-select"></select>
-    <button id="add-workspace" data-i18n="ws.add"></button>
-    <span id="conn" class="conn down" title="events"></span>
+    <div class="workspace-controls">
+      <label class="sr-only" for="workspace-select" data-i18n="workspace.label"></label>
+      <select id="workspace-select"></select>
+      <button type="button" id="add-workspace" data-i18n="ws.add"></button>
+      <span id="conn" class="connection" data-state="down" role="status" aria-live="polite">
+        <span class="conn-dot" aria-hidden="true"></span>
+        <span id="conn-label" data-i18n="status.disconnected"></span>
+      </span>
+    </div>
   </header>
 
   <main>
-    <section id="view-kanban" class="view active">
-      <div class="actions">
-        <input id="new-issue-title" data-i18n-ph="issue.titlePh">
-        <button id="create-issue" class="primary" data-i18n="issue.create"></button>
-      </div>
+    <section id="view-kanban" class="view active" aria-labelledby="kanban-heading">
+      <h1 id="kanban-heading" class="sr-only" data-i18n="nav.kanban"></h1>
+      <form id="issue-create-form" class="actions issue-create" novalidate>
+        <label class="sr-only" for="new-issue-title" data-i18n="issue.titleLabel"></label>
+        <input id="new-issue-title" data-i18n-ph="issue.titlePh" aria-describedby="issue-form-error" required autocomplete="off">
+        <button type="submit" id="create-issue" class="primary" data-i18n="issue.create"></button>
+        <p id="issue-form-error" class="inline-error" role="alert" hidden></p>
+      </form>
       <div id="issues"></div>
     </section>
 
-    <section id="view-repos" class="view">
-      <div class="actions">
-        <input id="new-repo-name" data-i18n-ph="repo.namePh">
-        <input id="new-repo-path" data-i18n-ph="repo.pathPh">
-        <button id="add-repo" data-i18n="repo.add"></button>
-        <button id="analyze-ws" data-i18n="repo.analyzeAll"></button>
-        <button id="analyze-relations" data-i18n="repo.analyzeRelations"></button>
+    <section id="view-repos" class="view" aria-labelledby="repos-heading">
+      <h1 id="repos-heading" class="sr-only" data-i18n="nav.repos"></h1>
+      <div class="repo-toolbar">
+        <form id="repo-register-form" class="actions repo-register" novalidate>
+          <label class="sr-only" for="new-repo-name" data-i18n="repo.nameLabel"></label>
+          <input id="new-repo-name" data-i18n-ph="repo.namePh" aria-describedby="repo-form-error" required autocomplete="off">
+          <label class="sr-only" for="new-repo-path" data-i18n="repo.pathLabel"></label>
+          <input id="new-repo-path" data-i18n-ph="repo.pathPh" aria-describedby="repo-form-error" required autocomplete="off">
+          <button type="submit" id="add-repo" class="primary" data-i18n="repo.add"></button>
+          <p id="repo-form-error" class="inline-error" role="alert" hidden></p>
+        </form>
+        <div class="analysis-actions" role="group" data-i18n-aria-label="repo.analysisActions">
+          <button type="button" id="analyze-ws" data-i18n="repo.analyzeAll" disabled></button>
+          <button type="button" id="analyze-relations" data-i18n="repo.analyzeRelations" disabled></button>
+        </div>
       </div>
       <div id="repo-list"></div>
-      <h2 data-i18n="repo.mapDoc"></h2>
-      <pre id="repo-map-doc"></pre>
+      <section id="repo-map-section" class="repo-map-section" aria-labelledby="repo-map-heading" hidden>
+        <h2 id="repo-map-heading" data-i18n="repo.mapDoc"></h2>
+        <p id="repo-map-empty" class="meta" data-i18n="repo.mapEmpty" hidden></p>
+        <pre id="repo-map-doc" hidden></pre>
+      </section>
     </section>
 
-    <section id="view-issue" class="view">
-      <div class="actions">
-        <button id="issue-back" data-i18n="detail.back"></button>
+    <section id="view-issue" class="view" aria-labelledby="issue-detail-heading">
+      <h1 id="issue-detail-heading" class="sr-only" data-i18n="detail.title"></h1>
+      <div class="actions detail-nav">
+        <button type="button" id="issue-back" data-i18n="detail.back"></button>
       </div>
       <div id="issue-detail"></div>
     </section>
   </main>
 
-  <div id="modal" class="modal hidden">
-    <div class="modal-body">
+  <dialog id="modal" class="modal" aria-labelledby="modal-title">
+    <form id="modal-form" class="modal-body" method="dialog" novalidate>
       <h2 id="modal-title"></h2>
       <div id="modal-content"></div>
+      <p id="modal-error" class="modal-error" role="alert" hidden></p>
       <div class="modal-actions">
-        <button id="modal-cancel" data-i18n="modal.cancel"></button>
-        <button id="modal-ok" class="primary" data-i18n="modal.ok"></button>
+        <button type="button" id="modal-cancel" data-i18n="modal.cancel"></button>
+        <button type="submit" id="modal-submit" class="primary"></button>
       </div>
-    </div>
-  </div>
+    </form>
+  </dialog>
+
+  <div id="notifications" class="notifications" aria-live="polite" aria-atomic="false"></div>
 
   <script src="/web/i18n.js"></script>
   <script src="/web/app.js"></script>

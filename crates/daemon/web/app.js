@@ -6,10 +6,6 @@
 
 const STATUSES = ["queued", "planning", "working", "review", "done"];
 
-// Language follows the ENVIRONMENT, never a toggle of our own: embedded in
-// Codex the host document's lang wins (host locale = our locale);
-// standalone we take the browser's. Only the i18n TABLES are ours — Codex
-// can't translate our own strings ("任务", "消息动态").
 function detectLang() {
   const host = document.documentElement.lang || "";
   const raw = host || navigator.language || "en";
@@ -27,60 +23,81 @@ const state = {
   detailIssueId: null,
 };
 
+let fieldSequence = 0;
+
 // ── i18n ────────────────────────────────────────────────────────────────
 
-function t(key) {
+function t(key, values = {}) {
   const table = window.I18N[state.lang] || window.I18N.en;
-  return table[key] || window.I18N.en[key] || key;
+  let text = table[key] || window.I18N.en[key] || key;
+  for (const [name, value] of Object.entries(values)) {
+    text = text.replaceAll(`{${name}}`, String(value));
+  }
+  return text;
 }
 
 function applyI18n() {
-  document.querySelectorAll("[data-i18n]").forEach((el) => {
-    el.textContent = t(el.dataset.i18n);
+  document.querySelectorAll("[data-i18n]").forEach((node) => {
+    node.textContent = t(node.dataset.i18n);
   });
-  document.querySelectorAll("[data-i18n-ph]").forEach((el) => {
-    el.placeholder = t(el.dataset.i18nPh);
+  document.querySelectorAll("[data-i18n-ph]").forEach((node) => {
+    node.placeholder = t(node.dataset.i18nPh);
+  });
+  document.querySelectorAll("[data-i18n-aria-label]").forEach((node) => {
+    node.setAttribute("aria-label", t(node.dataset.i18nAriaLabel));
   });
   document.documentElement.lang = state.lang;
+  document.title = t("app.title");
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────
 
 async function api(path, options = {}) {
-  const resp = await fetch(path, {
+  const response = await fetch(path, {
     headers: { "content-type": "application/json" },
     ...options,
   });
-  const body = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    throw new Error(body.error || `HTTP ${resp.status}`);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body.error || `HTTP ${response.status}`);
   }
   return body;
 }
 
-function toast(msg) {
-  const el = document.createElement("div");
-  el.className = "toast";
-  el.textContent = t("err.prefix") + msg;
-  document.body.appendChild(el);
-  setTimeout(() => el.remove(), 6000);
+function errorMessage(error) {
+  if (error instanceof TypeError) return t("err.network");
+  if (error && error.message) return error.message;
+  return t("err.unknown");
+}
+
+function notify(message, kind = "info") {
+  const notifications = document.getElementById("notifications");
+  const role = kind === "error" ? "alert" : "status";
+  const node = el("div", { class: `toast toast-${kind}`, role, text: message });
+  notifications.appendChild(node);
+  setTimeout(() => node.remove(), 6000);
+}
+
+function notifyError(error) {
+  notify(t("err.prefix") + errorMessage(error), "error");
 }
 
 function el(tag, attrs = {}, children = []) {
   const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === "class") node.className = v;
-    else if (k === "text") node.textContent = v;
-    else if (k === "html") node.innerHTML = v;
-    else node.setAttribute(k, v);
+  for (const [key, value] of Object.entries(attrs)) {
+    if (value === false || value === null || value === undefined) continue;
+    if (key === "class") node.className = value;
+    else if (key === "text") node.textContent = value;
+    else if (value === true) node.setAttribute(key, "");
+    else node.setAttribute(key, value);
   }
   for (const child of children) node.appendChild(child);
   return node;
 }
 
-function slugify(s) {
+function slugify(value) {
   return (
-    s
+    value
       .toLowerCase()
       .replace(/[^a-z0-9\u4e00-\u9fff]+/g, "-")
       .replace(/^-+|-+$/g, "")
@@ -88,15 +105,6 @@ function slugify(s) {
   );
 }
 
-function threadLink(threadId) {
-  if (!threadId) return null;
-  const a = el("a", { href: `codex://threads/${threadId}`, class: "thread-link", text: t("dir.openThread") });
-  a.prepend(icon("chat"));
-  return a;
-}
-
-// Minimal lucide-style inline icon set — codex surfaces are icon-led,
-// text-only buttons are a giveaway of a foreign UI.
 const ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   chat: '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>',
@@ -115,79 +123,326 @@ function icon(name) {
   return span.firstChild;
 }
 
+function setButtonContent(node, label) {
+  node.replaceChildren();
+  if (node.dataset.icon) node.appendChild(icon(node.dataset.icon));
+  node.appendChild(document.createTextNode(label));
+}
+
 function withIcon(node, name) {
-  node.prepend(icon(name));
+  const label = node.textContent;
+  node.dataset.icon = name;
+  setButtonContent(node, label);
   return node;
 }
 
-// ── modal ─────────────────────────────────────────────────────────────────
+function threadLink(threadId) {
+  if (!threadId) return null;
+  const link = el("a", {
+    href: `codex://threads/${threadId}`,
+    class: "thread-link",
+    text: t("dir.openThread"),
+  });
+  return withIcon(link, "chat");
+}
 
-function openModal(titleKey, contentNode) {
+async function withPending(button, loadingKey, action) {
+  if (button.disabled) return undefined;
+  const originalLabel = button.textContent.trim();
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  button.classList.add("loading");
+  setButtonContent(button, t(loadingKey));
+  try {
+    return await action();
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    button.classList.remove("loading");
+    setButtonContent(button, originalLabel);
+  }
+}
+
+function clearInlineError(input, errorNode) {
+  input.removeAttribute("aria-invalid");
+  errorNode.hidden = true;
+  errorNode.textContent = "";
+}
+
+function showInlineError(input, errorNode, message) {
+  input.setAttribute("aria-invalid", "true");
+  errorNode.textContent = message;
+  errorNode.hidden = false;
+  input.focus();
+}
+
+function emptyState(titleKey, bodyKey, actionKey, onAction) {
+  const section = el("section", { class: "empty-state" });
+  section.appendChild(el("h2", { text: t(titleKey) }));
+  section.appendChild(el("p", { text: t(bodyKey) }));
+  if (actionKey && onAction) {
+    const button = el("button", { type: "button", class: "primary", text: t(actionKey) });
+    button.onclick = onAction;
+    section.appendChild(button);
+  }
+  return section;
+}
+
+// ── modal and fields ────────────────────────────────────────────────────
+
+function formFields(fields) {
+  const wrap = el("div", { class: "form-stack" });
+  const inputs = {};
+  const definitions = [];
+
+  for (const field of fields) {
+    fieldSequence += 1;
+    const id = `modal-field-${fieldSequence}`;
+    const errorId = `${id}-error`;
+    const fieldWrap = el("div", { class: "form-field" });
+    const label = el("label", { for: id, text: t(field.label) });
+    let control;
+
+    if (field.type === "select") {
+      control = el("select", { id });
+      for (const [value, optionLabel] of field.options) {
+        control.appendChild(el("option", { value, text: optionLabel }));
+      }
+    } else if (field.type === "textarea") {
+      control = el("textarea", { id });
+    } else {
+      control = el("input", { id, type: field.type || "text" });
+    }
+
+    if (field.required) control.required = true;
+    if (field.maxLength) control.maxLength = field.maxLength;
+    if (field.value !== undefined) control.value = field.value;
+    control.setAttribute("aria-describedby", errorId);
+
+    const errorNode = el("p", { id: errorId, class: "field-error", role: "alert", hidden: true });
+    control.addEventListener("input", () => clearInlineError(control, errorNode));
+    control.addEventListener("change", () => clearInlineError(control, errorNode));
+
+    fieldWrap.appendChild(label);
+    fieldWrap.appendChild(control);
+    fieldWrap.appendChild(errorNode);
+    wrap.appendChild(fieldWrap);
+    inputs[field.key] = control;
+    definitions.push({ field, control, errorNode });
+  }
+
+  const validate = () => {
+    let firstInvalid = null;
+    for (const definition of definitions) {
+      const { field, control, errorNode } = definition;
+      clearInlineError(control, errorNode);
+      if (field.required && !control.value.trim()) {
+        control.setAttribute("aria-invalid", "true");
+        errorNode.textContent = t(field.error);
+        errorNode.hidden = false;
+        if (!firstInvalid) firstInvalid = control;
+      }
+    }
+    if (firstInvalid) firstInvalid.focus();
+    return firstInvalid === null;
+  };
+
+  const read = () => Object.fromEntries(Object.entries(inputs).map(([key, node]) => [key, node.value]));
+  return { wrap, inputs, read, validate };
+}
+
+function openModal(options) {
+  const {
+    titleKey,
+    submitKey,
+    loadingKey,
+    contentNode,
+    initialFocus,
+    validate,
+    onSubmit,
+  } = options;
+
   return new Promise((resolve) => {
     const modal = document.getElementById("modal");
-    document.getElementById("modal-title").textContent = t(titleKey);
+    const body = modal.querySelector(".modal-body");
+    const form = document.getElementById("modal-form");
     const content = document.getElementById("modal-content");
-    content.innerHTML = "";
-    content.appendChild(contentNode);
-    modal.classList.remove("hidden");
+    const errorNode = document.getElementById("modal-error");
+    const submit = document.getElementById("modal-submit");
+    const cancel = document.getElementById("modal-cancel");
+    const opener = document.activeElement;
+    let busy = false;
+    let finished = false;
+
+    document.getElementById("modal-title").textContent = t(titleKey);
+    content.replaceChildren(contentNode);
+    setButtonContent(submit, t(submitKey));
+    submit.disabled = false;
+    cancel.disabled = false;
+    modal.removeAttribute("aria-busy");
+    errorNode.hidden = true;
+    errorNode.textContent = "";
+
+    const setBusy = (value) => {
+      busy = value;
+      submit.disabled = value;
+      cancel.disabled = value;
+      modal.setAttribute("aria-busy", String(value));
+      if (value) setButtonContent(submit, t(loadingKey));
+      else setButtonContent(submit, t(submitKey));
+    };
+
+    const cleanup = () => {
+      modal.removeEventListener("cancel", onCancel);
+      modal.removeEventListener("click", onBackdropClick);
+      modal.removeEventListener("keydown", onKeyDown);
+      form.onsubmit = null;
+      cancel.onclick = null;
+    };
+
     const done = (value) => {
-      modal.classList.add("hidden");
+      if (finished) return;
+      finished = true;
+      cleanup();
+      if (modal.open) modal.close();
+      content.replaceChildren();
+      if (opener instanceof HTMLElement && opener.isConnected) {
+        opener.focus();
+      } else {
+        const fallback = document.querySelector(".view.active button, .view.active input, .nav-btn.active");
+        if (fallback instanceof HTMLElement) fallback.focus();
+      }
       resolve(value);
     };
-    document.getElementById("modal-ok").onclick = () => done(true);
-    document.getElementById("modal-cancel").onclick = () => done(false);
-    modal.onclick = (e) => {
-      if (e.target === modal) done(false);
+
+    const onCancel = (event) => {
+      event.preventDefault();
+      if (!busy) done(false);
     };
+
+    const onBackdropClick = (event) => {
+      if (busy || event.target !== modal) return;
+      const rect = body.getBoundingClientRect();
+      const inside = event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom;
+      if (!inside) done(false);
+    };
+
+    const onKeyDown = (event) => {
+      if (event.key !== "Escape" || busy) return;
+      event.preventDefault();
+      done(false);
+    };
+
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      errorNode.hidden = true;
+      errorNode.textContent = "";
+      if (validate && !validate()) return;
+      setBusy(true);
+      try {
+        await onSubmit();
+        done(true);
+      } catch (error) {
+        errorNode.textContent = t("err.prefix") + errorMessage(error);
+        errorNode.hidden = false;
+        setBusy(false);
+      }
+    };
+    cancel.onclick = () => {
+      if (!busy) done(false);
+    };
+    modal.addEventListener("cancel", onCancel);
+    modal.addEventListener("click", onBackdropClick);
+    modal.addEventListener("keydown", onKeyDown);
+    modal.showModal();
+    requestAnimationFrame(() => {
+      if (initialFocus instanceof HTMLElement) initialFocus.focus();
+    });
   });
 }
 
-function formFields(fields) {
-  const wrap = el("div");
-  const inputs = {};
-  for (const f of fields) {
-    wrap.appendChild(el("label", { text: t(f.label) }));
-    let node;
-    if (f.type === "select") {
-      node = el("select");
-      for (const [value, label] of f.options) {
-        node.appendChild(el("option", { value, text: label }));
-      }
-    } else if (f.type === "textarea") {
-      node = el("textarea");
-    } else {
-      node = el("input");
-    }
-    node.value = f.value || "";
-    inputs[f.key] = node;
-    wrap.appendChild(node);
-  }
-  return { wrap, read: () => Object.fromEntries(Object.entries(inputs).map(([k, n]) => [k, n.value])) };
+async function openWorkspaceDialog() {
+  const form = formFields([
+    {
+      key: "name",
+      label: "field.name",
+      required: true,
+      error: "validation.workspaceName",
+      maxLength: 120,
+    },
+  ]);
+  let createdId = null;
+  const created = await openModal({
+    titleKey: "modal.workspaceTitle",
+    submitKey: "modal.createWorkspace",
+    loadingKey: "loading.creatingWorkspace",
+    contentNode: form.wrap,
+    initialFocus: form.inputs.name,
+    validate: form.validate,
+    onSubmit: async () => {
+      const { name } = form.read();
+      const result = await api("/api/workspaces", {
+        method: "POST",
+        body: JSON.stringify({ name: name.trim(), slug: slugify(name) }),
+      });
+      createdId = result.id;
+    },
+  });
+  if (!created) return;
+  state.workspaceId = createdId;
+  await loadWorkspaces();
+  state.repos = await api(`/api/workspaces/${state.workspaceId}/repos`);
+  await refresh();
+  notify(t("success.workspaceCreated"), "success");
 }
 
-// ── data loading ────────────────────────────────────────────────────────────
+// ── data loading ────────────────────────────────────────────────────────
+
+function updateWorkspaceAvailability() {
+  const hasWorkspace = Boolean(state.workspaceId);
+  const canCreateIssue = hasWorkspace && state.repos.length > 0;
+  document.getElementById("issue-create-form").hidden = !canCreateIssue;
+  document.querySelector(".repo-toolbar").hidden = !hasWorkspace;
+  document.getElementById("workspace-select").disabled = !state.workspaces.length;
+}
 
 async function loadWorkspaces() {
   state.workspaces = await api("/api/workspaces");
-  const sel = document.getElementById("workspace-select");
-  sel.innerHTML = "";
-  for (const ws of state.workspaces) {
-    sel.appendChild(el("option", { value: ws.id, text: ws.name }));
+  const select = document.getElementById("workspace-select");
+  select.replaceChildren();
+
+  if (!state.workspaces.length) {
+    state.workspaceId = null;
+    select.appendChild(el("option", { value: "", text: t("workspace.none") }));
+  } else {
+    for (const workspace of state.workspaces) {
+      select.appendChild(el("option", { value: workspace.id, text: workspace.name }));
+    }
+    const selectedExists = state.workspaces.some((workspace) => workspace.id === state.workspaceId);
+    if (!selectedExists) state.workspaceId = state.workspaces[0].id;
+    select.value = state.workspaceId;
   }
-  if (!state.workspaceId && state.workspaces.length) {
-    state.workspaceId = state.workspaces[0].id;
-  }
-  sel.value = state.workspaceId || "";
+  updateWorkspaceAvailability();
 }
 
 async function loadKanban() {
-  if (!state.workspaceId) return;
+  updateWorkspaceAvailability();
+  if (!state.workspaceId) {
+    state.board = [];
+    renderKanban();
+    return;
+  }
   state.board = await api(`/api/issues?workspace_id=${state.workspaceId}`);
   renderKanban();
 }
 
 async function loadRepos() {
-  if (!state.workspaceId) return;
+  if (!state.workspaceId) {
+    state.repos = [];
+    state.repoMap = null;
+    renderRepos();
+    return;
+  }
   state.repos = await api(`/api/workspaces/${state.workspaceId}/repos`);
   state.repoMap = await api(`/api/workspaces/${state.workspaceId}/repo-map`);
   renderRepos();
@@ -198,205 +453,346 @@ async function refresh() {
     if (state.view === "kanban") await loadKanban();
     else if (state.view === "issue") await loadIssueDetail();
     else await loadRepos();
-  } catch (e) {
-    toast(e.message);
+  } catch (error) {
+    notifyError(error);
   }
 }
 
-// Cards/dialogs are shared between the kanban and the issue detail view;
-// their action handlers reload whichever is showing.
 async function reloadCurrent() {
   if (state.view === "issue") await loadIssueDetail();
   else await loadKanban();
 }
 
-// ── kanban ───────────────────────────────────────────────────────────────
+// ── kanban ──────────────────────────────────────────────────────────────
+
+function mandateLabel(value) {
+  if (value === "impl-only") return t("mandate.implOnlyShort");
+  return t("mandate.planImplShort");
+}
+
+function directionMeta(dir) {
+  const repo = state.repos.find((candidate) => candidate.id === dir.repo_id);
+  const parts = [repo ? repo.name : dir.repo_id, mandateLabel(dir.mandate)];
+  if (dir.branch) parts.push(dir.branch);
+  return parts.join(" · ");
+}
+
+function directionActions(dir) {
+  const actions = el("div", { class: "btns" });
+  if (!dir.codex_thread_id) {
+    const spawn = withIcon(el("button", { type: "button", text: t("dir.spawn") }), "play");
+    spawn.onclick = () =>
+      withPending(spawn, "loading.startingTask", async () => {
+        await api(`/api/directions/${dir.id}/spawn`, { method: "POST", body: "{}" });
+        await reloadCurrent();
+      }).catch(notifyError);
+    actions.appendChild(spawn);
+  } else {
+    const link = threadLink(dir.codex_thread_id);
+    if (link) actions.appendChild(link);
+    const message = withIcon(el("button", { type: "button", text: t("dir.msg") }), "send");
+    message.onclick = () =>
+      messageDialog((text) =>
+        api(`/api/directions/${dir.id}/message`, {
+          method: "POST",
+          body: JSON.stringify({ text }),
+        })
+      );
+    actions.appendChild(message);
+  }
+
+  const move = withIcon(el("button", { type: "button", text: t("dir.move") }), "chevron");
+  move.onclick = () => moveDirectionDialog(dir);
+  actions.appendChild(move);
+
+  if (dir.attention) {
+    const clear = withIcon(el("button", { type: "button", text: t("dir.clearAttention") }), "flag");
+    clear.onclick = () =>
+      withPending(clear, "loading.clearingFlag", async () => {
+        await api(`/api/directions/${dir.id}/attention/clear`, { method: "POST", body: "{}" });
+        await reloadCurrent();
+      }).catch(notifyError);
+    actions.appendChild(clear);
+  }
+  return actions;
+}
 
 function directionCard(dir) {
-  const card = el("div", { class: "card" + (dir.attention ? " attention" : ""), draggable: "true" });
+  const card = el("article", {
+    class: `card${dir.attention ? " attention" : ""}`,
+    draggable: "true",
+    "aria-label": t("dir.cardLabel", { name: dir.name }),
+  });
   card.dataset.directionId = dir.id;
   const name = el("div", { class: "name", text: dir.name });
   if (dir.attention) {
-    name.appendChild(el("span", { class: "badge", text: dir.attention_reason || "!" }));
+    name.appendChild(el("span", { class: "badge", text: dir.attention_reason || t("dir.attention") }));
   }
   card.appendChild(name);
-  const repo = state.repos.find((r) => r.id === dir.repo_id);
-  card.appendChild(
-    el("div", {
-      class: "sub",
-      text: `${repo ? repo.name : dir.repo_id} · ${dir.mandate}${dir.branch ? " · " + dir.branch : ""}`,
-    })
-  );
-  const btns = el("div", { class: "btns" });
-  if (!dir.codex_thread_id) {
-    const spawn = withIcon(el("button", { text: t("dir.spawn") }), "play");
-    spawn.onclick = () => api(`/api/directions/${dir.id}/spawn`, { method: "POST", body: "{}" }).then(reloadCurrent).catch((e) => toast(e.message));
-    btns.appendChild(spawn);
-  } else {
-    const link = threadLink(dir.codex_thread_id);
-    if (link) btns.appendChild(link);
-    const msg = withIcon(el("button", { text: t("dir.msg") }), "send");
-    msg.onclick = () => messageDialog((text) => api(`/api/directions/${dir.id}/message`, { method: "POST", body: JSON.stringify({ text }) }));
-    btns.appendChild(msg);
-  }
-  if (dir.attention) {
-    const clear = withIcon(el("button", { text: t("dir.clearAttention") }), "flag");
-    clear.onclick = () => api(`/api/directions/${dir.id}/attention/clear`, { method: "POST", body: "{}" }).then(reloadCurrent).catch((e) => toast(e.message));
-    btns.appendChild(clear);
-  }
-  card.appendChild(btns);
-  card.ondragstart = (e) => e.dataTransfer.setData("text/plain", String(dir.id));
+  card.appendChild(el("div", { class: "sub", text: directionMeta(dir) }));
+  card.appendChild(directionActions(dir));
+  card.ondragstart = (event) => event.dataTransfer.setData("text/plain", String(dir.id));
   return card;
 }
 
 function kanbanColumn(status, directions) {
-  const col = el("div", { class: "col" });
-  col.dataset.status = status;
-  col.appendChild(el("h4", { text: t("status." + status) }));
-  for (const dir of directions.filter((d) => d.status === status)) {
-    col.appendChild(directionCard(dir));
+  const column = el("section", { class: "col", "aria-labelledby": `status-${status}` });
+  column.dataset.status = status;
+  column.appendChild(el("h3", { id: `status-${status}`, text: t(`status.${status}`) }));
+  for (const dir of directions.filter((candidate) => candidate.status === status)) {
+    column.appendChild(directionCard(dir));
   }
-  col.ondragover = (e) => {
-    e.preventDefault();
-    col.classList.add("over");
+  column.ondragover = (event) => {
+    event.preventDefault();
+    column.classList.add("over");
   };
-  col.ondragleave = () => col.classList.remove("over");
-  col.ondrop = (e) => {
-    e.preventDefault();
-    col.classList.remove("over");
-    const id = e.dataTransfer.getData("text/plain");
-    api(`/api/directions/${id}/status`, { method: "POST", body: JSON.stringify({ status }) })
-      .then(loadKanban)
-      .catch((err) => toast(err.message));
+  column.ondragleave = () => column.classList.remove("over");
+  column.ondrop = async (event) => {
+    event.preventDefault();
+    column.classList.remove("over");
+    const id = event.dataTransfer.getData("text/plain");
+    if (!id) return;
+    column.setAttribute("aria-busy", "true");
+    try {
+      await api(`/api/directions/${id}/status`, {
+        method: "POST",
+        body: JSON.stringify({ status }),
+      });
+      await loadKanban();
+      notify(t("success.taskMoved", { status: t(`status.${status}`) }), "success");
+    } catch (error) {
+      notifyError(error);
+    } finally {
+      column.removeAttribute("aria-busy");
+    }
   };
-  return col;
+  return column;
+}
+
+function issueActions(issue) {
+  const actions = el("div", { class: "issue-actions" });
+  if (issue.lead_codex_thread_id) {
+    const link = threadLink(issue.lead_codex_thread_id);
+    if (link) actions.appendChild(link);
+    const message = withIcon(el("button", { type: "button", text: t("issue.msgLead") }), "send");
+    message.onclick = () =>
+      messageDialog((text) =>
+        api(`/api/issues/${issue.id}/message`, {
+          method: "POST",
+          body: JSON.stringify({ text }),
+        })
+      );
+    actions.appendChild(message);
+  } else {
+    const spawn = withIcon(el("button", { type: "button", text: t("issue.spawnLead") }), "play");
+    spawn.onclick = () =>
+      withPending(spawn, "loading.startingLead", async () => {
+        await api(`/api/issues/${issue.id}/spawn-lead`, { method: "POST", body: "{}" });
+        await reloadCurrent();
+      }).catch(notifyError);
+    actions.appendChild(spawn);
+  }
+  const addTask = withIcon(el("button", { type: "button", text: t("issue.addDirection") }), "plus");
+  addTask.onclick = () => directionDialog(issue.id);
+  actions.appendChild(addTask);
+  return actions;
 }
 
 function issueBlock(entry) {
   const { issue, directions } = entry;
-  const block = el("div", { class: "issue" });
-  const head = el("div", { class: "issue-head" });
-  const title = el("h3", { class: "issue-link", text: issue.title, title: t("issue.open") });
+  const block = el("article", { class: "issue" });
+  const head = el("header", { class: "issue-head" });
+  const identity = el("div", { class: "issue-identity" });
+  const heading = el("h2");
+  const title = el("button", { type: "button", class: "issue-title-link", text: issue.title });
   title.onclick = () => openIssueDetail(issue.id);
-  head.appendChild(title);
-  head.appendChild(el("span", { class: "meta", text: `#${issue.id} ${issue.slug}` }));
-  if (issue.lead_codex_thread_id) {
-    const link = threadLink(issue.lead_codex_thread_id);
-    if (link) head.appendChild(link);
-    const msgLead = withIcon(el("button", { text: t("issue.msgLead") }), "send");
-    msgLead.onclick = () => messageDialog((text) => api(`/api/issues/${issue.id}/message`, { method: "POST", body: JSON.stringify({ text }) }));
-    head.appendChild(msgLead);
-  } else {
-    const spawn = withIcon(el("button", { text: t("issue.spawnLead") }), "play");
-    spawn.onclick = () => api(`/api/issues/${issue.id}/spawn-lead`, { method: "POST", body: "{}" }).then(reloadCurrent).catch((e) => toast(e.message));
-    head.appendChild(spawn);
-  }
-  const open = withIcon(el("button", { text: t("issue.open") }), "chevron");
-  open.onclick = () => openIssueDetail(issue.id);
-  head.appendChild(open);
-  const addDir = withIcon(el("button", { text: t("issue.addDirection") }), "plus");
-  addDir.onclick = () => directionDialog(issue.id);
-  head.appendChild(addDir);
+  heading.appendChild(title);
+  identity.appendChild(heading);
+  identity.appendChild(el("span", { class: "meta", text: `#${issue.id} ${issue.slug}` }));
+  head.appendChild(identity);
+  head.appendChild(issueActions(issue));
   block.appendChild(head);
-  const cols = el("div", { class: "columns" });
-  for (const status of STATUSES) {
-    cols.appendChild(kanbanColumn(status, directions));
-  }
-  block.appendChild(cols);
+
+  const columns = el("div", { class: "columns" });
+  for (const status of STATUSES) columns.appendChild(kanbanColumn(status, directions));
+  block.appendChild(columns);
   return block;
 }
 
 function renderKanban() {
   const root = document.getElementById("issues");
-  root.innerHTML = "";
+  root.replaceChildren();
+  if (!state.workspaceId) {
+    root.appendChild(emptyState("empty.workspaceTitle", "empty.workspaceBody", "empty.workspaceAction", openWorkspaceDialog));
+    return;
+  }
+  if (!state.repos.length && !state.board.length) {
+    root.appendChild(
+      emptyState("empty.reposTitle", "empty.reposBody", "empty.reposAction", () => {
+        switchView("repos");
+        requestAnimationFrame(() => document.getElementById("new-repo-name").focus());
+      })
+    );
+    return;
+  }
   if (!state.board.length) {
-    root.appendChild(el("p", { class: "meta", text: t("empty.issues") }));
+    root.appendChild(emptyState("empty.issuesTitle", "empty.issuesBody"));
     return;
   }
   for (const entry of state.board) root.appendChild(issueBlock(entry));
 }
 
 async function messageDialog(send) {
-  const form = formFields([{ key: "text", label: "field.message", type: "textarea" }]);
-  const ok = await openModal("modal.messageTitle", form.wrap);
-  if (!ok) return;
-  const { text } = form.read();
-  if (!text.trim()) return;
-  try {
-    await send(text);
-    await reloadCurrent();
-  } catch (e) {
-    toast(e.message);
-  }
+  const form = formFields([
+    {
+      key: "text",
+      label: "field.message",
+      type: "textarea",
+      required: true,
+      error: "validation.message",
+      maxLength: 20000,
+    },
+  ]);
+  const sent = await openModal({
+    titleKey: "modal.messageTitle",
+    submitKey: "modal.sendMessage",
+    loadingKey: "loading.sendingMessage",
+    contentNode: form.wrap,
+    initialFocus: form.inputs.text,
+    validate: form.validate,
+    onSubmit: async () => {
+      const { text } = form.read();
+      await send(text.trim());
+      await reloadCurrent();
+    },
+  });
+  if (sent) notify(t("success.messageSent"), "success");
 }
 
 async function directionDialog(issueId) {
-  // Slim capture (codex idiom: progressive disclosure). Primary = the two
-  // things only a human can supply (name + what to do); everything else is
-  // defaulted — repo auto-picked when the workspace has exactly one,
-  // mandate defaults server-side to plan+impl, base branch prefills from
-  // the repo's recorded base_ref — tucked behind an Advanced disclosure.
   if (!state.repos.length) {
-    toast(t("task.noRepo"));
+    notify(t("task.noRepo"), "error");
     return;
   }
-  const multi = state.repos.length > 1;
-  const wrap = el("div");
-  const inputs = {};
-  const addField = (key, labelKey, node, host) => {
-    (host || wrap).appendChild(el("label", { text: t(labelKey) }));
-    (host || wrap).appendChild(node);
-    inputs[key] = node;
-  };
-  addField("name", "field.name", el("input"));
-  if (multi) {
-    const sel = el("select");
-    for (const r of state.repos) sel.appendChild(el("option", { value: r.id, text: r.name }));
-    addField("repo_id", "field.repo", sel);
+
+  const hasMultipleRepos = state.repos.length > 1;
+  const mainFields = [
+    {
+      key: "name",
+      label: "field.name",
+      required: true,
+      error: "validation.taskName",
+      maxLength: 120,
+    },
+  ];
+  if (hasMultipleRepos) {
+    mainFields.push({
+      key: "repo_id",
+      label: "field.repo",
+      type: "select",
+      options: state.repos.map((repo) => [repo.id, repo.name]),
+    });
   }
-  addField("spec", "field.spec", el("textarea"));
+  mainFields.push({ key: "spec", label: "field.spec", type: "textarea", maxLength: 20000 });
+  const mainForm = formFields(mainFields);
+
+  const repoFor = () => {
+    if (!hasMultipleRepos) return state.repos[0];
+    const id = Number(mainForm.inputs.repo_id.value);
+    return state.repos.find((repo) => repo.id === id);
+  };
+
+  const advancedForm = formFields([
+    {
+      key: "mandate",
+      label: "field.mandate",
+      type: "select",
+      value: "plan+impl",
+      options: [
+        ["plan+impl", t("mandate.planImpl")],
+        ["impl-only", t("mandate.implOnly")],
+      ],
+    },
+    {
+      key: "base_branch",
+      label: "field.baseBranch",
+      value: (repoFor() || {}).base_ref || "",
+      maxLength: 255,
+    },
+  ]);
   const advanced = el("details", { class: "advanced" });
   advanced.appendChild(el("summary", { text: t("field.advanced") }));
-  const mandate = el("select");
-  for (const [v, labelKey] of [["plan+impl", "mandate.planImpl"], ["impl-only", "mandate.implOnly"]]) {
-    mandate.appendChild(el("option", { value: v, text: t(labelKey) }));
-  }
-  addField("mandate", "field.mandate", mandate, advanced);
-  const repoFor = () => {
-    const id = multi ? Number(inputs.repo_id.value) : state.repos[0].id;
-    return state.repos.find((r) => r.id === id);
-  };
-  const base = el("input");
-  base.value = (repoFor() || {}).base_ref || "";
-  addField("base_branch", "field.baseBranch", base, advanced);
-  if (multi) {
-    inputs.repo_id.onchange = () => {
-      base.value = (repoFor() || {}).base_ref || "";
+  advanced.appendChild(advancedForm.wrap);
+  mainForm.wrap.appendChild(advanced);
+
+  if (hasMultipleRepos) {
+    mainForm.inputs.repo_id.onchange = () => {
+      advancedForm.inputs.base_branch.value = (repoFor() || {}).base_ref || "";
     };
   }
-  wrap.appendChild(advanced);
-  const ok = await openModal("modal.directionTitle", wrap);
-  if (!ok) return;
-  const name = inputs.name.value.trim();
-  if (!name) return;
-  const repo = repoFor();
-  const body = {
-    name,
-    slug: slugify(name),
-    repo_id: repo.id,
-    spec: inputs.spec.value,
-    mandate: inputs.mandate.value,
-    base_branch: inputs.base_branch.value.trim() || repo.base_ref || "",
-  };
-  try {
-    await api(`/api/issues/${issueId}/directions`, { method: "POST", body: JSON.stringify(body) });
-    await reloadCurrent();
-  } catch (e) {
-    toast(e.message);
+
+  const created = await openModal({
+    titleKey: "modal.directionTitle",
+    submitKey: "modal.createTask",
+    loadingKey: "loading.creatingTask",
+    contentNode: mainForm.wrap,
+    initialFocus: mainForm.inputs.name,
+    validate: mainForm.validate,
+    onSubmit: async () => {
+      const main = mainForm.read();
+      const advancedValues = advancedForm.read();
+      const repo = repoFor();
+      if (!repo) throw new Error(t("task.noRepo"));
+      await api(`/api/issues/${issueId}/directions`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: main.name.trim(),
+          slug: slugify(main.name),
+          repo_id: repo.id,
+          spec: main.spec,
+          mandate: advancedValues.mandate,
+          base_branch: advancedValues.base_branch.trim() || repo.base_ref || "",
+        }),
+      });
+      await reloadCurrent();
+    },
+  });
+  if (created) notify(t("success.taskCreated"), "success");
+}
+
+async function moveDirectionDialog(dir) {
+  const form = formFields([
+    {
+      key: "status",
+      label: "field.status",
+      type: "select",
+      value: dir.status,
+      options: STATUSES.map((status) => [status, t(`status.${status}`)]),
+    },
+  ]);
+  const moved = await openModal({
+    titleKey: "modal.moveTaskTitle",
+    submitKey: "modal.moveTask",
+    loadingKey: "loading.movingTask",
+    contentNode: form.wrap,
+    initialFocus: form.inputs.status,
+    validate: form.validate,
+    onSubmit: async () => {
+      const { status } = form.read();
+      await api(`/api/directions/${dir.id}/status`, {
+        method: "POST",
+        body: JSON.stringify({ status }),
+      });
+      await reloadCurrent();
+    },
+  });
+  if (moved) {
+    const { status } = form.read();
+    notify(t("success.taskMoved", { status: t(`status.${status}`) }), "success");
   }
 }
 
-// ── issue detail view ──────────────────────────────────────────────────────
+// ── issue detail ────────────────────────────────────────────────────────
 
 function openIssueDetail(issueId) {
   state.detailIssueId = issueId;
@@ -406,33 +802,58 @@ function openIssueDetail(issueId) {
 function fmtTs(ts) {
   const ms = Number(ts) * 1000;
   if (!Number.isFinite(ms) || ms <= 0) return ts || "";
-  return new Date(ms).toLocaleString();
+  const locale = state.lang === "zh" ? "zh-CN" : "en-US";
+  return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(ms));
 }
 
 function directionDetail(dir) {
-  const wrap = el("div", { class: "dir-detail" });
-  wrap.appendChild(directionCard(dir));
-  if (dir.reason) {
-    wrap.appendChild(el("div", { class: "sub", text: dir.reason }));
-  }
+  const article = el("article", { class: "task-detail" });
+  const header = el("header", { class: "task-detail-head" });
+  const identity = el("div", { class: "task-detail-identity" });
+  identity.appendChild(el("h3", { text: dir.name }));
+  identity.appendChild(el("p", { class: "meta", text: directionMeta(dir) }));
+  header.appendChild(identity);
+  header.appendChild(
+    el("span", {
+      class: `status-chip status-${dir.status}`,
+      text: t(`status.${dir.status}`),
+    })
+  );
+  header.appendChild(directionActions(dir));
+  article.appendChild(header);
+  if (dir.reason) article.appendChild(el("p", { class: "task-reason", text: dir.reason }));
   if (dir.spec) {
-    wrap.appendChild(el("pre", { class: "spec", text: dir.spec }));
+    const brief = el("section", { class: "task-brief" });
+    brief.appendChild(el("h4", { text: t("detail.taskBrief") }));
+    brief.appendChild(el("pre", { class: "spec", text: dir.spec }));
+    article.appendChild(brief);
   }
-  return wrap;
+  return article;
 }
 
-function busTimeline(rows) {
+function partyLabel(party, directions) {
+  if (party === "human") return t("party.you");
+  if (party === "lead") return t("party.lead");
+  const id = Number(party);
+  const task = directions.find((direction) => direction.id === id);
+  if (task) return task.name;
+  return t("party.task");
+}
+
+function busTimeline(rows, directions) {
   const wrap = el("div", { class: "timeline" });
   if (!rows.length) {
     wrap.appendChild(el("p", { class: "meta", text: t("detail.emptyBus") }));
     return wrap;
   }
-  for (const r of rows) {
-    const cls = r.from_party === "human" ? "msg human" : "msg";
+  for (const row of rows) {
+    const className = row.from_party === "human" ? "msg human" : "msg";
+    const from = partyLabel(row.from_party, directions);
+    const to = partyLabel(row.to_party, directions);
     wrap.appendChild(
-      el("div", { class: cls }, [
-        el("div", { class: "msg-meta", text: `${r.from_party} → ${r.to_party || "?"} · ${fmtTs(r.ts)}` }),
-        el("div", { class: "msg-text", text: r.text }),
+      el("article", { class: className }, [
+        el("div", { class: "msg-meta", text: `${from} → ${to} · ${fmtTs(row.ts)}` }),
+        el("div", { class: "msg-text", text: row.text }),
       ])
     );
   }
@@ -442,100 +863,161 @@ function busTimeline(rows) {
 async function loadIssueDetail() {
   if (!state.detailIssueId || !state.workspaceId) return;
   state.board = await api(`/api/issues?workspace_id=${state.workspaceId}`);
-  const entry = state.board.find((e) => e.issue.id === state.detailIssueId);
+  const entry = state.board.find((candidate) => candidate.issue.id === state.detailIssueId);
   const root = document.getElementById("issue-detail");
-  root.innerHTML = "";
+  root.replaceChildren();
   if (!entry) {
-    root.appendChild(el("p", { class: "meta", text: `#${state.detailIssueId}` }));
+    root.appendChild(emptyState("detail.notFoundTitle", "detail.notFoundBody", "detail.back", () => switchView("kanban")));
     return;
   }
+
   const { issue, directions } = entry;
-  const head = el("div", { class: "issue-head detail-head" });
-  head.appendChild(el("h3", { text: issue.title }));
-  head.appendChild(el("span", { class: "meta", text: `#${issue.id} ${issue.slug}` }));
-  if (issue.lead_codex_thread_id) {
-    const link = threadLink(issue.lead_codex_thread_id);
-    if (link) head.appendChild(link);
-    const msgLead = withIcon(el("button", { text: t("issue.msgLead") }), "send");
-    msgLead.onclick = () => messageDialog((text) => api(`/api/issues/${issue.id}/message`, { method: "POST", body: JSON.stringify({ text }) }));
-    head.appendChild(msgLead);
-  } else {
-    const spawn = withIcon(el("button", { text: t("issue.spawnLead") }), "play");
-    spawn.onclick = () => api(`/api/issues/${issue.id}/spawn-lead`, { method: "POST", body: "{}" }).then(reloadCurrent).catch((e) => toast(e.message));
-    head.appendChild(spawn);
-  }
-  const addDir = withIcon(el("button", { text: t("issue.addDirection") }), "plus");
-  addDir.onclick = () => directionDialog(issue.id);
-  head.appendChild(addDir);
+  document.getElementById("issue-detail-heading").textContent = issue.title;
+  const head = el("header", { class: "issue-head detail-head" });
+  const identity = el("div", { class: "issue-identity" });
+  identity.appendChild(el("div", { class: "detail-title", text: issue.title }));
+  identity.appendChild(el("span", { class: "meta", text: `#${issue.id} ${issue.slug}` }));
+  head.appendChild(identity);
+  head.appendChild(issueActions(issue));
   root.appendChild(head);
 
-  root.appendChild(el("h2", { text: t("detail.directions") }));
-  const dirs = el("div", { class: "dir-list" });
-  for (const dir of directions) dirs.appendChild(directionDetail(dir));
-  root.appendChild(dirs);
+  root.appendChild(el("h2", { class: "section-title", text: t("detail.directions") }));
+  const tasks = el("div", { class: "task-list" });
+  if (!directions.length) tasks.appendChild(el("p", { class: "meta", text: t("detail.noTasks") }));
+  for (const direction of directions) tasks.appendChild(directionDetail(direction));
+  root.appendChild(tasks);
 
-  root.appendChild(el("h2", { text: t("detail.busTimeline") }));
+  root.appendChild(el("h2", { class: "section-title", text: t("detail.busTimeline") }));
   const rows = await api(`/api/issues/${issue.id}/bus`);
-  root.appendChild(busTimeline(rows));
+  root.appendChild(busTimeline(rows, directions));
 }
 
-// ── repos view ─────────────────────────────────────────────────────────────
+// ── repositories ────────────────────────────────────────────────────────
+
+function profileStateLabel(profile) {
+  if (!profile) return t("repo.state.notAnalyzed");
+  return t(`repo.state.${profile.run_state}`);
+}
 
 function repoBlock(entry) {
   const { repo, profile } = entry;
-  const block = el("div", { class: "repo" });
-  block.appendChild(el("h3", { text: repo.name }));
-  block.appendChild(el("span", { class: "path", text: repo.path }));
-  const analyze = el("button", { text: t("repo.analyze") });
-  analyze.onclick = () => api(`/api/repos/${repo.id}/analyze`, { method: "POST", body: "{}" }).catch((e) => toast(e.message));
-  block.appendChild(el("span", { text: " " }));
-  block.appendChild(analyze);
+  const article = el("article", { class: "repo" });
+  const header = el("header", { class: "repo-head" });
+  const identity = el("div", { class: "repo-identity" });
+  identity.appendChild(el("h2", { text: repo.name }));
+  identity.appendChild(el("code", { class: "path", text: repo.path }));
+  header.appendChild(identity);
+
+  const actions = el("div", { class: "repo-actions" });
+  actions.appendChild(
+    el("span", {
+      class: `runstate runstate-${profile ? profile.run_state : "idle"}`,
+      text: profileStateLabel(profile),
+    })
+  );
+  const analyze = el("button", { type: "button", text: t("repo.analyze") });
+  analyze.onclick = () =>
+    withPending(analyze, "loading.analyzingRepo", async () => {
+      await api(`/api/repos/${repo.id}/analyze`, { method: "POST", body: "{}" });
+      notify(t("success.analysisStarted"), "success");
+      await loadRepos();
+    }).catch(notifyError);
+  actions.appendChild(analyze);
+  header.appendChild(actions);
+  article.appendChild(header);
+
+  if (profile && profile.run_error) {
+    article.appendChild(el("p", { class: "repo-error", text: profile.run_error }));
+  }
+  if (profile && profile.summary) {
+    article.appendChild(el("p", { class: "summary", text: profile.summary }));
+  }
   if (profile) {
-    const stateEl = el("span", {
-      class: "runstate-" + profile.run_state,
-      text: ` ${profile.run_state}${profile.run_error ? " — " + profile.run_error : ""}`,
-    });
-    block.appendChild(stateEl);
-    if (profile.summary) block.appendChild(el("p", { class: "summary", text: profile.summary }));
     const tags = el("div", { class: "tags" });
     if (profile.tier) tags.appendChild(el("span", { class: "tag", text: profile.tier }));
-    if (profile.layer) tags.appendChild(el("span", { class: "tag layer", text: `${profile.layer} #${profile.layer_rank}` }));
+    if (profile.layer) {
+      tags.appendChild(el("span", { class: "tag layer", text: `${profile.layer} #${profile.layer_rank}` }));
+    }
     try {
-      for (const s of JSON.parse(profile.stack || "[]")) tags.appendChild(el("span", { class: "tag", text: s }));
-    } catch (_) { /* tolerate legacy shapes */ }
-    block.appendChild(tags);
+      for (const item of JSON.parse(profile.stack || "[]")) {
+        tags.appendChild(el("span", { class: "tag", text: item }));
+      }
+    } catch (_) {
+      // Legacy profile shapes remain readable without blocking the page.
+    }
+    if (tags.childElementCount) article.appendChild(tags);
   }
-  return block;
+  return article;
 }
 
 function renderRepos() {
   const root = document.getElementById("repo-list");
-  root.innerHTML = "";
-  const entries = (state.repoMap && state.repoMap.repos) || [];
-  if (!entries.length) {
-    root.appendChild(el("p", { class: "meta", text: t("empty.repos") }));
+  const mapSection = document.getElementById("repo-map-section");
+  const mapEmpty = document.getElementById("repo-map-empty");
+  const mapDocument = document.getElementById("repo-map-doc");
+  const analyzeWorkspace = document.getElementById("analyze-ws");
+  const analyzeRelations = document.getElementById("analyze-relations");
+  root.replaceChildren();
+
+  if (!state.workspaceId) {
+    mapSection.hidden = true;
+    analyzeWorkspace.disabled = true;
+    analyzeRelations.disabled = true;
+    root.appendChild(emptyState("empty.workspaceTitle", "empty.workspaceBody", "empty.workspaceAction", openWorkspaceDialog));
+    return;
   }
+
+  const hasRepos = state.repos.length > 0;
+  analyzeWorkspace.disabled = !hasRepos;
+  analyzeRelations.disabled = !hasRepos;
+  const entries = (state.repoMap && state.repoMap.repos) || [];
+
+  if (!hasRepos) {
+    mapSection.hidden = true;
+    root.appendChild(emptyState("empty.reposTitle", "empty.reposBody"));
+    return;
+  }
+
   for (const entry of entries) root.appendChild(repoBlock(entry));
   const relations = (state.repoMap && state.repoMap.relations) || [];
   if (relations.length) {
-    root.appendChild(el("h2", { text: t("repo.relations") }));
-    for (const r of relations) {
-      root.appendChild(
-        el("div", { class: "rel", text: `${r.from_repo} → ${r.to_repo}  [${r.kind} · ${r.confidence}]  ${r.rationale}` })
+    const relationSection = el("section", { class: "relations" });
+    relationSection.appendChild(el("h2", { class: "section-title", text: t("repo.relations") }));
+    for (const relation of relations) {
+      relationSection.appendChild(
+        el("div", {
+          class: "rel",
+          text: `${relation.from_repo} → ${relation.to_repo} · ${relation.kind} · ${relation.confidence} · ${relation.rationale}`,
+        })
       );
     }
+    root.appendChild(relationSection);
   }
-  document.getElementById("repo-map-doc").textContent = (state.repoMap && state.repoMap.repoMap) || "";
+
+  const mapText = (state.repoMap && state.repoMap.repoMap) || "";
+  mapSection.hidden = false;
+  mapEmpty.hidden = Boolean(mapText);
+  mapDocument.hidden = !mapText;
+  mapDocument.textContent = mapText;
 }
 
-// ── events (SSE) ───────────────────────────────────────────────────────────
+// ── events ──────────────────────────────────────────────────────────────
+
+function setConnection(connected) {
+  const connection = document.getElementById("conn");
+  const label = document.getElementById("conn-label");
+  const key = connected ? "status.connected" : "status.disconnected";
+  connection.dataset.state = connected ? "up" : "down";
+  connection.setAttribute("aria-label", t(key));
+  connection.title = t(key);
+  label.textContent = t(key);
+}
 
 function connectEvents() {
-  const src = new EventSource("/api/events");
-  const conn = document.getElementById("conn");
+  const source = new EventSource("/api/events");
   let timer = null;
   const poke = () => {
-    conn.classList.remove("down");
+    setConnection(true);
     clearTimeout(timer);
     timer = setTimeout(refresh, 400);
   };
@@ -551,101 +1033,141 @@ function connectEvents() {
     "bus.undelivered",
     "thread.human-active",
   ];
-  for (const name of names) {
-    src.addEventListener(name, poke);
-  }
-  src.onerror = () => conn.classList.add("down");
-  src.onopen = () => conn.classList.remove("down");
+  for (const name of names) source.addEventListener(name, poke);
+  source.onerror = () => setConnection(false);
+  source.onopen = () => setConnection(true);
 }
 
-// ── wiring ────────────────────────────────────────────────────────────────
+// ── wiring ──────────────────────────────────────────────────────────────
 
 function switchView(view) {
   state.view = view;
-  document.querySelectorAll(".nav-btn").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
+  const navView = view === "issue" ? "kanban" : view;
+  document.querySelectorAll(".nav-btn").forEach((button) => {
+    const active = button.dataset.view === navView;
+    button.classList.toggle("active", active);
+    if (active) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
   document.getElementById("view-kanban").classList.toggle("active", view === "kanban");
   document.getElementById("view-repos").classList.toggle("active", view === "repos");
   document.getElementById("view-issue").classList.toggle("active", view === "issue");
   refresh();
 }
 
-async function boot() {
-  applyI18n();
-  // Static-chrome icons (codex surfaces are icon-led).
+function wireStaticActions() {
   withIcon(document.querySelector('[data-view="kanban"]'), "kanban");
   withIcon(document.querySelector('[data-view="repos"]'), "repo");
   withIcon(document.getElementById("add-workspace"), "plus");
   withIcon(document.getElementById("create-issue"), "plus");
   withIcon(document.getElementById("add-repo"), "plus");
   withIcon(document.getElementById("issue-back"), "back");
-  document.querySelectorAll(".nav-btn").forEach((b) => (b.onclick = () => switchView(b.dataset.view)));
-  document.getElementById("workspace-select").onchange = async (e) => {
-    state.workspaceId = Number(e.target.value);
-    state.repos = await api(`/api/workspaces/${state.workspaceId}/repos`);
-    state.detailIssueId = null;
-    switchView("kanban");
-  };
+
+  document.querySelectorAll(".nav-btn").forEach((button) => {
+    button.onclick = () => switchView(button.dataset.view);
+  });
+  document.getElementById("add-workspace").onclick = openWorkspaceDialog;
   document.getElementById("issue-back").onclick = () => {
     state.detailIssueId = null;
     switchView("kanban");
   };
-  document.getElementById("add-workspace").onclick = async () => {
-    const form = formFields([{ key: "name", label: "field.name" }]);
-    const ok = await openModal("modal.workspaceTitle", form.wrap);
-    if (!ok) return;
-    const { name } = form.read();
-    if (!name.trim()) return;
-    try {
-      const { id } = await api("/api/workspaces", { method: "POST", body: JSON.stringify({ name, slug: slugify(name) }) });
-      state.workspaceId = id;
-      await loadWorkspaces();
-      refresh();
-    } catch (e) {
-      toast(e.message);
-    }
-  };
-  document.getElementById("create-issue").onclick = async () => {
-    const title = document.getElementById("new-issue-title").value;
-    if (!title.trim() || !state.workspaceId) return;
-    try {
-      await api("/api/issues", {
-        method: "POST",
-        body: JSON.stringify({ workspace_id: state.workspaceId, title, slug: slugify(title) }),
-      });
-      document.getElementById("new-issue-title").value = "";
-      await loadKanban();
-    } catch (e) {
-      toast(e.message);
-    }
-  };
-  document.getElementById("add-repo").onclick = async () => {
-    const name = document.getElementById("new-repo-name").value;
-    const path = document.getElementById("new-repo-path").value;
-    if (!name.trim() || !path.trim() || !state.workspaceId) return;
-    try {
-      await api(`/api/workspaces/${state.workspaceId}/repos`, {
-        method: "POST",
-        body: JSON.stringify({ name, path, base_ref: "main" }),
-      });
-      document.getElementById("new-repo-name").value = "";
-      document.getElementById("new-repo-path").value = "";
-      state.repos = await api(`/api/workspaces/${state.workspaceId}/repos`);
-      await loadRepos();
-    } catch (e) {
-      toast(e.message);
-    }
-  };
-  document.getElementById("analyze-ws").onclick = () =>
-    api(`/api/workspaces/${state.workspaceId}/analyze`, { method: "POST", body: "{}" }).catch((e) => toast(e.message));
-  document.getElementById("analyze-relations").onclick = () =>
-    api(`/api/workspaces/${state.workspaceId}/analyze-relations`, { method: "POST", body: "{}" }).catch((e) => toast(e.message));
-
-  await loadWorkspaces();
-  if (state.workspaceId) {
+  document.getElementById("workspace-select").onchange = async (event) => {
+    state.workspaceId = Number(event.target.value);
     state.repos = await api(`/api/workspaces/${state.workspaceId}/repos`);
-    await loadKanban();
-  }
+    updateWorkspaceAvailability();
+    state.detailIssueId = null;
+    switchView("kanban");
+  };
+
+  const issueForm = document.getElementById("issue-create-form");
+  const issueInput = document.getElementById("new-issue-title");
+  const issueError = document.getElementById("issue-form-error");
+  issueInput.oninput = () => clearInlineError(issueInput, issueError);
+  issueForm.onsubmit = async (event) => {
+    event.preventDefault();
+    if (!state.workspaceId) return;
+    const title = issueInput.value.trim();
+    if (!title) {
+      showInlineError(issueInput, issueError, t("validation.issueTitle"));
+      return;
+    }
+    const button = document.getElementById("create-issue");
+    try {
+      await withPending(button, "loading.creatingIssue", async () => {
+        await api("/api/issues", {
+          method: "POST",
+          body: JSON.stringify({ workspace_id: state.workspaceId, title, slug: slugify(title) }),
+        });
+        issueInput.value = "";
+        await loadKanban();
+      });
+      notify(t("success.issueCreated"), "success");
+    } catch (error) {
+      notifyError(error);
+    }
+  };
+
+  const repoForm = document.getElementById("repo-register-form");
+  const repoName = document.getElementById("new-repo-name");
+  const repoPath = document.getElementById("new-repo-path");
+  const repoError = document.getElementById("repo-form-error");
+  repoName.oninput = () => clearInlineError(repoName, repoError);
+  repoPath.oninput = () => clearInlineError(repoPath, repoError);
+  repoForm.onsubmit = async (event) => {
+    event.preventDefault();
+    if (!state.workspaceId) return;
+    const name = repoName.value.trim();
+    const path = repoPath.value.trim();
+    if (!name) {
+      showInlineError(repoName, repoError, t("validation.repoName"));
+      return;
+    }
+    if (!path) {
+      showInlineError(repoPath, repoError, t("validation.repoPath"));
+      return;
+    }
+    const button = document.getElementById("add-repo");
+    try {
+      await withPending(button, "loading.addingRepo", async () => {
+        await api(`/api/workspaces/${state.workspaceId}/repos`, {
+          method: "POST",
+          body: JSON.stringify({ name, path, base_ref: "main" }),
+        });
+        repoName.value = "";
+        repoPath.value = "";
+        await loadRepos();
+      });
+      notify(t("success.repoAdded"), "success");
+    } catch (error) {
+      notifyError(error);
+    }
+  };
+
+  const analyzeWorkspace = document.getElementById("analyze-ws");
+  analyzeWorkspace.onclick = () =>
+    withPending(analyzeWorkspace, "loading.analyzingWorkspace", async () => {
+      await api(`/api/workspaces/${state.workspaceId}/analyze`, { method: "POST", body: "{}" });
+      notify(t("success.analysisStarted"), "success");
+      await loadRepos();
+    }).catch(notifyError);
+
+  const analyzeRelations = document.getElementById("analyze-relations");
+  analyzeRelations.onclick = () =>
+    withPending(analyzeRelations, "loading.analyzingRelations", async () => {
+      await api(`/api/workspaces/${state.workspaceId}/analyze-relations`, { method: "POST", body: "{}" });
+      notify(t("success.relationsStarted"), "success");
+      await loadRepos();
+    }).catch(notifyError);
+}
+
+async function boot() {
+  applyI18n();
+  wireStaticActions();
+  document.querySelector('[data-view="kanban"]').setAttribute("aria-current", "page");
+  await loadWorkspaces();
+  if (state.workspaceId) state.repos = await api(`/api/workspaces/${state.workspaceId}/repos`);
+  await loadKanban();
   connectEvents();
 }
 
-boot().catch((e) => toast(e.message));
+boot().catch(notifyError);
