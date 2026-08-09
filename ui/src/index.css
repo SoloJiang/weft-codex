@@ -316,27 +316,6 @@ html[data-ui-surface="workspace"] .embedded-main {
 
 .sidebar-primary-actions { display: grid; gap: 2px; }
 
-.host-security-notice {
-  width: fit-content;
-  min-height: 18px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 6px;
-  color: var(--dim);
-  font-size: 10.5px;
-  line-height: 1.35;
-}
-
-.host-security-notice::before {
-  content: "";
-  width: 6px;
-  height: 6px;
-  flex: none;
-  border-radius: 999px;
-  background: var(--warn);
-}
-
 .sidebar-create-button {
   width: 100%;
   justify-content: flex-start;

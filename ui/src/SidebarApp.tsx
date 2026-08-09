@@ -26,7 +26,7 @@ function errorText(error: unknown, network: string, unknown: string): string {
   return unknown
 }
 
-export default function SidebarApp({ cspBypass = false }: { cspBypass?: boolean }) {
+export default function SidebarApp() {
   const { t, lang } = useI18n()
   const [workspaces, setWorkspaces] = React.useState<Workspace[]>([])
   const [workspaceId, setWorkspaceId] = React.useState<number | null>(readInitialWorkspaceId)
@@ -212,12 +212,6 @@ export default function SidebarApp({ cspBypass = false }: { cspBypass?: boolean 
           <Plus aria-hidden="true" />
         </Button>
       </div>
-
-      {cspBypass ? (
-        <div className="host-security-notice" role="status" title={t("host.compatibilityDescription")}>
-          {t("host.compatibilityMode")}
-        </div>
-      ) : null}
 
       <div className="sidebar-primary-actions">
         <Button

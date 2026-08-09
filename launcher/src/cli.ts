@@ -26,7 +26,7 @@ import { probeRenderer } from "./probes.js"
 import { RendererSupervisor, type RendererHostEvent, type RendererReadySnapshot } from "./renderer-host.js"
 import type { HostMode } from "./renderer-agent.js"
 
-const HOST_VERSION = "0.1.0"
+const HOST_VERSION = "0.1.1"
 
 function option(name: string): string | undefined {
   const prefix = `--${name}=`

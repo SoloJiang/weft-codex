@@ -11,11 +11,9 @@ const surface = readUiSurface()
 document.documentElement.dataset.uiSurface = surface
 
 function Root() {
-  const { lang, context } = useHostContext()
+  const { lang } = useHostContext()
   let content = <App />
-  if (surface === "sidebar") {
-    content = <SidebarApp cspBypass={context?.security?.cspBypass === true} />
-  }
+  if (surface === "sidebar") content = <SidebarApp />
   if (surface === "workspace") content = <App embedded />
   return (
     <I18nProvider lang={lang}>

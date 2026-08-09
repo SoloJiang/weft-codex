@@ -9,9 +9,6 @@ const en = {
   "sidebar.needsAttention": "Needs attention",
   "sidebar.noIssues": "No issues yet",
   "sidebar.taskProgress": "{done} of {total} tasks done",
-  "host.compatibilityMode": "Desktop compatibility mode",
-  "host.compatibilityDescription": "This Codex release requires CSP compatibility mode for the local workspace surface.",
-
   "workspace.label": "Workspace",
   "workspace.none": "No workspace yet",
   "workspace.namePlaceholder": "Workspace name",

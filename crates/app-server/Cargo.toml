@@ -1,6 +1,6 @@
 [package]
 name = "weft-app-server"
-version = "0.1.0"
+version = "0.1.1"
 description = "Codex app-server client (ported from weft codex_app_server.rs)"
 edition.workspace = true
 

@@ -3,7 +3,7 @@ set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
-VERSION=${WEFT_CODEX_VERSION:-0.1.0}
+VERSION=${WEFT_CODEX_VERSION:-0.1.1}
 MACHINE_ARCH=$(uname -m)
 
 case "$MACHINE_ARCH" in
