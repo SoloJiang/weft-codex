@@ -162,6 +162,36 @@ textarea {
 select,
 input { height: var(--control-h); }
 
+.select-shell {
+  position: relative;
+  display: inline-flex;
+  min-width: 0;
+  color: var(--dim);
+}
+
+.select-shell select {
+  width: 100%;
+  padding-inline-end: 32px;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.select-shell::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  inset-inline-end: 13px;
+  width: 6px;
+  height: 6px;
+  border-inline-end: 1.5px solid currentColor;
+  border-block-end: 1.5px solid currentColor;
+  transform: translateY(-65%) rotate(45deg);
+  pointer-events: none;
+}
+
+.select-shell:focus-within { color: var(--text); }
+.select-shell:has(select:disabled) { opacity: 0.48; }
+
 textarea {
   width: 100%;
   min-height: 96px;
@@ -227,7 +257,8 @@ a { color: var(--link); }
   gap: var(--space-2);
 }
 
-#workspace-select { min-width: 150px; max-width: 280px; }
+.workspace-select-shell { width: 150px; max-width: 280px; }
+#workspace-select { min-width: 0; }
 .nav-btn.active { background: var(--hover); }
 
 .connection {
@@ -660,6 +691,7 @@ main {
 .form-field input,
 .form-field select,
 .form-field textarea { width: 100%; }
+.form-field .select-shell { width: 100%; }
 .field-error { margin-top: 5px; }
 
 details.advanced { margin-top: 12px; }
@@ -741,7 +773,7 @@ details.advanced > .form-stack { margin-top: 10px; }
     gap: 6px;
   }
 
-  #workspace-select { min-width: 0; max-width: none; flex: 1; }
+  .workspace-select-shell { width: auto; max-width: none; flex: 1; }
   .connection { padding-right: 0; }
   main { padding: 12px; }
 

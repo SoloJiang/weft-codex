@@ -224,7 +224,13 @@ function formFields(fields) {
     control.addEventListener("change", () => clearInlineError(control, errorNode));
 
     fieldWrap.appendChild(label);
-    fieldWrap.appendChild(control);
+    if (field.type === "select") {
+      const selectShell = el("span", { class: "select-shell" });
+      selectShell.appendChild(control);
+      fieldWrap.appendChild(selectShell);
+    } else {
+      fieldWrap.appendChild(control);
+    }
     fieldWrap.appendChild(errorNode);
     wrap.appendChild(fieldWrap);
     inputs[field.key] = control;
