@@ -16,7 +16,6 @@ export interface WorkActions {
   onMoveTask: (id: number, status: DirectionStatus) => Promise<void>
   onMessageLead: (issue: Issue) => void
   onMessageTask: (direction: Direction) => void
-  onNewTask: (issue: Issue) => void
   onMoveTaskDialog: (direction: Direction) => void
 }
 
@@ -107,10 +106,6 @@ export function IssueActions({ issue, actions }: { issue: Issue; actions: WorkAc
           <Play aria-hidden="true" />
         </AsyncButton>
       )}
-      <Button variant="ghost" onClick={() => actions.onNewTask(issue)}>
-        <Plus aria-hidden="true" />
-        {t("issue.addDirection")}
-      </Button>
     </div>
   )
 }

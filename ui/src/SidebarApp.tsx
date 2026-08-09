@@ -33,7 +33,6 @@ export default function SidebarApp() {
   const [board, setBoard] = React.useState<BoardEntry[]>([])
   const [repoCount, setRepoCount] = React.useState(0)
   const [route, setRoute] = React.useState<SurfaceRoute>(readInitialRoute)
-  const [connected, setConnected] = React.useState(false)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState("")
   const [issueComposerOpen, setIssueComposerOpen] = React.useState(false)
@@ -102,7 +101,6 @@ export default function SidebarApp() {
     let timer: number | undefined
     let refreshWorkspaceList = false
     const scheduleRefresh = (event: Event) => {
-      setConnected(true)
       if (event.type === "workspace.updated") refreshWorkspaceList = true
       window.clearTimeout(timer)
       timer = window.setTimeout(() => {
@@ -117,8 +115,6 @@ export default function SidebarApp() {
     }
 
     for (const name of SIDEBAR_EVENT_NAMES) source.addEventListener(name, scheduleRefresh)
-    source.onopen = () => setConnected(true)
-    source.onerror = () => setConnected(false)
     return () => {
       window.clearTimeout(timer)
       source.close()
@@ -382,13 +378,11 @@ export default function SidebarApp() {
         ) : null}
       </div>
 
-      <footer className="sidebar-footer">
-        {error ? <span className="sidebar-error" role="alert" title={error}>{error}</span> : null}
-        <span className="sidebar-connection" data-state={connected ? "up" : "down"} role="status">
-          <span className="conn-dot" aria-hidden="true" />
-          {connected ? t("status.connected") : t("status.disconnected")}
-        </span>
-      </footer>
+      {error ? (
+        <footer className="sidebar-footer">
+          <span className="sidebar-error" role="alert" title={error}>{error}</span>
+        </footer>
+      ) : null}
     </aside>
   )
 }

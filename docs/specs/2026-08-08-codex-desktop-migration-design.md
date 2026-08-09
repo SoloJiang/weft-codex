@@ -76,7 +76,10 @@ Codex Desktop（官方，不修改安装包）
 lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
 
 - spawn lead：cwd = issue 主 repo（或 workspace 根），首条输入为 lead brief
-  （issue 上下文 + 可用 MCP 工具说明）。
+  （issue 上下文 + workspace 仓库 id / base branch + 可用 MCP 工具说明）。Lead
+  通过仅对 `lead` party 暴露的 `task_create` 拆出任务；工具要求完整 spec，校验
+  repo 属于当前 issue workspace，并发出 `direction.updated`。worker 无法列出或
+  调用该工具，用户界面也不提供手工新建任务。
 - spawn worker：materialize 出 worktree（repo_id + base_branch）→ 创建线程
   （cwd = worktree）→ 首条输入为 direction brief（按 mandate 渲染，
   plan+impl / impl-only，沿用现有 brief 模板）。
@@ -204,13 +207,14 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
 - **Surface 拆分（2026-08-09 已实现并实测）**：同一份 React 构建按 URL
   参数形成三种外壳，不复制业务组件：
   - `standalone`：浏览器降级面，保留 workspace selector、Kanban / 仓库入口
-    与连接状态 topbar；
+    topbar；weftd / SSE 健康状态不作为常驻产品元素，真实失败在具体操作处提示；
   - `sidebar`：Codex sidebar 内的全局导航，只放 workspace selector、Kanban、
     仓库、issue 列表和 attention 摘要；不放 Weft 品牌、语言/主题开关、聊天、
     长表单或 `direction` 术语。Issue 分组标题右侧提供 `+`，展开单字段内联
     创建器；创建后直接选中新 issue；
   - `workspace`：Codex 主区域，只渲染 Kanban / 仓库 / issue detail，移除重复
-    topbar 和重复的新建 issue 表单。lead / worker 沟通仍进入原生线程。
+    topbar 和重复的新建 issue 表单。Issue 详情不提供手工新建任务，任务由 lead
+    chat 调用 `task_create` 产生；lead / worker 沟通仍进入原生线程。
 - sidebar 与 workspace URL 携带同一个随机 `bridge_id`，通过同源
   `BroadcastChannel` 做 ready/request 握手，同步 workspace、route 与白名单
   command；没有 `bridge_id` 时不开通道，避免两个独立浏览器窗口串状态。

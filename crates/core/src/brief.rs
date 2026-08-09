@@ -12,15 +12,20 @@ pub const LEAD_PARTY: &str = "lead";
 /// The bus usage block appended to every brief. `bus_url` is this thread's
 /// per-thread MCP endpoint (registered as the `weft-bus` MCP server).
 fn bus_block(party: &str, bus_url: &str) -> String {
+    let lead_tool = if party == LEAD_PARTY {
+        "\n- `task_create(name, repo_id, spec, reason?, mandate?, base_branch?)` — create a worker task after decomposing the issue."
+    } else {
+        ""
+    };
     format!(
         "\n\n## Thread bus\n\
          You are party `{party}` on this issue's thread bus. An MCP server \
-         `weft-bus` is attached to this thread (endpoint {bus_url}) with two \
-         tools:\n\
+         `weft-bus` is attached to this thread (endpoint {bus_url}) with \
+         these tools:\n\
          - `bus_post(to, text)` — message another participant (`lead` or a \
-         direction id). Reports, questions, and completion notices go here.\n\
+         task id). Reports, questions, and completion notices go here.\n\
          - `bus_read()` — drain your inbox (fallback pull; messages are \
-         normally injected straight into this conversation)."
+         normally injected straight into this conversation).{lead_tool}"
     )
 }
 
@@ -51,7 +56,7 @@ pub fn direction_brief(
         format!("\nWhy this repo must change: {reason}")
     };
     format!(
-        "You are direction `{direction_name}` on issue: {issue_title}\n\
+        "You are the worker for task `{direction_name}` on issue: {issue_title}\n\
          Repo: {repo_name} (you write ONLY this repo; your working directory \
          is its dedicated worktree).\n\
          {spec_line}\
@@ -61,18 +66,37 @@ pub fn direction_brief(
 }
 
 /// First message for an issue's lead thread.
-pub fn lead_brief(issue_title: &str, directions: &[(i64, String)], bus_url: &str) -> String {
+pub fn lead_brief(
+    issue_title: &str,
+    tasks: &[(i64, String)],
+    repos: &[(i64, String, String)],
+    bus_url: &str,
+) -> String {
     let mut lines = format!(
         "You are the lead on issue: {issue_title}\n\
-         Coordinate the directions below; you do not write code yourself.\n\
-         Directions:\n"
+         You own decomposition and coordination; you do not write code yourself.\n\
+         Available repositories:\n"
     );
-    for (id, name) in directions {
+    if repos.is_empty() {
+        lines.push_str("- None. Ask the human to add a repository before creating tasks.\n");
+    }
+    for (id, name, base_ref) in repos {
+        lines.push_str(&format!("- `{id}`: {name} (base: {base_ref})\n"));
+    }
+    lines.push_str("Existing tasks:\n");
+    if tasks.is_empty() {
+        lines.push_str(
+            "- None yet. Decompose the issue and use `task_create` for each worker task.\n",
+        );
+    }
+    for (id, name) in tasks {
         lines.push_str(&format!("- `{id}`: {name}\n"));
     }
     lines.push_str(
-        "Track their bus reports, answer their questions, and synthesize the \
-         final outcome for the human.",
+        "Create tasks through `task_create`; the human does not create them \
+         manually. Keep each task scoped to one repository with a complete \
+         implementation brief. Track worker bus reports, answer questions, \
+         and synthesize the final outcome for the human.",
     );
     lines + &bus_block(LEAD_PARTY, bus_url)
 }
@@ -105,14 +129,20 @@ mod tests {
     }
 
     #[test]
-    fn lead_brief_lists_directions() {
+    fn lead_brief_lists_tasks_repos_and_creation_tool() {
         let b = super::lead_brief(
             "Fix login",
-            &[(3, "backend-fix".to_string()), (4, "frontend-copy".to_string())],
+            &[
+                (3, "backend-fix".to_string()),
+                (4, "frontend-copy".to_string()),
+            ],
+            &[(1, "api".to_string(), "main".to_string())],
             "http://127.0.0.1:47810/bus/1/lead/mcp",
         );
         assert!(b.contains("`3`: backend-fix"));
         assert!(b.contains("`4`: frontend-copy"));
+        assert!(b.contains("`1`: api (base: main)"));
+        assert!(b.contains("task_create"));
         assert!(b.contains("party `lead`"));
     }
 }

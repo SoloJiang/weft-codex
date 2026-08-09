@@ -2,7 +2,7 @@ import * as React from "react"
 import { FolderGit2, KanbanSquare, Plus } from "lucide-react"
 
 import { api, jsonRequest, slugify } from "@/api"
-import { DialogLayer, type TaskInput } from "@/components/dialogs"
+import { DialogLayer } from "@/components/dialogs"
 import { IssueDetailView } from "@/components/issue-detail-view"
 import { KanbanView, type WorkActions } from "@/components/kanban-view"
 import { RepositoriesView } from "@/components/repositories-view"
@@ -60,7 +60,6 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
   const [view, setView] = React.useState<AppView>(initialRoute.view)
   const [detailIssueId, setDetailIssueId] = React.useState<number | null>(initialRoute.issueId)
   const [dialog, setDialog] = React.useState<DialogState>(null)
-  const [connected, setConnected] = React.useState(false)
   const [loading, setLoading] = React.useState(true)
   const [revision, setRevision] = React.useState(0)
   const [toasts, setToasts] = React.useState<ToastMessage[]>([])
@@ -142,7 +141,6 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
     let refreshWorkspaceList = false
 
     const scheduleRefresh = (event: Event) => {
-      setConnected(true)
       if (event.type === "workspace.updated") refreshWorkspaceList = true
       window.clearTimeout(timer)
       timer = window.setTimeout(() => {
@@ -158,8 +156,6 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
     }
 
     for (const name of EVENT_NAMES) source.addEventListener(name, scheduleRefresh)
-    source.onopen = () => setConnected(true)
-    source.onerror = () => setConnected(false)
     return () => {
       window.clearTimeout(timer)
       source.close()
@@ -245,19 +241,6 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
     notify(t("success.issueCreated"), "success")
   }
 
-  const createTask = async (issueId: number, input: TaskInput) => {
-    await api(`/api/issues/${issueId}/directions`, jsonRequest("POST", {
-      name: input.name,
-      slug: slugify(input.name),
-      repo_id: input.repoId,
-      spec: input.spec,
-      mandate: input.mandate,
-      base_branch: input.baseBranch,
-    }))
-    await refreshCurrent()
-    notify(t("success.taskCreated"), "success")
-  }
-
   const sendMessage = async (target: "lead" | "task", id: number, text: string) => {
     const path = target === "lead" ? `/api/issues/${id}/message` : `/api/directions/${id}/message`
     await api(path, jsonRequest("POST", { text }))
@@ -288,15 +271,8 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
     onMoveTask: moveTask,
     onMessageLead: (issue: Issue) => setDialog({ type: "message", target: "lead", id: issue.id }),
     onMessageTask: (direction: Direction) => setDialog({ type: "message", target: "task", id: direction.id }),
-    onNewTask: (issue: Issue) => {
-      if (!repos.length) {
-        notify(t("task.noRepo"), "error")
-        return
-      }
-      setDialog({ type: "task", issueId: issue.id })
-    },
     onMoveTaskDialog: (direction: Direction) => setDialog({ type: "move", direction }),
-  }), [notifyError, refreshCurrent, moveTask, repos.length, notify, t])
+  }), [notifyError, refreshCurrent, moveTask])
 
   const addRepository = async (name: string, path: string) => {
     if (!workspaceId) throw new Error(t("err.unknown"))
@@ -423,10 +399,6 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
             <Plus aria-hidden="true" />
             {t("ws.add")}
           </Button>
-          <span className="connection" data-state={connected ? "up" : "down"} role="status" aria-live="polite" aria-label={connected ? t("status.connected") : t("status.disconnected")}>
-            <span className="conn-dot" aria-hidden="true" />
-            <span>{connected ? t("status.connected") : t("status.disconnected")}</span>
-          </span>
         </div>
       </header>
     )
@@ -439,10 +411,8 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
 
       <DialogLayer
         state={dialog}
-        repos={repos}
         onClose={() => setDialog(null)}
         onCreateWorkspace={createWorkspace}
-        onCreateTask={createTask}
         onSendMessage={sendMessage}
         onMoveTask={moveTask}
       />

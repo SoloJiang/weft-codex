@@ -37,7 +37,6 @@ pub fn router(state: ApiState) -> Router {
             post(add_repo).get(list_repos),
         )
         .route("/api/issues", post(create_issue).get(kanban))
-        .route("/api/issues/{id}/directions", post(add_direction))
         .route("/api/issues/{id}/spawn-lead", post(spawn_lead))
         .route("/api/issues/{id}/message", post(message_lead))
         .route("/api/issues/{id}/bus", get(bus_log))
@@ -91,24 +90,6 @@ fn fail(e: anyhow::Error) -> Response {
 
 fn ok(value: Value) -> Response {
     Json(value).into_response()
-}
-
-/// A direction's repo must sit in the same workspace as its issue —
-/// otherwise its worktree/branch would materialize against a repo the
-/// workspace never registered.
-async fn check_direction_repo(store: &Store, issue_id: i64, repo_id: i64) -> anyhow::Result<()> {
-    let issue = store
-        .get_issue(issue_id)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("unknown issue {issue_id}"))?;
-    let repo = store
-        .get_repo(repo_id)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("unknown repo {repo_id}"))?;
-    if repo.workspace_id != issue.workspace_id {
-        anyhow::bail!("repo {repo_id} is not in issue {issue_id}'s workspace");
-    }
-    Ok(())
 }
 
 #[derive(Deserialize)]
@@ -208,51 +189,6 @@ async fn kanban(State(state): State<ApiState>, Query(q): Query<KanbanQuery>) -> 
                 .map(|(issue, directions)| json!({ "issue": issue, "directions": directions }))
                 .collect();
             ok(json!(board))
-        }
-        Err(e) => fail(e),
-    }
-}
-
-#[derive(Deserialize)]
-struct AddDirection {
-    name: String,
-    slug: String,
-    repo_id: i64,
-    mandate: Option<String>,
-    base_branch: Option<String>,
-    reason: Option<String>,
-    spec: Option<String>,
-}
-
-async fn add_direction(
-    State(state): State<ApiState>,
-    Path(issue_id): Path<i64>,
-    Json(body): Json<AddDirection>,
-) -> Response {
-    if let Err(e) = check_direction_repo(&state.store, issue_id, body.repo_id).await {
-        return fail(e);
-    }
-    let mandate = body.mandate.unwrap_or_else(|| "plan+impl".to_string());
-    let base_branch = body.base_branch.unwrap_or_default();
-    let reason = body.reason.unwrap_or_default();
-    let spec = body.spec.unwrap_or_default();
-    match state
-        .store
-        .add_direction(
-            issue_id,
-            &body.name,
-            &body.slug,
-            body.repo_id,
-            &mandate,
-            &base_branch,
-            &reason,
-            &spec,
-        )
-        .await
-    {
-        Ok(id) => {
-            events::emit("direction.updated", json!({ "id": id, "status": "queued" }));
-            ok(json!({ "id": id }))
         }
         Err(e) => fail(e),
     }
@@ -435,44 +371,4 @@ async fn repo_map(State(state): State<ApiState>, Path(workspace_id): Path<i64>) 
         Err(e) => return fail(e),
     };
     ok(json!({ "repos": entries, "relations": relations, "repoMap": doc }))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    async fn fixture() -> (Store, tempfile::TempDir) {
-        let dir = tempfile::tempdir().expect("tmp");
-        let store = Store::open(&dir.path().join("t.db")).await.expect("open");
-        (store, dir)
-    }
-
-    #[tokio::test]
-    async fn direction_repo_must_share_the_issues_workspace() {
-        let (store, _dir) = fixture().await;
-        let w1 = store.create_workspace("One", "one").await.expect("w1");
-        let w2 = store.create_workspace("Two", "two").await.expect("w2");
-        let repo = store
-            .add_repo(w2, "api", "/tmp/api", "main")
-            .await
-            .expect("repo");
-        let issue = store.create_issue(w1, "Fix", "fix").await.expect("issue");
-        let err = check_direction_repo(&store, issue, repo)
-            .await
-            .expect_err("cross-workspace must fail");
-        assert!(format!("{err:#}").contains("not in"));
-        assert!(check_direction_repo(&store, 999, repo).await.is_err());
-        assert!(check_direction_repo(&store, issue, 999).await.is_err());
-    }
-
-    #[test]
-    fn add_direction_defaults() {
-        let body: AddDirection =
-            serde_json::from_value(json!({ "name": "n", "slug": "s", "repo_id": 1 }))
-                .expect("parse");
-        assert!(body.mandate.is_none());
-        assert!(body.base_branch.is_none());
-        let mandate = body.mandate.unwrap_or_else(|| "plan+impl".to_string());
-        assert_eq!(mandate, "plan+impl");
-    }
 }

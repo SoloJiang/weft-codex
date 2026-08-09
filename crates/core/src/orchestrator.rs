@@ -359,7 +359,11 @@ impl Orchestrator {
         ));
 
         let pairs: Vec<(i64, String)> = directions.iter().map(|d| (d.id, d.name.clone())).collect();
-        let text = brief::lead_brief(&issue.title, &pairs, &url);
+        let repo_specs: Vec<(i64, String, String)> = repos
+            .iter()
+            .map(|repo| (repo.id, repo.name.clone(), repo.base_ref.clone()))
+            .collect();
+        let text = brief::lead_brief(&issue.title, &pairs, &repo_specs, &url);
         let turn_id = client.start_turn(&thread_id, &text).await?;
         client.set_active_turn(&thread_id, &turn_id).await;
 

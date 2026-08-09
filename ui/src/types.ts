@@ -99,7 +99,6 @@ export interface BusMessage {
 
 export type DialogState =
   | { type: "workspace" }
-  | { type: "task"; issueId: number }
   | { type: "message"; target: "lead" | "task"; id: number }
   | { type: "move"; direction: Direction }
   | null
