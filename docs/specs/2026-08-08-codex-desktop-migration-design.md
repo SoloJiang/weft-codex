@@ -210,6 +210,26 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
   foreign（同进程接管场景），其 TurnEnd 时清标并冲刷积压——该路径保留，
   若 codex 将来提供跨进程线程通知即自动激活。
 
+**已验证（2026-08-09，Stage 4 真实多仓闭环与重启恢复）**：
+
+- 隔离 workspace 含 `api`（base `trunk`）与 `web`（base `main`）；真实 Lead
+  自主调用两次 `task_create`，daemon 自动 materialize 两个独立 worktree 并并行
+  启动 Worker。两个 Worker 各提交 `MARKER.md`，经 `bus_post` 回报；Lead 收到
+  两条注入消息后读取实际 commit 复核并输出跨仓汇总。真实分支与 commit 分别为
+  `weft/cross-repo-marker/api-add-marker-file` / `e4107d6`、
+  `weft/cross-repo-marker/web-add-marker-file` / `3abbb8e`。
+- 状态实测：自动启动后 `working`，turn 完成后 `review`；“继续处理”创建新 turn
+  并回到 `working → review`；两个“验收完成”最终均为 `done`。
+- daemon 重启会先对持久线程执行 `thread/resume` 再重建 watcher；重启后向 Lead
+  发送 `reattached-ok` 已进入同一原生线程并完成。Bus 增加 `delivered_at` 结算：
+  未结算行在启动时恢复到 live inbox，listener ready 后重投；人为制造的 pending
+  行在重启后自动送达并得到 `restored-pending-ok`，没有依赖下一条消息唤醒。
+- Worker thread id 与首个 runtime status 在初始 turn 成功后原子发布；首 turn
+  失败不会留下“已有 thread 但永远 queued”的不可重试状态。worktree 记录按
+  direction 幂等，重试不会堆重复行。
+- 异常 approval 防线按 method 回复：command/file-change 用 `{decision:
+  "decline"}`，generic permission 用 `{permissions:{}}`；正常产品流仍无审批 UI。
+
 ## 7. UI 表面（weftd serve 的 web app）
 
 - 实现基座：`ui/` 使用 React + TypeScript + Vite；shadcn/ui 作为组件源码层，

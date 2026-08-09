@@ -2,8 +2,9 @@
 //! the MCP URL path (`/bus/:issue/:party/mcp`), never from tool arguments —
 //! an agent cannot spoof `from`.
 //!
-//! Memory is the live inbox; `bus_message` rows are the durable audit log.
-//! A `post` also fires a wake signal — Stage 2's orchestrator subscribes to
+//! Memory is the live delivery queue; unsettled `bus_message` rows are its
+//! durable source of truth and are restored after a daemon restart. A `post`
+//! also fires a wake signal — Stage 2's orchestrator subscribes to
 //! it and delivers the message into the recipient's Codex thread
 //! (`turn/steer` while busy, `turn/start` when idle; see the migration spec
 //! §6 for the verified semantics).
@@ -14,6 +15,8 @@ use tokio::sync::broadcast;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct Msg {
+    #[serde(skip_serializing, default)]
+    pub id: i64,
     pub from: String,
     pub text: String,
     pub kind: String,
@@ -52,6 +55,31 @@ impl BusRegistry {
             g.wake.clone()
         };
         let _ = wake.send((issue, to.to_string()));
+    }
+
+    /// Restore one durable undelivered row during daemon boot without firing
+    /// a wake before the delivery loop and HTTP listener are ready.
+    pub fn restore(&self, issue: i64, to: &str, msg: Msg) {
+        let mut g = match self.0.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        g.inboxes
+            .entry((issue, to.to_string()))
+            .or_default()
+            .push(msg);
+    }
+
+    /// Snapshot parties with queued messages. The orchestrator uses this once
+    /// after boot to flush restored durable inboxes.
+    pub fn pending_parties(&self) -> Vec<(i64, String)> {
+        let g = match self.0.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let mut parties: Vec<(i64, String)> = g.inboxes.keys().cloned().collect();
+        parties.sort();
+        parties
     }
 
     /// Drain `(issue, party)`'s live inbox, oldest first.
@@ -106,6 +134,7 @@ mod tests {
 
     fn msg(from: &str, text: &str) -> Msg {
         Msg {
+            id: 1,
             from: from.to_string(),
             text: text.to_string(),
             kind: "message".to_string(),
@@ -149,5 +178,15 @@ mod tests {
         let all = bus.drain(7, "3");
         let texts: Vec<&str> = all.iter().map(|m| m.text.as_str()).collect();
         assert_eq!(texts, ["one", "two", "three"]);
+    }
+
+    #[test]
+    fn restore_preserves_rows_without_waking() {
+        let bus = BusRegistry::new();
+        let mut wakes = bus.subscribe_wake();
+        bus.restore(9, "lead", msg("2", "done"));
+        assert!(wakes.try_recv().is_err());
+        assert_eq!(bus.pending_parties(), vec![(9, "lead".to_string())]);
+        assert_eq!(bus.drain(9, "lead")[0].text, "done");
     }
 }

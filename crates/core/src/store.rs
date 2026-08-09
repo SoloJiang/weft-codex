@@ -71,7 +71,8 @@ CREATE TABLE IF NOT EXISTS bus_message (
     to_party TEXT NOT NULL,
     text TEXT NOT NULL,
     kind TEXT NOT NULL DEFAULT 'message',
-    ts TEXT NOT NULL
+    ts TEXT NOT NULL,
+    delivered_at TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_bus_inbox ON bus_message(issue_id, to_party);
 CREATE TABLE IF NOT EXISTS repo_profile (
@@ -153,7 +154,7 @@ async fn ensure_column(
     table: &str,
     column: &str,
     definition: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let rows = sqlx::query(&format!("PRAGMA table_info({table})"))
         .fetch_all(pool)
         .await
@@ -169,8 +170,9 @@ async fn ensure_column(
         .execute(pool)
         .await
         .with_context(|| format!("alter {table} add {column}"))?;
+        return Ok(true);
     }
-    Ok(())
+    Ok(false)
 }
 
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
@@ -227,11 +229,13 @@ pub struct DirectionRow {
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct BusRow {
     pub id: i64,
+    pub issue_id: i64,
     pub from_party: String,
     pub to_party: String,
     pub text: String,
     pub kind: String,
     pub ts: String,
+    pub delivered_at: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
@@ -295,6 +299,22 @@ impl Store {
             "INTEGER NOT NULL DEFAULT 0",
         )
         .await?;
+        let added_delivery_state = ensure_column(
+            &pool,
+            "bus_message",
+            "delivered_at",
+            "TEXT NOT NULL DEFAULT ''",
+        )
+        .await?;
+        if added_delivery_state {
+            // Rows written by pre-delivery-state builds are historical audit
+            // entries. Mark them settled once during migration so upgrading
+            // does not replay an entire old conversation.
+            sqlx::query("UPDATE bus_message SET delivered_at = ts WHERE delivered_at = ''")
+                .execute(&pool)
+                .await
+                .context("settle legacy bus messages")?;
+        }
         Ok(Self { pool })
     }
 
@@ -675,6 +695,28 @@ impl Store {
         Ok(())
     }
 
+    /// Atomically publish a successfully started worker thread and its first
+    /// runtime state. A crash cannot leave a queued row pointing at a thread
+    /// whose initial turn may or may not have started.
+    pub async fn activate_direction_thread(
+        &self,
+        id: i64,
+        thread_id: &str,
+        status: &str,
+    ) -> anyhow::Result<()> {
+        sqlx::query(
+            "UPDATE direction SET codex_thread_id = ?, status = ?,
+             attention = 0, attention_reason = '' WHERE id = ?",
+        )
+        .bind(thread_id)
+        .bind(status)
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .context("activate_direction_thread")?;
+        Ok(())
+    }
+
     pub async fn set_direction_branch(&self, id: i64, branch: &str) -> anyhow::Result<()> {
         sqlx::query("UPDATE direction SET branch = ? WHERE id = ?")
             .bind(branch)
@@ -736,6 +778,24 @@ impl Store {
         path: &str,
         branch: &str,
     ) -> anyhow::Result<i64> {
+        if let Some(id) = sqlx::query_scalar::<_, i64>(
+            "SELECT id FROM worktree WHERE direction_id = ? ORDER BY id LIMIT 1",
+        )
+        .bind(direction_id)
+        .fetch_optional(&self.pool)
+        .await
+        .context("find existing worktree")?
+        {
+            sqlx::query("UPDATE worktree SET repo_id = ?, path = ?, branch = ? WHERE id = ?")
+                .bind(repo_id)
+                .bind(path)
+                .bind(branch)
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .context("refresh existing worktree")?;
+            return Ok(id);
+        }
         let row = sqlx::query(
             "INSERT INTO worktree (direction_id, repo_id, path, branch, created_at)
              VALUES (?, ?, ?, ?, ?) RETURNING id",
@@ -955,7 +1015,8 @@ impl Store {
     /// Durable inbox rows for `(issue, party)`, oldest first.
     pub async fn bus_inbox(&self, issue_id: i64, party: &str) -> anyhow::Result<Vec<BusRow>> {
         let rows = sqlx::query_as::<_, BusRow>(
-            "SELECT id, from_party, to_party, text, kind, ts FROM bus_message
+            "SELECT id, issue_id, from_party, to_party, text, kind, ts, delivered_at
+             FROM bus_message
              WHERE issue_id = ? AND to_party = ? ORDER BY id",
         )
         .bind(issue_id)
@@ -970,7 +1031,8 @@ impl Store {
     /// audit feed the kanban UI renders.
     pub async fn bus_log(&self, issue_id: i64) -> anyhow::Result<Vec<BusRow>> {
         let rows = sqlx::query_as::<_, BusRow>(
-            "SELECT id, from_party, to_party, text, kind, ts FROM bus_message
+            "SELECT id, issue_id, from_party, to_party, text, kind, ts, delivered_at
+             FROM bus_message
              WHERE issue_id = ? ORDER BY id",
         )
         .bind(issue_id)
@@ -978,6 +1040,40 @@ impl Store {
         .await
         .context("bus_log")?;
         Ok(rows)
+    }
+
+    /// Every message not yet injected into a thread or explicitly drained by
+    /// `bus_read`. Boot recovery rehydrates these rows into the live registry.
+    pub async fn pending_bus_messages(&self) -> anyhow::Result<Vec<BusRow>> {
+        sqlx::query_as::<_, BusRow>(
+            "SELECT id, issue_id, from_party, to_party, text, kind, ts, delivered_at
+             FROM bus_message WHERE delivered_at = '' ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("pending_bus_messages")
+    }
+
+    /// Settle a batch after successful thread injection or `bus_read`.
+    pub async fn mark_bus_delivered(&self, ids: &[i64]) -> anyhow::Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let mut tx = self.pool.begin().await.context("begin mark_bus_delivered")?;
+        let delivered_at = now_unix();
+        for id in ids {
+            sqlx::query(
+                "UPDATE bus_message SET delivered_at = ?
+                 WHERE id = ? AND delivered_at = ''",
+            )
+            .bind(&delivered_at)
+            .bind(id)
+            .execute(&mut *tx)
+            .await
+            .context("mark bus message delivered")?;
+        }
+        tx.commit().await.context("commit mark_bus_delivered")?;
+        Ok(())
     }
 }
 
@@ -1002,6 +1098,39 @@ mod tests {
         let inbox = store.bus_inbox(7, "3").await.expect("inbox");
         assert_eq!(inbox.len(), 1);
         assert_eq!(inbox[0].text, "hello");
+        assert_eq!(store.pending_bus_messages().await.expect("pending").len(), 1);
+        store.mark_bus_delivered(&[id]).await.expect("settle");
+        assert!(store
+            .pending_bus_messages()
+            .await
+            .expect("settled pending")
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn legacy_bus_rows_are_settled_during_delivery_state_migration() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let path = dir.path().join("t.db");
+        let store = Store::open(&path).await.expect("open");
+        sqlx::query("ALTER TABLE bus_message DROP COLUMN delivered_at")
+            .execute(&store.pool)
+            .await
+            .expect("drop delivery state");
+        store
+            .bus_append(7, "lead", "3", "historical")
+            .await
+            .expect("legacy append");
+        drop(store);
+
+        let store = Store::open(&path).await.expect("reopen");
+        assert!(store
+            .pending_bus_messages()
+            .await
+            .expect("pending")
+            .is_empty());
+        let rows = store.bus_inbox(7, "3").await.expect("audit");
+        assert_eq!(rows.len(), 1);
+        assert!(!rows[0].delivered_at.is_empty());
     }
 
     #[test]
@@ -1192,5 +1321,52 @@ mod tests {
             .await
             .expect("undispatched after start")
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn worker_activation_and_worktree_recording_are_atomic_and_idempotent() {
+        let (store, _dir) = fixture().await;
+        let ws = store.create_workspace("W", "w").await.expect("workspace");
+        let repo = store.add_repo(ws, "api", "/tmp/api", "main").await.expect("repo");
+        let issue = store.create_issue(ws, "Issue", "issue").await.expect("issue");
+        let direction = store
+            .add_direction(issue, "task", "task", repo, "impl-only", "main", "", "spec")
+            .await
+            .expect("direction");
+        store
+            .set_direction_attention(direction, Some("worker-start-failed"))
+            .await
+            .expect("attention");
+
+        let first = store
+            .record_worktree(direction, repo, "/tmp/wt", "weft/issue/task")
+            .await
+            .expect("record");
+        let second = store
+            .record_worktree(direction, repo, "/tmp/wt", "weft/issue/task")
+            .await
+            .expect("record again");
+        assert_eq!(first, second);
+
+        store
+            .activate_direction_thread(direction, "thread-1", "working")
+            .await
+            .expect("activate");
+        let row = store
+            .get_direction(direction)
+            .await
+            .expect("get")
+            .expect("direction row");
+        assert_eq!(row.codex_thread_id, "thread-1");
+        assert_eq!(row.status, "working");
+        assert_eq!(row.attention, 0);
+        let count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM worktree WHERE direction_id = ?",
+        )
+        .bind(direction)
+        .fetch_one(&store.pool)
+        .await
+        .expect("worktree count");
+        assert_eq!(count, 1);
     }
 }

@@ -688,9 +688,8 @@ pub enum ThreadMsg {
     /// means someone ELSE is driving (human takeover in Desktop) — mid-turn
     /// injection must then stand down (turn/start would be silently dropped).
     TurnStarted { turn_id: String },
-    /// An approval ask the session must answer via [`Client::reply_approval`]
-    /// (echoing `id`), else the turn hangs. `decision` ∈ accept | acceptForSession
-    /// | decline | cancel.
+    /// An approval ask the session must answer with the method-specific result
+    /// shape (echoing `id`), else the turn hangs.
     Approval {
         id: Value,
         method: String,
@@ -753,7 +752,7 @@ pub async fn client() -> anyhow::Result<Client> {
 /// `Inner` half-initialized, and the next `client()` would reuse that broken
 /// connection — shutting it down forces a clean reconnect instead.
 pub async fn shutdown_global() {
-    cell().shutdown().await;
+    cell().shutdown_and_reap().await;
 }
 
 impl Client {
@@ -1074,11 +1073,12 @@ impl Client {
                     }
                 }
                 Incoming::ServerRequest { id, method, params } => {
-                    // Approvals route to the Ask Bridge (user decides). EVERY other
-                    // server→client request also blocks the turn until answered, but
-                    // it needs interactive content Weft can't collect (elicitation,
-                    // requestUserInput, future kinds) — decline so the turn proceeds
-                    // instead of leaving the request unresolved.
+                    // Approval requests route to the owning thread. The headless
+                    // orchestrator normally runs with approvalPolicy=never and
+                    // defensively declines any anomaly using the method-specific
+                    // response shape. EVERY other server→client request also blocks
+                    // the turn until answered, but needs interactive content this
+                    // transport cannot collect — decline so the turn proceeds.
                     if is_approval_request(&method) {
                         let tid = params["threadId"].as_str().map(String::from);
                         self.route_resolved(
@@ -1211,6 +1211,15 @@ impl Client {
             .unwrap_or(false)
     }
 
+    /// Drop one thread sink. Used when a newly-created thread fails before
+    /// its first turn and must not occupy the subscription map forever.
+    pub async fn unsubscribe(&self, thread_id: &str) {
+        if let Some(inner) = self.0.lock().await.as_mut() {
+            inner.threads.remove(thread_id);
+            inner.active_turn.remove(thread_id);
+        }
+    }
+
     /// Record the in-flight turn id for a thread (for a later interrupt).
     pub async fn set_active_turn(&self, thread_id: &str, turn_id: &str) {
         if let Some(inner) = self.0.lock().await.as_mut() {
@@ -1327,6 +1336,25 @@ impl Client {
     /// Answer an approval request. `decision` ∈ accept | acceptForSession | decline | cancel.
     pub async fn reply_approval(&self, id: &Value, decision: &str) -> anyhow::Result<()> {
         self.reply_result(id, json!({ "decision": decision })).await
+    }
+
+    /// Answer an approval request using the exact result schema for its method.
+    /// Generic permissions requests require `{permissions}` rather than the
+    /// `{decision}` used by command/file-change approvals.
+    pub async fn reply_approval_request(
+        &self,
+        id: &Value,
+        method: &str,
+        params: &Value,
+        allow: bool,
+    ) -> anyhow::Result<()> {
+        let is_permissions = method == "item/permissions/requestApproval";
+        let requested = params.get("permissions").cloned();
+        self.reply_result(
+            id,
+            codex_approval_reply(is_permissions, allow, requested),
+        )
+        .await
     }
 }
 
@@ -2029,7 +2057,7 @@ mod tests {
     #[test]
     fn approval_methods_recognized() {
         // All three approval asks (command, file-change, generic permissions) route
-        // to the Ask Bridge; ordinary notifications don't.
+        // to the owning session; ordinary notifications don't.
         assert!(is_approval_request("item/commandExecution/requestApproval"));
         assert!(is_approval_request("item/fileChange/requestApproval"));
         assert!(is_approval_request("item/permissions/requestApproval"));

@@ -44,6 +44,14 @@ async fn main() {
     let bus = BusRegistry::new();
     let orch = Orchestrator::new(store.clone(), bus.clone(), bus_base, home.clone());
 
+    let restored_bus_messages = match orch.restore_pending_bus().await {
+        Ok(count) => count,
+        Err(error) => {
+            eprintln!("[weftd] restore durable bus inboxes failed: {error:#}");
+            0
+        }
+    };
+
     tokio::spawn(orch.clone().run_bus_delivery());
 
     // Threads persist in ~/.codex across restarts; watchers don't.
@@ -78,6 +86,7 @@ async fn main() {
         }
     };
 
+    let pending_flush_orch = orch.clone();
     let state = mcp::McpState {
         bus,
         store: store.clone(),
@@ -92,6 +101,13 @@ async fn main() {
         .await
         .unwrap_or_else(|e| fatal(&format!("bind {addr}"), e));
     eprintln!("[weftd] thread bus MCP + kanban API + web app on http://{addr}");
+
+    if restored_bus_messages > 0 {
+        eprintln!("[weftd] restored {restored_bus_messages} pending bus messages");
+        tokio::spawn(async move {
+            pending_flush_orch.flush_pending_bus().await;
+        });
+    }
 
     for direction in undispatched {
         if task_dispatch.send(direction.id).is_err() {
@@ -114,6 +130,7 @@ async fn main() {
             eprintln!("[weftd] shutting down");
         }
     }
+    weft_app_server::client::shutdown_global().await;
 }
 
 /// Web app root directory: `WEFT_WEB_DIR` override, else the crate's web/.

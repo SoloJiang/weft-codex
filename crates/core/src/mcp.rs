@@ -70,7 +70,7 @@ fn tool_list(party: &str) -> Value {
         }),
         json!({
             "name": "bus_read",
-            "description": "Drain your own inbox (oldest first). Destructive: read messages leave the live inbox (they remain in the durable audit log).",
+            "description": "Drain your own pending inbox (oldest first). Read messages are durably settled and remain in the issue activity log.",
             "annotations": {
                 "readOnlyHint": true,
                 "destructiveHint": false,
@@ -172,20 +172,29 @@ async fn call_tool(state: &McpState, issue: i64, party: &str, name: &str, args: 
             if to == party {
                 return text_result("error: cannot post to yourself".into());
             }
+            let id = match state.store.bus_append(issue, party, to, text).await {
+                Ok(id) => id,
+                Err(error) => {
+                    return text_result(format!("error: durable write failed: {error:#}"));
+                }
+            };
             let msg = Msg {
+                id,
                 from: party.to_string(),
                 text: text.to_string(),
                 kind: "message".to_string(),
                 ts: now_unix(),
             };
-            if let Err(error) = state.store.bus_append(issue, party, to, text).await {
-                return text_result(format!("error: durable write failed: {error:#}"));
-            }
             state.bus.post(issue, to, msg);
             text_result(format!("posted to {to}"))
         }
         "bus_read" => {
             let msgs = state.bus.drain(issue, party);
+            let ids: Vec<i64> = msgs.iter().map(|msg| msg.id).collect();
+            if let Err(error) = state.store.mark_bus_delivered(&ids).await {
+                state.bus.requeue_front(issue, party, msgs);
+                return text_result(format!("error: durable read settlement failed: {error:#}"));
+            }
             text_result(serde_json::to_string(&msgs).unwrap_or_else(|_| "[]".into()))
         }
         "task_create" => create_task(state, issue, party, args).await,
@@ -518,6 +527,13 @@ mod tests {
         assert!(text.contains("\"from\":\"lead\""));
         let durable = st.store.bus_inbox(1, "3").await.expect("inbox");
         assert_eq!(durable.len(), 1);
+        assert!(!durable[0].delivered_at.is_empty());
+        assert!(st
+            .store
+            .pending_bus_messages()
+            .await
+            .expect("pending")
+            .is_empty());
     }
 
     #[tokio::test]

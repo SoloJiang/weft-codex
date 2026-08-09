@@ -64,6 +64,10 @@ node dist/cli.js probe --endpoint=http://127.0.0.1:9222
 
 `WEFT_CODEX_HOME` 可覆盖数据目录（默认 `~/.weft-codex`）。
 
+Lead/Worker 线程与 Bus 支持 daemon 重启恢复：启动时会 resume 已有 Codex
+线程、重建 watcher，并重投尚未结算的 durable bus inbox；初始 Worker turn 只有
+成功启动后才原子发布到看板，失败可直接重试。
+
 ## 验证
 
 ```sh

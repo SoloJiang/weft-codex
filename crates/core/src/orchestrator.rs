@@ -243,8 +243,8 @@ impl Orchestrator {
 
     /// Materialize the direction's worktree, create its Codex thread (cwd =
     /// worktree, workspace-write sandbox, per-thread bus MCP), subscribe a
-    /// watcher, and kick off the brief turn. Refuses to respawn a direction
-    /// that already has a thread (restart re-attach is a later stage).
+    /// watcher, and kick off the brief turn. The thread id is persisted only
+    /// after the initial turn starts, so a failed first turn remains retryable.
     /// Returns the new Codex thread id.
     pub async fn spawn_direction(&self, direction_id: i64) -> anyhow::Result<String> {
         // The automatic queue and a stale/manual retry can race on the same
@@ -306,9 +306,6 @@ impl Orchestrator {
             .await?;
         let thread_id = codex::thread_id_of(&result)
             .ok_or_else(|| anyhow::anyhow!("thread/start: no thread.id"))?;
-        self.store
-            .set_direction_thread(direction.id, &thread_id)
-            .await?;
 
         let rx = client.subscribe(&thread_id).await;
         tokio::spawn(watch(
@@ -329,13 +326,17 @@ impl Orchestrator {
             &party,
             &url,
         );
-        let turn_id = client.start_turn(&thread_id, &text).await?;
+        let turn_id = match client.start_turn(&thread_id, &text).await {
+            Ok(turn_id) => turn_id,
+            Err(error) => {
+                client.unsubscribe(&thread_id).await;
+                return Err(error);
+            }
+        };
         client.set_active_turn(&thread_id, &turn_id).await;
-
         let status = initial_status(&direction.mandate);
-        self.store.set_direction_status(direction.id, status).await?;
         self.store
-            .set_direction_attention(direction.id, None)
+            .activate_direction_thread(direction.id, &thread_id, status)
             .await?;
         events::emit(
             "direction.updated",
@@ -360,13 +361,15 @@ impl Orchestrator {
         if !runtime::agents_allowed() {
             anyhow::bail!("daemon is not live; refusing to spawn agents");
         }
+        // Repeated create responses and concurrent retries are idempotent.
+        let gate = self.inject_lock.lock().await;
         let issue = self
             .store
             .get_issue(issue_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("unknown issue {issue_id}"))?;
         if !issue.lead_codex_thread_id.is_empty() {
-            anyhow::bail!("issue {issue_id} already has a lead thread");
+            return Ok(issue.lead_codex_thread_id);
         }
         let directions = self.store.list_directions(issue_id).await?;
         let repos = self.store.list_repos(issue.workspace_id).await?;
@@ -374,8 +377,6 @@ impl Orchestrator {
             Some(r) => r.path.clone(),
             None => self.home.to_string_lossy().to_string(),
         };
-
-        let gate = self.inject_lock.lock().await;
 
         let url = self.bus_url(issue.id, brief::LEAD_PARTY);
         let client = codex::client().await?;
@@ -387,7 +388,6 @@ impl Orchestrator {
             .await?;
         let thread_id = codex::thread_id_of(&result)
             .ok_or_else(|| anyhow::anyhow!("thread/start: no thread.id"))?;
-        self.store.set_lead_thread(issue.id, &thread_id).await?;
 
         let rx = client.subscribe(&thread_id).await;
         tokio::spawn(watch(
@@ -404,8 +404,15 @@ impl Orchestrator {
             .map(|repo| (repo.id, repo.name.clone(), repo.base_ref.clone()))
             .collect();
         let text = brief::lead_brief(&issue.title, &issue.kind, &pairs, &repo_specs, &url);
-        let turn_id = client.start_turn(&thread_id, &text).await?;
+        let turn_id = match client.start_turn(&thread_id, &text).await {
+            Ok(turn_id) => turn_id,
+            Err(error) => {
+                client.unsubscribe(&thread_id).await;
+                return Err(error);
+            }
+        };
         client.set_active_turn(&thread_id, &turn_id).await;
+        self.store.set_lead_thread(issue.id, &thread_id).await?;
 
         events::emit(
             "issue.updated",
@@ -492,6 +499,18 @@ impl Orchestrator {
             }
         };
         if self.inject(&client, &thread_id, &text).await {
+            let ids: Vec<i64> = msgs.iter().map(|msg| msg.id).collect();
+            if self.store.mark_bus_delivered(&ids).await.is_err() {
+                // Injection already happened, so recovery may duplicate the
+                // envelope; retaining it is safer than silently losing the
+                // only durable copy before settlement.
+                self.bus.requeue_front(issue_id, party, msgs);
+                events::emit(
+                    "bus.undelivered",
+                    json!({ "issueId": issue_id, "party": party, "reason": "settlement-failed" }),
+                );
+                return;
+            }
             if let Ok(dir_id) = party.parse::<i64>() {
                 let _ = self.store.set_direction_status(dir_id, "working").await;
                 events::emit(
@@ -522,6 +541,36 @@ impl Orchestrator {
         }
     }
 
+    /// Rehydrate every durable, unsettled bus row before the listener starts.
+    /// No wake is emitted here; [`flush_pending_bus`](Self::flush_pending_bus)
+    /// runs after the loop and HTTP listener are ready.
+    pub async fn restore_pending_bus(&self) -> anyhow::Result<usize> {
+        let rows = self.store.pending_bus_messages().await?;
+        let count = rows.len();
+        for row in rows {
+            self.bus.restore(
+                row.issue_id,
+                &row.to_party,
+                Msg {
+                    id: row.id,
+                    from: row.from_party,
+                    text: row.text,
+                    kind: row.kind,
+                    ts: row.ts,
+                },
+            );
+        }
+        Ok(count)
+    }
+
+    /// Attempt every restored inbox once. Failures remain queued and durable;
+    /// a later post/wake or explicit `bus_read` retries them.
+    pub async fn flush_pending_bus(&self) {
+        for (issue_id, party) in self.bus.pending_parties() {
+            self.deliver(issue_id, &party).await;
+        }
+    }
+
     /// Boot re-attach: subscribe watchers for every thread that outlived a
     /// daemon restart (threads persist in ~/.codex; watchers do not).
     /// Without this, post-restart TurnEnds never reach the kanban.
@@ -536,6 +585,18 @@ impl Orchestrator {
             if client.is_subscribed(&d.codex_thread_id).await {
                 continue;
             }
+            if let Err(error) = client.resume_thread(&d.codex_thread_id).await {
+                let _ = self
+                    .store
+                    .set_direction_attention(d.id, Some("thread-resume-failed"))
+                    .await;
+                events::emit(
+                    "direction.updated",
+                    json!({ "id": d.id, "attention": true, "reason": "thread-resume-failed" }),
+                );
+                eprintln!("[weftd] resume worker thread {} failed: {error:#}", d.id);
+                continue;
+            }
             let rx = client.subscribe(&d.codex_thread_id).await;
             tokio::spawn(watch(
                 self.clone(),
@@ -548,6 +609,14 @@ impl Orchestrator {
         }
         for issue in self.store.list_live_leads().await? {
             if client.is_subscribed(&issue.lead_codex_thread_id).await {
+                continue;
+            }
+            if let Err(error) = client.resume_thread(&issue.lead_codex_thread_id).await {
+                events::emit(
+                    "lead.attention",
+                    json!({ "issueId": issue.id, "reason": "thread-resume-failed" }),
+                );
+                eprintln!("[weftd] resume lead thread {} failed: {error:#}", issue.id);
                 continue;
             }
             let rx = client.subscribe(&issue.lead_codex_thread_id).await;
@@ -578,11 +647,16 @@ impl Orchestrator {
             .get_direction(direction_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("unknown direction {direction_id}"))?;
+        if direction.codex_thread_id.is_empty() {
+            anyhow::bail!("task {direction_id} has no Codex thread yet");
+        }
         let party = brief::direction_party(direction.id);
-        self.store
+        let message_id = self
+            .store
             .bus_append(direction.issue_id, "human", &party, text)
             .await?;
-        self.human_message(direction.issue_id, &party, text).await
+        self.human_message(direction.issue_id, &party, message_id, text)
+            .await
     }
 
     /// Inject a human message into the issue's lead thread.
@@ -592,36 +666,38 @@ impl Orchestrator {
             .get_issue(issue_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("unknown issue {issue_id}"))?;
-        self.store
+        if issue.lead_codex_thread_id.is_empty() {
+            anyhow::bail!("lead has no Codex thread yet");
+        }
+        let message_id = self
+            .store
             .bus_append(issue.id, "human", brief::LEAD_PARTY, text)
             .await?;
-        self.human_message(issue.id, brief::LEAD_PARTY, text).await
+        self.human_message(issue.id, brief::LEAD_PARTY, message_id, text)
+            .await
     }
 
-    async fn human_message(&self, issue_id: i64, party: &str, text: &str) -> anyhow::Result<()> {
-        let Some(thread_id) = self.thread_for(issue_id, party).await? else {
+    async fn human_message(
+        &self,
+        issue_id: i64,
+        party: &str,
+        message_id: i64,
+        text: &str,
+    ) -> anyhow::Result<()> {
+        if self.thread_for(issue_id, party).await?.is_none() {
             anyhow::bail!("{party} has no Codex thread yet");
-        };
-        let _gate = self.inject_lock.lock().await;
-        let client = codex::client().await?;
-        let envelope = brief::bus_envelope("human", text);
-        if self.inject(&client, &thread_id, &envelope).await {
-            if let Ok(dir_id) = party.parse::<i64>() {
-                let _ = self.store.set_direction_status(dir_id, "working").await;
-                events::emit(
-                    "direction.updated",
-                    json!({ "id": dir_id, "status": "working" }),
-                );
-            }
-            return Ok(());
         }
         let msg = Msg {
+            id: message_id,
             from: "human".to_string(),
             text: text.to_string(),
             kind: "message".to_string(),
             ts: crate::store::now_unix(),
         };
         self.bus.post(issue_id, party, msg);
+        // Also attempt synchronously so this API stays responsive. The wake
+        // loop racing this call can drain the inbox only once.
+        self.deliver(issue_id, party).await;
         Ok(())
     }
 
@@ -782,8 +858,10 @@ async fn watch(
                     );
                 }
             }
-            ThreadMsg::Approval { id, method, .. } => {
-                let _ = client.reply_approval(&id, "decline").await;
+            ThreadMsg::Approval { id, method, params } => {
+                let _ = client
+                    .reply_approval_request(&id, &method, &params, false)
+                    .await;
                 events::emit(
                     "approval.declined",
                     json!({ "threadId": thread_id, "method": method }),
@@ -876,16 +954,33 @@ mod tests {
         assert_eq!(orch.thread_for(issue, "lead").await.expect("resolve"), None);
     }
 
+    #[tokio::test]
+    async fn restore_pending_bus_rehydrates_durable_rows() {
+        let (orch, _dir) = fixture().await;
+        orch.store
+            .bus_append(7, "3", "lead", "finished")
+            .await
+            .expect("append");
+        assert_eq!(orch.restore_pending_bus().await.expect("restore"), 1);
+        assert_eq!(orch.bus.pending_parties(), vec![(7, "lead".to_string())]);
+        let restored = orch.bus.drain(7, "lead");
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].from, "3");
+        assert_eq!(restored[0].text, "finished");
+    }
+
     #[test]
     fn join_envelopes_wraps_each_sender() {
         let msgs = vec![
             Msg {
+                id: 1,
                 from: "lead".to_string(),
                 text: "hi".to_string(),
                 kind: "message".to_string(),
                 ts: "0".to_string(),
             },
             Msg {
+                id: 2,
                 from: "3".to_string(),
                 text: "report".to_string(),
                 kind: "message".to_string(),
@@ -964,6 +1059,7 @@ mod tests {
 
     fn parked_msg() -> Msg {
         Msg {
+            id: 1,
             from: "lead".to_string(),
             text: "held".to_string(),
             kind: "message".to_string(),
