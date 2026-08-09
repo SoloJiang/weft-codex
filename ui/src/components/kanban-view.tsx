@@ -233,6 +233,7 @@ export function KanbanView({
   onCreateWorkspace,
   onShowRepositories,
   onOpenIssue,
+  showIssueCreate = true,
 }: {
   workspaceId: number | null
   repos: Repo[]
@@ -242,6 +243,7 @@ export function KanbanView({
   onCreateWorkspace: () => void
   onShowRepositories: () => void
   onOpenIssue: (id: number) => void
+  showIssueCreate?: boolean
 }) {
   const { t } = useI18n()
   const [title, setTitle] = React.useState("")
@@ -280,7 +282,7 @@ export function KanbanView({
   return (
     <section className="view active" aria-labelledby="kanban-heading">
       <h1 id="kanban-heading" className="sr-only">{t("nav.kanban")}</h1>
-      {workspaceId && repos.length ? (
+      {showIssueCreate && workspaceId && repos.length ? (
         <form className="actions issue-create" noValidate onSubmit={submitIssue}>
           <label className="sr-only" htmlFor="new-issue-title">{t("issue.titleLabel")}</label>
           <Input

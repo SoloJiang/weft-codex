@@ -366,10 +366,60 @@ html[data-ui-surface="workspace"] .embedded-main {
   white-space: nowrap;
 }
 
-.sidebar-section-heading > span {
+.sidebar-section-count {
   min-width: 18px;
   font-size: 11px;
   text-align: right;
+}
+
+.sidebar-section-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sidebar-section-actions [data-slot="button"] {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  color: var(--dim);
+}
+
+.sidebar-section-actions [data-slot="button"]:hover {
+  color: var(--text);
+}
+
+.sidebar-issue-create {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px 24px;
+  align-items: center;
+  gap: var(--space-1);
+  margin: 2px 4px 5px;
+}
+
+.sidebar-issue-create input {
+  height: 28px;
+  min-height: 28px;
+  padding-inline: 7px;
+  font-size: 12px;
+}
+
+.sidebar-issue-create [data-slot="button"] {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+}
+
+.sidebar-issue-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0 3px 2px;
+  color: var(--danger);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .sidebar-list { display: grid; gap: 1px; }

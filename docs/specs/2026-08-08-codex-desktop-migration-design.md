@@ -207,9 +207,10 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
     与连接状态 topbar；
   - `sidebar`：Codex sidebar 内的全局导航，只放 workspace selector、Kanban、
     仓库、issue 列表和 attention 摘要；不放 Weft 品牌、语言/主题开关、聊天、
-    长表单或 `direction` 术语；
+    长表单或 `direction` 术语。Issue 分组标题右侧提供 `+`，展开单字段内联
+    创建器；创建后直接选中新 issue；
   - `workspace`：Codex 主区域，只渲染 Kanban / 仓库 / issue detail，移除重复
-    topbar。lead / worker 沟通仍进入原生线程。
+    topbar 和重复的新建 issue 表单。lead / worker 沟通仍进入原生线程。
 - sidebar 与 workspace URL 携带同一个随机 `bridge_id`，通过同源
   `BroadcastChannel` 做 ready/request 握手，同步 workspace、route 与白名单
   command；没有 `bridge_id` 时不开通道，避免两个独立浏览器窗口串状态。

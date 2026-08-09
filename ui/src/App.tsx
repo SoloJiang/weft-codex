@@ -189,6 +189,18 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
         setView(message.view)
         return
       }
+      if (message.type === "issue.created") {
+        if (surfaceState.current.workspaceId !== message.workspaceId) {
+          setWorkspaceId(message.workspaceId)
+        }
+        void refreshWorkspace(message.workspaceId)
+          .then(() => {
+            setDetailIssueId(message.issueId)
+            setView("issue")
+          })
+          .catch(notifyError)
+        return
+      }
       if (message.type === "command" && message.command === "workspace.create") {
         setDialog({ type: "workspace" })
         return
@@ -198,11 +210,12 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
     }
     const unsubscribe = channel.subscribe(receive)
     channel.post({ type: "surface.ready", surface: embedded ? "workspace" : "standalone" })
-    return () => {
-      unsubscribe()
-      channel.close()
-    }
-  }, [channel, embedded])
+    return unsubscribe
+  }, [channel, embedded, refreshWorkspace, notifyError])
+
+  React.useEffect(() => {
+    return () => channel?.close()
+  }, [channel])
 
   React.useEffect(() => {
     channel?.post({ type: "workspace.changed", workspaceId })
@@ -318,6 +331,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
   }
 
   const detailEntry = board.find((entry) => entry.issue.id === detailIssueId)
+  const showIssueCreate = !embedded || channel === null
   let mainContent: React.ReactNode
   if (loading && !workspaces.length) {
     mainContent = <div className="app-loading" role="status">{t("app.loading")}</div>
@@ -355,6 +369,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
         onCreateWorkspace={() => setDialog({ type: "workspace" })}
         onShowRepositories={() => switchView("repos")}
         onOpenIssue={(id) => { setDetailIssueId(id); setView("issue") }}
+        showIssueCreate={showIssueCreate}
       />
     )
   }

@@ -10,6 +10,7 @@ export type SurfaceMessage =
   | { type: "workspace.changed"; workspaceId: number | null }
   | { type: "navigate"; view: AppView; issueId: number | null }
   | { type: "route.changed"; view: AppView; issueId: number | null }
+  | { type: "issue.created"; workspaceId: number; issueId: number }
   | { type: "command"; command: SurfaceCommand }
 
 export interface SurfaceChannel {
@@ -48,6 +49,9 @@ function isSurfaceMessage(value: unknown): value is SurfaceMessage {
   if (candidate.type === "navigate" || candidate.type === "route.changed") {
     return hasValidRoute(candidate)
   }
+  if (candidate.type === "issue.created") {
+    return isPositiveInteger(candidate.workspaceId) && isPositiveInteger(candidate.issueId)
+  }
   return candidate.type === "command" && candidate.command === "workspace.create"
 }
 
@@ -62,11 +66,14 @@ export function createSurfaceChannel(): SurfaceChannel | null {
   if (!id || typeof BroadcastChannel === "undefined") return null
 
   const channel = new BroadcastChannel(`weft-codex:${id}`)
+  let closed = false
   return {
     post(message) {
+      if (closed) return
       channel.postMessage(message)
     },
     subscribe(listener) {
+      if (closed) return () => {}
       const onMessage = (event: MessageEvent<unknown>) => {
         if (isSurfaceMessage(event.data)) listener(event.data)
       }
@@ -74,6 +81,8 @@ export function createSurfaceChannel(): SurfaceChannel | null {
       return () => channel.removeEventListener("message", onMessage)
     },
     close() {
+      if (closed) return
+      closed = true
       channel.close()
     },
   }

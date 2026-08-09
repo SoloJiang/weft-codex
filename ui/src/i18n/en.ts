@@ -9,6 +9,7 @@ const en = {
   "sidebar.needsAttention": "Needs attention",
   "sidebar.noIssues": "No issues yet",
   "sidebar.taskProgress": "{done} of {total} tasks done",
+  "sidebar.issueRequiresRepo": "Add a repository before creating an issue",
 
   "workspace.label": "Workspace",
   "workspace.none": "No workspace yet",

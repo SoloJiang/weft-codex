@@ -11,6 +11,7 @@ const zh = {
   "sidebar.needsAttention": "需要处理",
   "sidebar.noIssues": "还没有 issue",
   "sidebar.taskProgress": "已完成 {done}/{total} 个任务",
+  "sidebar.issueRequiresRepo": "请先添加仓库，再新建 issue",
 
   "workspace.label": "工作区",
   "workspace.none": "尚无工作区",
