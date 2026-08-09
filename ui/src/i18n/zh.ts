@@ -11,10 +11,10 @@ const zh = {
   "sidebar.needsAttention": "需要处理",
   "sidebar.noIssues": "还没有 issue",
   "sidebar.taskProgress": "已完成 {done}/{total} 个任务",
-  "sidebar.issueRequiresRepo": "请先添加仓库，再新建 issue",
 
   "workspace.label": "工作区",
   "workspace.none": "尚无工作区",
+  "workspace.namePlaceholder": "工作区名称",
   "ws.add": "新建工作区",
 
   "status.queued": "待开始",
@@ -25,7 +25,9 @@ const zh = {
 
   "issue.create": "新建 issue",
   "issue.titleLabel": "Issue 标题",
-  "issue.titlePh": "需要解决什么问题？",
+  "issue.titlePh": "Issue 名称",
+  "issue.kindLabel": "类型",
+  "issue.kindPlaceholder": "选择类型",
   "issue.spawnLead": "启动 lead",
   "issue.msgLead": "给 lead 发消息",
 
@@ -67,10 +69,14 @@ const zh = {
   "repo.state.done": "已分析",
 
   "modal.cancel": "取消",
+  "modal.close": "关闭",
   "modal.messageTitle": "发送消息",
   "modal.continueTaskTitle": "继续处理任务",
   "modal.workspaceTitle": "新建工作区",
+  "modal.issueTitle": "新建 issue",
+  "modal.issueDescription": "一个 issue 就是一条跨仓库推进的工作主线。",
   "modal.createWorkspace": "创建工作区",
+  "modal.createIssue": "创建 issue",
   "modal.sendMessage": "发送",
   "modal.continueTask": "发送并继续",
 
@@ -81,13 +87,17 @@ const zh = {
   "mandate.planImplShort": "规划 + 实现",
   "mandate.implOnlyShort": "仅实现",
 
+  "kind.feature": "功能",
+  "kind.bugfix": "缺陷",
+  "kind.refactor": "重构",
+  "kind.spike": "探索",
+
   "party.you": "你",
   "party.lead": "Lead",
   "party.task": "任务",
 
   "validation.workspaceName": "请输入工作区名称。",
   "validation.message": "请输入消息。",
-  "validation.issueTitle": "请输入 issue 标题。",
   "validation.repoName": "请输入仓库名称。",
   "validation.repoPath": "请输入仓库的绝对路径。",
 
@@ -117,9 +127,9 @@ const zh = {
   "empty.workspaceAction": "创建工作区",
   "empty.issuesTitle": "从一个 issue 开始",
   "empty.issuesBody": "描述要解决的问题，再由 lead 将它拆成清晰的任务。",
+  "empty.issuesAction": "新建 issue",
   "empty.reposTitle": "添加工作区内的仓库",
   "empty.reposBody": "分析仓库后，lead 才能基于代码结构和依赖关系规划任务。",
-  "empty.reposAction": "添加仓库",
 
   "err.prefix": "错误：",
   "err.network": "无法连接到服务。",

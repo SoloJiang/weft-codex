@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS issue (
     workspace_id INTEGER NOT NULL,
     title TEXT NOT NULL,
     slug TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'feature',
     lead_codex_thread_id TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
@@ -160,6 +161,7 @@ pub struct IssueRow {
     pub workspace_id: i64,
     pub title: String,
     pub slug: String,
+    pub kind: String,
     pub lead_codex_thread_id: String,
     pub created_at: String,
 }
@@ -246,6 +248,7 @@ impl Store {
         // (SQLite has no ADD COLUMN IF NOT EXISTS, so probe the pragma).
         ensure_column(&pool, "direction", "spec", "TEXT NOT NULL DEFAULT ''").await?;
         ensure_column(&pool, "workspace", "repo_map", "TEXT NOT NULL DEFAULT ''").await?;
+        ensure_column(&pool, "issue", "kind", "TEXT NOT NULL DEFAULT 'feature'").await?;
         Ok(Self { pool })
     }
 
@@ -325,13 +328,47 @@ impl Store {
         title: &str,
         slug: &str,
     ) -> anyhow::Result<i64> {
+        self.create_issue_with_kind(workspace_id, title, slug, "feature")
+            .await
+    }
+
+    pub async fn create_issue_with_kind(
+        &self,
+        workspace_id: i64,
+        title: &str,
+        slug: &str,
+        kind: &str,
+    ) -> anyhow::Result<i64> {
+        const ISSUE_KINDS: [&str; 4] = ["feature", "bugfix", "refactor", "spike"];
+        let title = title.trim();
+        let slug = slug.trim();
+        if title.is_empty() || slug.is_empty() {
+            anyhow::bail!("invalid issue: title and slug are required");
+        }
+        if title.chars().count() > 120 || slug.chars().count() > 120 {
+            anyhow::bail!("invalid issue: title or slug is too long");
+        }
+        if !ISSUE_KINDS.contains(&kind) {
+            anyhow::bail!("invalid issue kind {kind:?}");
+        }
+        let workspace_exists =
+            sqlx::query_scalar::<_, i64>("SELECT id FROM workspace WHERE id = ?")
+                .bind(workspace_id)
+                .fetch_optional(&self.pool)
+                .await
+                .context("create_issue workspace")?
+                .is_some();
+        if !workspace_exists {
+            anyhow::bail!("unknown workspace {workspace_id}");
+        }
         let row = sqlx::query(
-            "INSERT INTO issue (workspace_id, title, slug, created_at)
-             VALUES (?, ?, ?, ?) RETURNING id",
+            "INSERT INTO issue (workspace_id, title, slug, kind, created_at)
+             VALUES (?, ?, ?, ?, ?) RETURNING id",
         )
         .bind(workspace_id)
         .bind(title)
         .bind(slug)
+        .bind(kind)
         .bind(now_unix())
         .fetch_one(&self.pool)
         .await
@@ -341,7 +378,7 @@ impl Store {
 
     pub async fn get_issue(&self, id: i64) -> anyhow::Result<Option<IssueRow>> {
         sqlx::query_as::<_, IssueRow>(
-            "SELECT id, workspace_id, title, slug, lead_codex_thread_id, created_at
+            "SELECT id, workspace_id, title, slug, kind, lead_codex_thread_id, created_at
              FROM issue WHERE id = ?",
         )
         .bind(id)
@@ -425,7 +462,7 @@ impl Store {
     /// Issues with a live lead thread (boot re-attach source).
     pub async fn list_live_leads(&self) -> anyhow::Result<Vec<IssueRow>> {
         sqlx::query_as::<_, IssueRow>(
-            "SELECT id, workspace_id, title, slug, lead_codex_thread_id, created_at
+            "SELECT id, workspace_id, title, slug, kind, lead_codex_thread_id, created_at
              FROM issue WHERE lead_codex_thread_id != '' ORDER BY id",
         )
         .fetch_all(&self.pool)
@@ -500,7 +537,7 @@ impl Store {
         workspace_id: i64,
     ) -> anyhow::Result<Vec<(IssueRow, Vec<DirectionRow>)>> {
         let issues = sqlx::query_as::<_, IssueRow>(
-            "SELECT id, workspace_id, title, slug, lead_codex_thread_id, created_at
+            "SELECT id, workspace_id, title, slug, kind, lead_codex_thread_id, created_at
              FROM issue WHERE workspace_id = ? ORDER BY id",
         )
         .bind(workspace_id)
@@ -816,6 +853,31 @@ mod tests {
             .expect("direction with spec");
         let dirs = store.list_directions(issue).await.expect("list");
         assert_eq!(dirs[0].spec, "the task");
+    }
+
+    #[tokio::test]
+    async fn issue_kind_column_is_migrated_and_validated() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let path = dir.path().join("t.db");
+        let store = Store::open(&path).await.expect("open");
+        sqlx::query("ALTER TABLE issue DROP COLUMN kind")
+            .execute(&store.pool)
+            .await
+            .expect("drop kind");
+        drop(store);
+
+        let store = Store::open(&path).await.expect("reopen");
+        let ws = store.create_workspace("W", "w").await.expect("ws");
+        let issue = store
+            .create_issue_with_kind(ws, "Fix login", "fix-login", "bugfix")
+            .await
+            .expect("issue");
+        let row = store.get_issue(issue).await.expect("get").expect("some");
+        assert_eq!(row.kind, "bugfix");
+        assert!(store
+            .create_issue_with_kind(ws, "Invalid", "invalid", "other")
+            .await
+            .is_err());
     }
 
     #[tokio::test]

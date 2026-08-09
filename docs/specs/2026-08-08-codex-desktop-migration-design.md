@@ -60,11 +60,12 @@ Codex Desktop（官方，不修改安装包）
 
 ## 4. 数据模型变更
 
-- `thread`：+ `lead_codex_thread_id`（string, nullable）；删除 `lead_tool` /
+- `issue`：保留 Weft 的 `kind`（feature | bugfix | refactor | spike），并增加
+  `lead_codex_thread_id`（string, nullable）；删除 `lead_tool` /
   `lead_command`（恒为 codex app-server）；`lead_meta` 废止（session 面板
   由 Desktop 取代）。
 - `direction`：+ `codex_thread_id`（string, nullable）。status 推导来源由
-  引擎事件改为 app-server 线程事件 + 看板人工操作，五态不变
+  引擎事件改为 app-server 线程事件 + 明确的验收动作，五态不变
   （queued | planning | working | review | done）。
 - `session` 实体废止（被 Codex 线程取代）；历史数据随客户端一起退役。
 - `lead_message` / bus 记录保留。
@@ -79,7 +80,8 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
   （issue 上下文 + workspace 仓库 id / base branch + 可用 MCP 工具说明）。Lead
   通过仅对 `lead` party 暴露的 `task_create` 拆出任务；工具要求完整 spec，校验
   repo 属于当前 issue workspace，并发出 `direction.updated`。worker 无法列出或
-  调用该工具，用户界面也不提供手工新建任务。
+  调用该工具，用户界面也不提供手工新建任务。Issue 可以先于仓库创建；Lead 可
+  在用户补录仓库后调用只读的 `repo_list` 刷新 repo id 与基线分支。
 - spawn worker：materialize 出 worktree（repo_id + base_branch）→ 创建线程
   （cwd = worktree）→ 首条输入为 direction brief（按 mandate 渲染，
   plan+impl / impl-only，沿用现有 brief 模板）。
@@ -211,8 +213,9 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
     topbar；weftd / SSE 健康状态不作为常驻产品元素，真实失败在具体操作处提示；
   - `sidebar`：Codex sidebar 内的全局导航，只放 workspace selector、Kanban、
     仓库、issue 列表和 attention 摘要；不放 Weft 品牌、语言/主题开关、聊天、
-    长表单或 `direction` 术语。Issue 分组标题右侧提供 `+`，展开单字段内联
-    创建器；创建后直接选中新 issue；
+    长表单或 `direction` 术语。像 Weft 一样提供一级“新建 issue”动作，通过
+    bridge 在主工作区打开“标题 + 类型”弹窗；创建后自动启动 Lead 并进入原生
+    Codex 对话，不要求先添加仓库；
   - `workspace`：Codex 主区域，只渲染 Kanban / 仓库 / issue detail，移除重复
     topbar 和重复的新建 issue 表单。Issue 详情不提供手工新建任务，任务由 lead
     chat 调用 `task_create` 产生；lead / worker 沟通仍进入原生线程。

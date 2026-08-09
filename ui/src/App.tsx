@@ -1,11 +1,12 @@
 import * as React from "react"
-import { FolderGit2, KanbanSquare, Plus } from "lucide-react"
+import { FolderGit2, KanbanSquare, Plus, SquarePen } from "lucide-react"
 
 import { api, jsonRequest, slugify } from "@/api"
 import { DialogLayer } from "@/components/dialogs"
 import { IssueDetailView } from "@/components/issue-detail-view"
 import { KanbanView, type WorkActions } from "@/components/kanban-view"
 import { RepositoriesView } from "@/components/repositories-view"
+import { openCodexThread } from "@/components/shared"
 import { Button } from "@/components/ui/button"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { useI18n } from "@/i18n"
@@ -17,6 +18,7 @@ import type {
   DialogState,
   Direction,
   Issue,
+  IssueKind,
   MessageIntent,
   Repo,
   RepoMap,
@@ -185,20 +187,12 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
         setView(message.view)
         return
       }
-      if (message.type === "issue.created") {
-        if (surfaceState.current.workspaceId !== message.workspaceId) {
-          setWorkspaceId(message.workspaceId)
-        }
-        void refreshWorkspace(message.workspaceId)
-          .then(() => {
-            setDetailIssueId(message.issueId)
-            setView("issue")
-          })
-          .catch(notifyError)
-        return
-      }
       if (message.type === "command" && message.command === "workspace.create") {
         setDialog({ type: "workspace" })
+        return
+      }
+      if (message.type === "command" && message.command === "issue.create") {
+        setDialog({ type: "issue" })
         return
       }
       if (message.type === "state.request") publishState()
@@ -234,11 +228,28 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
     notify(t("success.workspaceCreated"), "success")
   }
 
-  const createIssue = async (title: string) => {
-    if (!workspaceId) throw new Error(t("err.unknown"))
-    await api("/api/issues", jsonRequest("POST", { workspace_id: workspaceId, title, slug: slugify(title) }))
+  const launchLead = React.useCallback(async (issueId: number) => {
+    const started = await api<{ codexThreadId: string }>(`/api/issues/${issueId}/spawn-lead`, jsonRequest("POST"))
     await refreshCurrent()
+    window.setTimeout(() => openCodexThread(started.codexThreadId), 0)
+  }, [refreshCurrent])
+
+  const createIssue = async (title: string, kind: IssueKind) => {
+    if (!workspaceId) throw new Error(t("err.unknown"))
+    const created = await api<{ id: number }>("/api/issues", jsonRequest("POST", {
+      workspace_id: workspaceId,
+      title,
+      slug: slugify(title),
+      kind,
+    }))
+    await refreshCurrent()
+    setDetailIssueId(created.id)
+    setView("issue")
     notify(t("success.issueCreated"), "success")
+    void launchLead(created.id).catch((caught) => {
+      notifyError(caught)
+      void refreshCurrent()
+    })
   }
 
   const sendMessage = async (target: "lead" | "task", id: number, text: string, intent: MessageIntent) => {
@@ -256,10 +267,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
 
   const workActions = React.useMemo<WorkActions>(() => ({
     onError: notifyError,
-    onStartLead: async (issue: Issue) => {
-      await api(`/api/issues/${issue.id}/spawn-lead`, jsonRequest("POST"))
-      await refreshCurrent()
-    },
+    onStartLead: async (issue: Issue) => launchLead(issue.id),
     onStartTask: async (direction: Direction) => {
       await api(`/api/directions/${direction.id}/spawn`, jsonRequest("POST"))
       await refreshCurrent()
@@ -272,7 +280,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
     onMessageLead: (issue: Issue) => setDialog({ type: "message", target: "lead", id: issue.id, intent: "message" }),
     onMessageTask: (direction: Direction) => setDialog({ type: "message", target: "task", id: direction.id, intent: "message" }),
     onContinueTask: (direction: Direction) => setDialog({ type: "message", target: "task", id: direction.id, intent: "continue" }),
-  }), [notifyError, refreshCurrent, completeTask])
+  }), [notifyError, refreshCurrent, completeTask, launchLead])
 
   const addRepository = async (name: string, path: string) => {
     if (!workspaceId) throw new Error(t("err.unknown"))
@@ -307,7 +315,6 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
   }
 
   const detailEntry = board.find((entry) => entry.issue.id === detailIssueId)
-  const showIssueCreate = !embedded || channel === null
   let mainContent: React.ReactNode
   if (loading && !workspaces.length) {
     mainContent = <div className="app-loading" role="status">{t("app.loading")}</div>
@@ -341,11 +348,9 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
         repos={repos}
         board={board}
         actions={workActions}
-        onCreateIssue={createIssue}
+        onOpenCreateIssue={() => setDialog({ type: "issue" })}
         onCreateWorkspace={() => setDialog({ type: "workspace" })}
-        onShowRepositories={() => switchView("repos")}
         onOpenIssue={(id) => { setDetailIssueId(id); setView("issue") }}
-        showIssueCreate={showIssueCreate}
       />
     )
   }
@@ -376,6 +381,10 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
           </Button>
         </nav>
         <div className="workspace-controls">
+          <Button variant="ghost" disabled={!workspaceId} onClick={() => setDialog({ type: "issue" })}>
+            <SquarePen aria-hidden="true" />
+            {t("issue.create")}
+          </Button>
           <label className="sr-only" htmlFor="workspace-select">{t("workspace.label")}</label>
           <NativeSelect
             className="workspace-select-shell"
@@ -413,6 +422,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
         state={dialog}
         onClose={() => setDialog(null)}
         onCreateWorkspace={createWorkspace}
+        onCreateIssue={createIssue}
         onSendMessage={sendMessage}
       />
 

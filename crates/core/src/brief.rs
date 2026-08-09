@@ -13,7 +13,7 @@ pub const LEAD_PARTY: &str = "lead";
 /// per-thread MCP endpoint (registered as the `weft-bus` MCP server).
 fn bus_block(party: &str, bus_url: &str) -> String {
     let lead_tool = if party == LEAD_PARTY {
-        "\n- `task_create(name, repo_id, spec, reason?, mandate?, base_branch?)` — create a worker task after decomposing the issue."
+        "\n- `task_create(name, repo_id, spec, reason?, mandate?, base_branch?)` — create a worker task after decomposing the issue.\n- `repo_list()` — refresh the workspace repository list after the human adds repositories."
     } else {
         ""
     };
@@ -68,17 +68,21 @@ pub fn direction_brief(
 /// First message for an issue's lead thread.
 pub fn lead_brief(
     issue_title: &str,
+    issue_kind: &str,
     tasks: &[(i64, String)],
     repos: &[(i64, String, String)],
     bus_url: &str,
 ) -> String {
     let mut lines = format!(
         "You are the lead on issue: {issue_title}\n\
+         Issue type: {issue_kind}\n\
          You own decomposition and coordination; you do not write code yourself.\n\
          Available repositories:\n"
     );
     if repos.is_empty() {
-        lines.push_str("- None. Ask the human to add a repository before creating tasks.\n");
+        lines.push_str(
+            "- None. Ask the human to add a repository, then call `repo_list` before creating tasks.\n",
+        );
     }
     for (id, name, base_ref) in repos {
         lines.push_str(&format!("- `{id}`: {name} (base: {base_ref})\n"));
@@ -132,6 +136,7 @@ mod tests {
     fn lead_brief_lists_tasks_repos_and_creation_tool() {
         let b = super::lead_brief(
             "Fix login",
+            "bugfix",
             &[
                 (3, "backend-fix".to_string()),
                 (4, "frontend-copy".to_string()),
@@ -140,9 +145,25 @@ mod tests {
             "http://127.0.0.1:47810/bus/1/lead/mcp",
         );
         assert!(b.contains("`3`: backend-fix"));
+        assert!(b.contains("Issue type: bugfix"));
         assert!(b.contains("`4`: frontend-copy"));
         assert!(b.contains("`1`: api (base: main)"));
         assert!(b.contains("task_create"));
+        assert!(b.contains("repo_list"));
         assert!(b.contains("party `lead`"));
+    }
+
+    #[test]
+    fn lead_brief_without_repos_explains_the_refresh_flow() {
+        let b = super::lead_brief(
+            "Explore caching",
+            "spike",
+            &[],
+            &[],
+            "http://127.0.0.1:47810/bus/1/lead/mcp",
+        );
+        assert!(b.contains("Ask the human to add a repository"));
+        assert!(b.contains("then call `repo_list`"));
+        assert!(b.contains("None yet"));
     }
 }

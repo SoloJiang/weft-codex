@@ -1,14 +1,13 @@
 import * as React from "react"
-import { AlertTriangle, Check, FolderGit2, KanbanSquare, Plus, X } from "lucide-react"
+import { AlertTriangle, FolderGit2, KanbanSquare, Plus, SquarePen } from "lucide-react"
 
-import { api, jsonRequest, slugify } from "@/api"
+import { api } from "@/api"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { useI18n } from "@/i18n"
 import { createSurfaceChannel, type SurfaceMessage } from "@/surface-channel"
 import { readInitialRoute, readInitialWorkspaceId, type SurfaceRoute } from "@/surface"
-import type { BoardEntry, Repo, Workspace } from "@/types"
+import type { BoardEntry, Workspace } from "@/types"
 
 const SIDEBAR_EVENT_NAMES = [
   "direction.updated",
@@ -31,14 +30,9 @@ export default function SidebarApp() {
   const [workspaces, setWorkspaces] = React.useState<Workspace[]>([])
   const [workspaceId, setWorkspaceId] = React.useState<number | null>(readInitialWorkspaceId)
   const [board, setBoard] = React.useState<BoardEntry[]>([])
-  const [repoCount, setRepoCount] = React.useState(0)
   const [route, setRoute] = React.useState<SurfaceRoute>(readInitialRoute)
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState("")
-  const [issueComposerOpen, setIssueComposerOpen] = React.useState(false)
-  const [issueTitle, setIssueTitle] = React.useState("")
-  const [issueError, setIssueError] = React.useState("")
-  const [creatingIssue, setCreatingIssue] = React.useState(false)
   const loadSequence = React.useRef(0)
   const stateRef = React.useRef({ workspaceId, route })
   const channel = React.useMemo(createSurfaceChannel, [])
@@ -65,13 +59,9 @@ export default function SidebarApp() {
   const loadWorkspace = React.useCallback(async (id: number) => {
     const sequence = loadSequence.current + 1
     loadSequence.current = sequence
-    const [rows, repos] = await Promise.all([
-      api<BoardEntry[]>(`/api/issues?workspace_id=${id}`),
-      api<Repo[]>(`/api/workspaces/${id}/repos`),
-    ])
+    const rows = await api<BoardEntry[]>(`/api/issues?workspace_id=${id}`)
     if (loadSequence.current !== sequence) return
     setBoard(rows)
-    setRepoCount(repos.length)
   }, [])
 
   React.useEffect(() => {
@@ -86,7 +76,6 @@ export default function SidebarApp() {
     if (!workspaceId) {
       loadSequence.current += 1
       setBoard([])
-      setRepoCount(0)
       return
     }
     setLoading(true)
@@ -126,9 +115,6 @@ export default function SidebarApp() {
     const receive = (message: SurfaceMessage) => {
       if (message.type === "workspace.changed") {
         setWorkspaceId(message.workspaceId)
-        setIssueComposerOpen(false)
-        setIssueTitle("")
-        setIssueError("")
         return
       }
       if (message.type === "route.changed") {
@@ -156,55 +142,13 @@ export default function SidebarApp() {
   const selectWorkspace = (id: number) => {
     setWorkspaceId(id)
     setRoute({ view: "kanban", issueId: null })
-    setIssueComposerOpen(false)
-    setIssueTitle("")
-    setIssueError("")
     channel?.post({ type: "workspace.select", workspaceId: id })
     channel?.post({ type: "navigate", view: "kanban", issueId: null })
-  }
-
-  const closeIssueComposer = () => {
-    if (creatingIssue) return
-    setIssueComposerOpen(false)
-    setIssueTitle("")
-    setIssueError("")
-  }
-
-  const createIssue = async (event: React.FormEvent) => {
-    event.preventDefault()
-    if (creatingIssue || !workspaceId) return
-    const title = issueTitle.trim()
-    if (!title) {
-      setIssueError(t("validation.issueTitle"))
-      return
-    }
-    setCreatingIssue(true)
-    setIssueError("")
-    try {
-      const created = await api<{ id: number }>("/api/issues", jsonRequest("POST", {
-        workspace_id: workspaceId,
-        title,
-        slug: slugify(title),
-      }))
-      await loadWorkspace(workspaceId)
-      setIssueComposerOpen(false)
-      setIssueTitle("")
-      setRoute({ view: "issue", issueId: created.id })
-      channel?.post({ type: "issue.created", workspaceId, issueId: created.id })
-    } catch (caught) {
-      setIssueError(errorText(caught, t("err.network"), t("err.unknown")))
-    } finally {
-      setCreatingIssue(false)
-    }
   }
 
   const attentionItems = board.flatMap((entry) => entry.directions
     .filter((task) => Boolean(task.attention))
     .map((task) => ({ task, issue: entry.issue })))
-
-  let issueCreateTitle = t("issue.create")
-  if (!workspaceId) issueCreateTitle = t("workspace.none")
-  if (workspaceId && !repoCount) issueCreateTitle = t("sidebar.issueRequiresRepo")
 
   let issueList: React.ReactNode
   if (loading && !board.length) {
@@ -226,7 +170,9 @@ export default function SidebarApp() {
           onClick={() => navigate({ view: "issue", issueId: entry.issue.id })}
         >
           <span className="sidebar-row-title">{entry.issue.title}</span>
-          <span className="sidebar-row-meta">{t("sidebar.taskProgress", { done, total })}</span>
+          <span className="sidebar-row-meta">
+            {t(`kind.${entry.issue.kind}`)} · {t("sidebar.taskProgress", { done, total })}
+          </span>
         </button>
       )
     })
@@ -240,7 +186,7 @@ export default function SidebarApp() {
           className="sidebar-workspace-select"
           id="sidebar-workspace-select"
           size="sm"
-          disabled={!workspaces.length || creatingIssue}
+          disabled={!workspaces.length}
           value={workspaceId ?? ""}
           onChange={(event) => selectWorkspace(Number(event.target.value))}
         >
@@ -258,6 +204,21 @@ export default function SidebarApp() {
           onClick={() => channel?.post({ type: "command", command: "workspace.create" })}
         >
           <Plus aria-hidden="true" />
+        </Button>
+      </div>
+
+      <div className="sidebar-primary-actions">
+        <Button
+          variant="ghost"
+          className="sidebar-create-button"
+          disabled={!channel}
+          onClick={() => channel?.post({
+            type: "command",
+            command: workspaceId ? "issue.create" : "workspace.create",
+          })}
+        >
+          {workspaceId ? <SquarePen aria-hidden="true" /> : <Plus aria-hidden="true" />}
+          {workspaceId ? t("issue.create") : t("ws.add")}
         </Button>
       </div>
 
@@ -288,67 +249,8 @@ export default function SidebarApp() {
         <section className="sidebar-section" aria-labelledby="sidebar-issues-heading">
           <div className="sidebar-section-heading">
             <h2 id="sidebar-issues-heading">{t("sidebar.issues")}</h2>
-            <div className="sidebar-section-actions">
-              <span className="sidebar-section-count">{board.length}</span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label={issueCreateTitle}
-                title={issueCreateTitle}
-                disabled={!workspaceId || !repoCount || issueComposerOpen}
-                onClick={() => setIssueComposerOpen(true)}
-              >
-                <Plus aria-hidden="true" />
-              </Button>
-            </div>
+            <span className="sidebar-section-count">{board.length}</span>
           </div>
-          {issueComposerOpen ? (
-            <form className="sidebar-issue-create" noValidate onSubmit={createIssue}>
-              <label className="sr-only" htmlFor="sidebar-new-issue-title">{t("issue.titleLabel")}</label>
-              <Input
-                id="sidebar-new-issue-title"
-                autoFocus
-                autoComplete="off"
-                placeholder={t("issue.titlePh")}
-                value={issueTitle}
-                aria-invalid={Boolean(issueError)}
-                aria-describedby={issueError ? "sidebar-issue-error" : undefined}
-                disabled={creatingIssue}
-                onChange={(event) => { setIssueTitle(event.target.value); setIssueError("") }}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    closeIssueComposer()
-                  }
-                }}
-              />
-              <Button
-                type="submit"
-                variant="ghost"
-                size="icon-xs"
-                aria-label={creatingIssue ? t("loading.creatingIssue") : t("issue.create")}
-                title={creatingIssue ? t("loading.creatingIssue") : t("issue.create")}
-                disabled={creatingIssue}
-                aria-busy={creatingIssue}
-              >
-                <Check aria-hidden="true" />
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label={t("modal.cancel")}
-                title={t("modal.cancel")}
-                disabled={creatingIssue}
-                onClick={closeIssueComposer}
-              >
-                <X aria-hidden="true" />
-              </Button>
-              {issueError ? <p id="sidebar-issue-error" className="sidebar-issue-error" role="alert">{issueError}</p> : null}
-            </form>
-          ) : null}
           <div className="sidebar-list">{issueList}</div>
         </section>
 

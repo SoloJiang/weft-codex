@@ -1,7 +1,7 @@
 import type { AppView } from "@/types"
 import type { UiSurface } from "@/surface"
 
-export type SurfaceCommand = "workspace.create"
+export type SurfaceCommand = "workspace.create" | "issue.create"
 
 export type SurfaceMessage =
   | { type: "surface.ready"; surface: UiSurface }
@@ -10,7 +10,6 @@ export type SurfaceMessage =
   | { type: "workspace.changed"; workspaceId: number | null }
   | { type: "navigate"; view: AppView; issueId: number | null }
   | { type: "route.changed"; view: AppView; issueId: number | null }
-  | { type: "issue.created"; workspaceId: number; issueId: number }
   | { type: "command"; command: SurfaceCommand }
 
 export interface SurfaceChannel {
@@ -49,10 +48,8 @@ function isSurfaceMessage(value: unknown): value is SurfaceMessage {
   if (candidate.type === "navigate" || candidate.type === "route.changed") {
     return hasValidRoute(candidate)
   }
-  if (candidate.type === "issue.created") {
-    return isPositiveInteger(candidate.workspaceId) && isPositiveInteger(candidate.issueId)
-  }
-  return candidate.type === "command" && candidate.command === "workspace.create"
+  if (candidate.type !== "command") return false
+  return candidate.command === "workspace.create" || candidate.command === "issue.create"
 }
 
 function bridgeId(): string | null {

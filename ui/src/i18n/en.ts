@@ -9,10 +9,10 @@ const en = {
   "sidebar.needsAttention": "Needs attention",
   "sidebar.noIssues": "No issues yet",
   "sidebar.taskProgress": "{done} of {total} tasks done",
-  "sidebar.issueRequiresRepo": "Add a repository before creating an issue",
 
   "workspace.label": "Workspace",
   "workspace.none": "No workspace yet",
+  "workspace.namePlaceholder": "Workspace name",
   "ws.add": "New workspace",
 
   "status.queued": "Queued",
@@ -23,7 +23,9 @@ const en = {
 
   "issue.create": "Create issue",
   "issue.titleLabel": "Issue title",
-  "issue.titlePh": "What needs to be solved?",
+  "issue.titlePh": "Issue name",
+  "issue.kindLabel": "Type",
+  "issue.kindPlaceholder": "Choose type",
   "issue.spawnLead": "Start lead",
   "issue.msgLead": "Message lead",
 
@@ -65,10 +67,14 @@ const en = {
   "repo.state.done": "Analyzed",
 
   "modal.cancel": "Cancel",
+  "modal.close": "Close",
   "modal.messageTitle": "Send message",
   "modal.continueTaskTitle": "Continue task",
   "modal.workspaceTitle": "New workspace",
+  "modal.issueTitle": "New issue",
+  "modal.issueDescription": "An issue is one work line, split across repositories.",
   "modal.createWorkspace": "Create workspace",
+  "modal.createIssue": "Create issue",
   "modal.sendMessage": "Send",
   "modal.continueTask": "Send and continue",
 
@@ -79,13 +85,17 @@ const en = {
   "mandate.planImplShort": "Plan + implement",
   "mandate.implOnlyShort": "Implement only",
 
+  "kind.feature": "Feature",
+  "kind.bugfix": "Bugfix",
+  "kind.refactor": "Refactor",
+  "kind.spike": "Spike",
+
   "party.you": "You",
   "party.lead": "Lead",
   "party.task": "Task",
 
   "validation.workspaceName": "Enter a workspace name.",
   "validation.message": "Enter a message.",
-  "validation.issueTitle": "Enter an issue title.",
   "validation.repoName": "Enter a repository name.",
   "validation.repoPath": "Enter the repository's absolute path.",
 
@@ -115,9 +125,9 @@ const en = {
   "empty.workspaceAction": "Create workspace",
   "empty.issuesTitle": "Start with an issue",
   "empty.issuesBody": "Describe the problem, then let a lead break it into focused tasks.",
+  "empty.issuesAction": "Create issue",
   "empty.reposTitle": "Add the repositories in this workspace",
   "empty.reposBody": "Repository analysis gives the lead the structure and relationships it needs to plan work.",
-  "empty.reposAction": "Add a repository",
 
   "err.prefix": "Error: ",
   "err.network": "The service could not be reached.",

@@ -100,6 +100,21 @@ fn tool_list(party: &str) -> Value {
                 "required": ["name", "repo_id", "spec"]
             }
         }));
+        tools.push(json!({
+            "name": "repo_list",
+            "description": "List the repositories currently attached to this issue's workspace. Lead only. Refresh this after the human adds repositories.",
+            "annotations": {
+                "readOnlyHint": true,
+                "destructiveHint": false,
+                "openWorldHint": false,
+                "idempotentHint": true
+            },
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {}
+            }
+        }));
     }
     json!({ "tools": tools })
 }
@@ -171,8 +186,35 @@ async fn call_tool(state: &McpState, issue: i64, party: &str, name: &str, args: 
             text_result(serde_json::to_string(&msgs).unwrap_or_else(|_| "[]".into()))
         }
         "task_create" => create_task(state, issue, party, args).await,
+        "repo_list" => list_repos(state, issue, party).await,
         other => text_result(format!("error: unknown tool: {other}")),
     }
+}
+
+async fn list_repos(state: &McpState, issue_id: i64, party: &str) -> Value {
+    if party != "lead" {
+        return text_result("error: repo_list is available only to the lead".into());
+    }
+    let issue = match state.store.get_issue(issue_id).await {
+        Ok(Some(issue)) => issue,
+        Ok(None) => return text_result(format!("error: unknown issue {issue_id}")),
+        Err(error) => return text_result(format!("error: issue lookup failed: {error:#}")),
+    };
+    let repos = match state.store.list_repos(issue.workspace_id).await {
+        Ok(repos) => repos,
+        Err(error) => return text_result(format!("error: repository lookup failed: {error:#}")),
+    };
+    let result: Vec<Value> = repos
+        .into_iter()
+        .map(|repo| {
+            json!({
+                "repo_id": repo.id,
+                "name": repo.name,
+                "base_branch": repo.base_ref
+            })
+        })
+        .collect();
+    text_result(Value::Array(result).to_string())
 }
 
 fn task_slug(name: &str) -> String {
@@ -388,6 +430,11 @@ mod tests {
             list["result"]["tools"][2]["annotations"]["destructiveHint"],
             false
         );
+        assert_eq!(list["result"]["tools"][3]["name"], "repo_list");
+        assert_eq!(
+            list["result"]["tools"][3]["annotations"]["readOnlyHint"],
+            true
+        );
 
         let worker_list = handle_rpc(
             &st,
@@ -462,6 +509,40 @@ mod tests {
             .create_issue(workspace, "Fix login", "fix-login")
             .await
             .expect("issue");
+
+        let listed = handle_rpc(
+            &st,
+            issue,
+            "lead",
+            &json!({
+                "jsonrpc": "2.0", "id": 0, "method": "tools/call",
+                "params": { "name": "repo_list", "arguments": {} }
+            }),
+        )
+        .await
+        .expect("repo list response");
+        let listed_text = listed["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or("");
+        assert!(listed_text.contains("\"repo_id\":1"));
+        assert!(listed_text.contains("\"name\":\"api\""));
+        assert!(listed_text.contains("\"base_branch\":\"trunk\""));
+
+        let list_denied = handle_rpc(
+            &st,
+            issue,
+            "7",
+            &json!({
+                "jsonrpc": "2.0", "id": 10, "method": "tools/call",
+                "params": { "name": "repo_list", "arguments": {} }
+            }),
+        )
+        .await
+        .expect("denied repo list response");
+        assert!(list_denied["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or("")
+            .contains("only to the lead"));
 
         let denied = handle_rpc(
             &st,

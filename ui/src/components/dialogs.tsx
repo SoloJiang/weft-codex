@@ -1,30 +1,37 @@
 import * as React from "react"
+import { X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogClose,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Textarea } from "@/components/ui/textarea"
 import { useI18n } from "@/i18n"
-import type { DialogState, MessageIntent } from "@/types"
+import type { DialogState, IssueKind, MessageIntent } from "@/types"
+import { ISSUE_KINDS } from "@/types"
 import { Field } from "./shared"
 
 interface DialogLayerProps {
   state: DialogState
   onClose: () => void
   onCreateWorkspace: (name: string) => Promise<void>
+  onCreateIssue: (title: string, kind: IssueKind) => Promise<void>
   onSendMessage: (target: "lead" | "task", id: number, text: string, intent: MessageIntent) => Promise<void>
 }
 
 interface FormDialogProps {
   title: string
+  description?: string
   submitLabel: string
   pendingLabel: string
+  submitDisabled?: boolean
   onClose: () => void
   onSubmit: () => Promise<boolean | void>
   children: React.ReactNode
@@ -32,8 +39,10 @@ interface FormDialogProps {
 
 function FormDialog({
   title,
+  description,
   submitLabel,
   pendingLabel,
+  submitDisabled = false,
   onClose,
   onSubmit,
   children,
@@ -66,8 +75,24 @@ function FormDialog({
     <Dialog open onOpenChange={(open) => { if (!open && !pending) onClose() }}>
       <DialogContent className="modal-body">
         <form className="modal-form" noValidate onSubmit={submit}>
-          <DialogHeader>
-            <DialogTitle>{title}</DialogTitle>
+          <DialogHeader className="modal-header">
+            <div className="modal-heading">
+              <DialogTitle>{title}</DialogTitle>
+              {description ? <DialogDescription>{description}</DialogDescription> : null}
+            </div>
+            <DialogClose asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="modal-close"
+                aria-label={t("modal.close")}
+                title={t("modal.close")}
+                disabled={pending}
+              >
+                <X aria-hidden="true" />
+              </Button>
+            </DialogClose>
           </DialogHeader>
           {children}
           {error ? <p className="modal-error" role="alert">{t("err.prefix")}{error}</p> : null}
@@ -75,7 +100,7 @@ function FormDialog({
             <DialogClose asChild>
               <Button type="button" variant="ghost" disabled={pending}>{t("modal.cancel")}</Button>
             </DialogClose>
-            <Button type="submit" disabled={pending} aria-busy={pending}>
+            <Button type="submit" disabled={pending || submitDisabled} aria-busy={pending}>
               {pending ? pendingLabel : submitLabel}
             </Button>
           </div>
@@ -101,6 +126,7 @@ function WorkspaceDialog({
       title={t("modal.workspaceTitle")}
       submitLabel={t("modal.createWorkspace")}
       pendingLabel={t("loading.creatingWorkspace")}
+      submitDisabled={!name.trim()}
       onClose={onClose}
       onSubmit={async () => {
         if (!name.trim()) {
@@ -116,10 +142,65 @@ function WorkspaceDialog({
             id="workspace-name"
             autoFocus
             maxLength={120}
+            placeholder={t("workspace.namePlaceholder")}
             value={name}
             aria-invalid={Boolean(error)}
             onChange={(event) => { setName(event.target.value); setError("") }}
           />
+        </Field>
+      </div>
+    </FormDialog>
+  )
+}
+
+function IssueDialog({
+  onClose,
+  onCreate,
+}: {
+  onClose: () => void
+  onCreate: (title: string, kind: IssueKind) => Promise<void>
+}) {
+  const { t } = useI18n()
+  const [title, setTitle] = React.useState("")
+  const [kind, setKind] = React.useState<IssueKind | "">("")
+
+  return (
+    <FormDialog
+      title={t("modal.issueTitle")}
+      description={t("modal.issueDescription")}
+      submitLabel={t("modal.createIssue")}
+      pendingLabel={t("loading.creatingIssue")}
+      submitDisabled={!title.trim() || !kind}
+      onClose={onClose}
+      onSubmit={async () => {
+        if (!title.trim() || !kind) return false
+        await onCreate(title.trim(), kind)
+      }}
+    >
+      <div className="form-stack">
+        <Field label={t("issue.titleLabel")} htmlFor="issue-title">
+          <Input
+            id="issue-title"
+            autoFocus
+            autoComplete="off"
+            maxLength={120}
+            placeholder={t("issue.titlePh")}
+            value={title}
+            onChange={(event) => setTitle(event.target.value)}
+          />
+        </Field>
+        <Field label={t("issue.kindLabel")} htmlFor="issue-kind">
+          <NativeSelect
+            className="w-full"
+            id="issue-kind"
+            value={kind}
+            onChange={(event) => setKind(event.target.value as IssueKind)}
+          >
+            <NativeSelectOption value="" disabled>{t("issue.kindPlaceholder")}</NativeSelectOption>
+            {ISSUE_KINDS.map((value) => (
+              <NativeSelectOption key={value} value={value}>{t(`kind.${value}`)}</NativeSelectOption>
+            ))}
+          </NativeSelect>
         </Field>
       </div>
     </FormDialog>
@@ -148,6 +229,7 @@ function MessageDialog({
       title={t(continuing ? "modal.continueTaskTitle" : "modal.messageTitle")}
       submitLabel={t(continuing ? "modal.continueTask" : "modal.sendMessage")}
       pendingLabel={t("loading.sendingMessage")}
+      submitDisabled={!text.trim()}
       onClose={onClose}
       onSubmit={async () => {
         if (!text.trim()) {
@@ -178,6 +260,9 @@ export function DialogLayer(props: DialogLayerProps) {
   if (!state) return null
   if (state.type === "workspace") {
     return <WorkspaceDialog onClose={props.onClose} onCreate={props.onCreateWorkspace} />
+  }
+  if (state.type === "issue") {
+    return <IssueDialog onClose={props.onClose} onCreate={props.onCreateIssue} />
   }
   if (state.type === "message") {
     return <MessageDialog target={state.target} id={state.id} intent={state.intent} onClose={props.onClose} onSend={props.onSendMessage} />

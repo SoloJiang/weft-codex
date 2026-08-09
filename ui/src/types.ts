@@ -1,6 +1,8 @@
 export const STATUSES = ["queued", "planning", "working", "review", "done"] as const
+export const ISSUE_KINDS = ["feature", "bugfix", "refactor", "spike"] as const
 
 export type DirectionStatus = (typeof STATUSES)[number]
+export type IssueKind = (typeof ISSUE_KINDS)[number]
 export type AppView = "kanban" | "repos" | "issue"
 export type MessageIntent = "message" | "continue"
 
@@ -25,6 +27,7 @@ export interface Issue {
   workspace_id: number
   title: string
   slug: string
+  kind: IssueKind
   lead_codex_thread_id: string
   created_at: string
 }
@@ -100,6 +103,7 @@ export interface BusMessage {
 
 export type DialogState =
   | { type: "workspace" }
+  | { type: "issue" }
   | { type: "message"; target: "lead" | "task"; id: number; intent: MessageIntent }
   | null
 

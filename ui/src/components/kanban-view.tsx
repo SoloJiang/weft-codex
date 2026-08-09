@@ -1,8 +1,7 @@
 import * as React from "react"
-import { Check, Flag, MessageCircle, Play, Plus, Send } from "lucide-react"
+import { Check, Flag, MessageCircle, Play, Send } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { useI18n } from "@/i18n"
 import type { BoardEntry, Direction, DirectionStatus, Issue, Repo } from "@/types"
 import { STATUSES } from "@/types"
@@ -180,6 +179,7 @@ function IssueBlock({
   actions: WorkActions
   onOpenIssue: (id: number) => void
 }) {
+  const { t } = useI18n()
   return (
     <article className="issue">
       <header className="issue-head">
@@ -189,7 +189,10 @@ function IssueBlock({
               {entry.issue.title}
             </Button>
           </h2>
-          <span className="meta">#{entry.issue.id} {entry.issue.slug}</span>
+          <div className="issue-context">
+            <span className="issue-kind">{t(`kind.${entry.issue.kind}`)}</span>
+            <span className="meta">#{entry.issue.id}</span>
+          </div>
         </div>
         <IssueActions issue={entry.issue} actions={actions} />
       </header>
@@ -214,52 +217,25 @@ export function KanbanView({
   repos,
   board,
   actions,
-  onCreateIssue,
+  onOpenCreateIssue,
   onCreateWorkspace,
-  onShowRepositories,
   onOpenIssue,
-  showIssueCreate = true,
 }: {
   workspaceId: number | null
   repos: Repo[]
   board: BoardEntry[]
   actions: WorkActions
-  onCreateIssue: (title: string) => Promise<void>
+  onOpenCreateIssue: () => void
   onCreateWorkspace: () => void
-  onShowRepositories: () => void
   onOpenIssue: (id: number) => void
-  showIssueCreate?: boolean
 }) {
   const { t } = useI18n()
-  const [title, setTitle] = React.useState("")
-  const [error, setError] = React.useState("")
-  const [pending, setPending] = React.useState(false)
-
-  const submitIssue = async (event: React.FormEvent) => {
-    event.preventDefault()
-    if (pending) return
-    if (!title.trim()) {
-      setError(t("validation.issueTitle"))
-      return
-    }
-    setPending(true)
-    try {
-      await onCreateIssue(title.trim())
-      setTitle("")
-    } catch (caught) {
-      actions.onError(caught)
-    } finally {
-      setPending(false)
-    }
-  }
 
   let content: React.ReactNode
   if (!workspaceId) {
     content = <EmptyState titleKey="empty.workspaceTitle" bodyKey="empty.workspaceBody" actionKey="empty.workspaceAction" onAction={onCreateWorkspace} />
-  } else if (!repos.length && !board.length) {
-    content = <EmptyState titleKey="empty.reposTitle" bodyKey="empty.reposBody" actionKey="empty.reposAction" onAction={onShowRepositories} />
   } else if (!board.length) {
-    content = <EmptyState titleKey="empty.issuesTitle" bodyKey="empty.issuesBody" />
+    content = <EmptyState titleKey="empty.issuesTitle" bodyKey="empty.issuesBody" actionKey="empty.issuesAction" onAction={onOpenCreateIssue} />
   } else {
     content = board.map((entry) => <IssueBlock key={entry.issue.id} entry={entry} repos={repos} actions={actions} onOpenIssue={onOpenIssue} />)
   }
@@ -267,25 +243,6 @@ export function KanbanView({
   return (
     <section className="view active" aria-labelledby="kanban-heading">
       <h1 id="kanban-heading" className="sr-only">{t("nav.kanban")}</h1>
-      {showIssueCreate && workspaceId && repos.length ? (
-        <form className="actions issue-create" noValidate onSubmit={submitIssue}>
-          <label className="sr-only" htmlFor="new-issue-title">{t("issue.titleLabel")}</label>
-          <Input
-            id="new-issue-title"
-            autoComplete="off"
-            placeholder={t("issue.titlePh")}
-            value={title}
-            aria-invalid={Boolean(error)}
-            aria-describedby="issue-form-error"
-            onChange={(event) => { setTitle(event.target.value); setError("") }}
-          />
-          <Button type="submit" disabled={pending} aria-busy={pending}>
-            <Plus aria-hidden="true" />
-            {pending ? t("loading.creatingIssue") : t("issue.create")}
-          </Button>
-          {error ? <p id="issue-form-error" className="inline-error" role="alert">{error}</p> : null}
-        </form>
-      ) : null}
       <div id="issues">{content}</div>
     </section>
   )

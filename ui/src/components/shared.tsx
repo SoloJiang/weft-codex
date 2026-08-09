@@ -51,12 +51,21 @@ export function AsyncButton({
   )
 }
 
+export function codexThreadHref(threadId: string): string {
+  return `codex://threads/${encodeURIComponent(threadId)}`
+}
+
+export function openCodexThread(threadId: string): void {
+  if (!threadId) return
+  window.location.assign(codexThreadHref(threadId))
+}
+
 export function ThreadLink({ threadId }: { threadId: string }) {
   const { t } = useI18n()
   if (!threadId) return null
   return (
     <Button asChild variant="ghost" className="thread-link">
-      <a href={`codex://threads/${encodeURIComponent(threadId)}`}>
+      <a href={codexThreadHref(threadId)}>
         <MessageCircle aria-hidden="true" />
         {t("dir.openThread")}
       </a>

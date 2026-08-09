@@ -360,7 +360,7 @@ impl Orchestrator {
             .iter()
             .map(|repo| (repo.id, repo.name.clone(), repo.base_ref.clone()))
             .collect();
-        let text = brief::lead_brief(&issue.title, &pairs, &repo_specs, &url);
+        let text = brief::lead_brief(&issue.title, &issue.kind, &pairs, &repo_specs, &url);
         let turn_id = client.start_turn(&thread_id, &text).await?;
         client.set_active_turn(&thread_id, &turn_id).await;
 

@@ -108,7 +108,10 @@ export function IssueDetailView({
           <header className="issue-head detail-head">
             <div className="issue-identity">
               <div className="detail-title">{entry.issue.title}</div>
-              <span className="meta">#{entry.issue.id} {entry.issue.slug}</span>
+              <div className="issue-context">
+                <span className="issue-kind">{t(`kind.${entry.issue.kind}`)}</span>
+                <span className="meta">#{entry.issue.id}</span>
+              </div>
             </div>
             <IssueActions issue={entry.issue} actions={actions} />
           </header>

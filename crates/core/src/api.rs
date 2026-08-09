@@ -159,6 +159,7 @@ struct CreateIssue {
     workspace_id: i64,
     title: String,
     slug: String,
+    kind: String,
 }
 
 async fn create_issue(
@@ -167,7 +168,7 @@ async fn create_issue(
 ) -> Response {
     match state
         .store
-        .create_issue(body.workspace_id, &body.title, &body.slug)
+        .create_issue_with_kind(body.workspace_id, &body.title, &body.slug, &body.kind)
         .await
     {
         Ok(id) => {
