@@ -4,6 +4,11 @@ const en = {
   "nav.primary": "Workspace navigation",
   "nav.kanban": "Kanban",
   "nav.repos": "Repositories",
+  "sidebar.title": "Workspace sidebar",
+  "sidebar.issues": "Issues",
+  "sidebar.needsAttention": "Needs attention",
+  "sidebar.noIssues": "No issues yet",
+  "sidebar.taskProgress": "{done} of {total} tasks done",
 
   "workspace.label": "Workspace",
   "workspace.none": "No workspace yet",

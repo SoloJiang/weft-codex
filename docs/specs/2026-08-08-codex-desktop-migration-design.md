@@ -201,6 +201,23 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
   时间线聊天式渲染 + `bus.message` SSE 实时刷新）。
 - Repo map：仓库依赖图与 components 展开视图（RepoMapView / RepoGraph 平移）。
 - 全部 i18n 字符串沿用 en/zh 双文件约束。
+- **Surface 拆分（2026-08-09 已实现并实测）**：同一份 React 构建按 URL
+  参数形成三种外壳，不复制业务组件：
+  - `standalone`：浏览器降级面，保留 workspace selector、Kanban / 仓库入口
+    与连接状态 topbar；
+  - `sidebar`：Codex sidebar 内的全局导航，只放 workspace selector、Kanban、
+    仓库、issue 列表和 attention 摘要；不放 Weft 品牌、语言/主题开关、聊天、
+    长表单或 `direction` 术语；
+  - `workspace`：Codex 主区域，只渲染 Kanban / 仓库 / issue detail，移除重复
+    topbar。lead / worker 沟通仍进入原生线程。
+- sidebar 与 workspace URL 携带同一个随机 `bridge_id`，通过同源
+  `BroadcastChannel` 做 ready/request 握手，同步 workspace、route 与白名单
+  command；没有 `bridge_id` 时不开通道，避免两个独立浏览器窗口串状态。
+  SSE 在两侧都只作失效提示，最终状态重新读取 weftd API。
+- 组合实测覆盖：268px sidebar + 主工作区、Kanban → 仓库 → issue 路由联动、
+  workspace surface 无重复 topbar、每个入口恰好一个 SVG、native select 恰好
+  一个箭头（右侧 8px、垂直偏差 0）、横向 overflow 为 0，以及 Host Context
+  驱动的中/英、明/暗主题实时切换。
 - **主题同步（2026-08-09 修订）**：Codex 本身的主题可配置（dark/light、
   corner-radius scale），所以 web app 不硬编码主题，而是引用宿主 semantic
   token；但 CSS custom property **不会跨 iframe 自动继承**。同文档挂载时可
@@ -256,6 +273,10 @@ Work（everyday work）/ Codex 双模式（bundle 实证：`isEverydayWorkMode`�
 renderer 仅 thin surface agent，通信走 CDP binding。未知版本 fail-closed
 进入 safe mode（不注入，提示用浏览器打开）。
 
+官方 plugin 仍可作为 skills / MCP / 分发层，但当前公开 manifest 没有任意
+sidebar contribution point，因此 sidebar 与模式外壳属于 renderer adapter，
+不能假设安装一个普通 plugin 就能完成。
+
 ## 7.6 Host Context Bridge 与注入生命周期
 
 Desktop 接入不允许 UI 自己猜宿主状态。launcher / renderer agent 与 React UI
@@ -296,6 +317,9 @@ interface HostContextV1 {
   subtractive probe 失败即回 Tier 1；基础挂载失败则 safe mode。
 - 原生线程跳转优先使用稳定 route/deep link；composer prefill 只用于创建普通
   人类线程，不替代 weftd 通过 app-server 创建的 lead/worker 线程。
+- 该定制不会改变 Codex Computer Use 的自操作安全边界。当前发行版在尝试读取
+  `com.openai.codex` 时明确拒绝；launcher / CDP 是独立、用户启动的本机集成
+  通道，不得包装成让 Codex 绕过自身 computer-use 限制的后门。
 
 ## 7.7 同类 taskboard 的吸收边界
 
@@ -332,12 +356,19 @@ interface HostContextV1 {
 
 ## 9. Spike 验证项（先于一切实现）
 
-Desktop 相关（1、3）待验；app-server 相关（2、4、5）**已于 2026-08-08 验证**，
+Desktop 相关（1、3）仍需运行时闭环；app-server 相关（2、4、5）**已于
+2026-08-08 验证**，
 脚本与日志在 `docs/superpowers/spike-app-server/`：
 
 1. `open -a ChatGPT --args --remote-debugging-port=...` + CDP attach 稳定，
    注入脚本活过页面导航与会话切换；探针需同时覆盖 Tier 2 所需的侧边栏
-   结构与顶层模式切换器锚点（见 7.5）。**（待验）**
+   结构与顶层模式切换器锚点（见 7.5）。**PARTIAL（2026-08-09）**：已读取
+   当前安装 `ChatGPT.app`（bundle id `com.openai.codex`，版本 `26.727.51351`，
+   build `6119`），发行 bundle 存在 `data-app-action-sidebar-scroll|section|
+   section-heading|project-row|thread-row` 等语义属性；`launcher/` 已实现安装检测、
+   CDP target 选择、单次 renderer probe 与 `safe-mode | additive | weft-mode`
+   分类测试。模式切换器尚无已验证语义锚点，因此 subtractive tier 当前必定
+   fail-open 为 additive。尚未重启或注入官方应用。
 2. weftd 经 app-server 创建的线程出现在 Desktop 线程列表，事件订阅正常。
    **PASS（store 层）**：`thread/start` 后 `session_index.jsonl` 同步写入、
    `state_*.sqlite threads` 表异步落库（秒~分钟级滞后，`thread/list` 读该表），
@@ -373,8 +404,11 @@ Desktop 相关（1、3）待验；app-server 相关（2、4、5）**已于 2026-
   spawn + bus 投递 + 事件 → 状态推导。本迁移最大的一块。
 - Stage 3：扩展 UI v1——workspace home + kanban + issue detail（**2026-08-09
   已迁移至 React + TypeScript + shadcn/ui primitive 并完成浏览器实测**：三视图、
-  状态移动、SSE 自刷新、亮/暗主题、host context 模拟、桌面/手机断点与原生线程
-  深链；Desktop 注入仍依赖下一阶段 spike 与跨源 Host Context Bridge 验证）。
+  standalone/sidebar/workspace 三 surface、双 surface 路由与 workspace 同步、状态
+  移动、SSE 自刷新、亮/暗主题、host context 模拟、桌面/手机断点与原生线程深链）。
+- Stage 3.5：Desktop adapter 地基（**进行中**）：安装检测、当前发行版语义锚点
+  inventory、只读 CDP capability probe 与三档兼容分类已完成；下一步是在专用
+  profile 完成 document-start 重挂载、CSP bypass 显示与 additive sidebar 注入。
 - Stage 4：切换——新 issue 全走新流程；停发 Tauri 客户端；删除清单落地。
 
 ## 11. 风险与对冲

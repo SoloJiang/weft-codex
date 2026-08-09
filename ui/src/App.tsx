@@ -9,6 +9,8 @@ import { RepositoriesView } from "@/components/repositories-view"
 import { Button } from "@/components/ui/button"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { useI18n } from "@/i18n"
+import { readInitialRoute, readInitialWorkspaceId } from "@/surface"
+import { createSurfaceChannel, type SurfaceMessage } from "@/surface-channel"
 import type {
   AppView,
   BoardEntry,
@@ -47,15 +49,16 @@ function errorText(error: unknown, network: string, unknown: string): string {
   return unknown
 }
 
-export default function App() {
+export default function App({ embedded = false }: { embedded?: boolean }) {
   const { t, lang } = useI18n()
+  const initialRoute = React.useMemo(readInitialRoute, [])
   const [workspaces, setWorkspaces] = React.useState<Workspace[]>([])
-  const [workspaceId, setWorkspaceId] = React.useState<number | null>(null)
+  const [workspaceId, setWorkspaceId] = React.useState<number | null>(readInitialWorkspaceId)
   const [repos, setRepos] = React.useState<Repo[]>([])
   const [board, setBoard] = React.useState<BoardEntry[]>([])
   const [repoMap, setRepoMap] = React.useState<RepoMap | null>(null)
-  const [view, setView] = React.useState<AppView>("kanban")
-  const [detailIssueId, setDetailIssueId] = React.useState<number | null>(null)
+  const [view, setView] = React.useState<AppView>(initialRoute.view)
+  const [detailIssueId, setDetailIssueId] = React.useState<number | null>(initialRoute.issueId)
   const [dialog, setDialog] = React.useState<DialogState>(null)
   const [connected, setConnected] = React.useState(false)
   const [loading, setLoading] = React.useState(true)
@@ -63,6 +66,9 @@ export default function App() {
   const [toasts, setToasts] = React.useState<ToastMessage[]>([])
   const loadSequence = React.useRef(0)
   const toastSequence = React.useRef(0)
+  const surfaceState = React.useRef({ workspaceId, view, detailIssueId })
+  const channel = React.useMemo(createSurfaceChannel, [])
+  surfaceState.current = { workspaceId, view, detailIssueId }
 
   React.useEffect(() => {
     document.documentElement.lang = lang
@@ -159,6 +165,52 @@ export default function App() {
       source.close()
     }
   }, [workspaceId, refreshWorkspace, loadWorkspaces, notifyError])
+
+  React.useEffect(() => {
+    if (!channel) return
+    const publishState = () => {
+      const current = surfaceState.current
+      channel.post({ type: "workspace.changed", workspaceId: current.workspaceId })
+      channel.post({ type: "route.changed", view: current.view, issueId: current.detailIssueId })
+    }
+    const receive = (message: SurfaceMessage) => {
+      if (message.type === "workspace.select") {
+        loadSequence.current += 1
+        setRepos([])
+        setBoard([])
+        setRepoMap(null)
+        setDetailIssueId(null)
+        setView("kanban")
+        setWorkspaceId(message.workspaceId)
+        return
+      }
+      if (message.type === "navigate") {
+        setDetailIssueId(message.issueId)
+        setView(message.view)
+        return
+      }
+      if (message.type === "command" && message.command === "workspace.create") {
+        setDialog({ type: "workspace" })
+        return
+      }
+      if (message.type === "state.request") publishState()
+      if (message.type === "surface.ready" && message.surface === "sidebar") publishState()
+    }
+    const unsubscribe = channel.subscribe(receive)
+    channel.post({ type: "surface.ready", surface: embedded ? "workspace" : "standalone" })
+    return () => {
+      unsubscribe()
+      channel.close()
+    }
+  }, [channel, embedded])
+
+  React.useEffect(() => {
+    channel?.post({ type: "workspace.changed", workspaceId })
+  }, [channel, workspaceId])
+
+  React.useEffect(() => {
+    channel?.post({ type: "route.changed", view, issueId: detailIssueId })
+  }, [channel, view, detailIssueId])
 
   const refreshCurrent = React.useCallback(async () => {
     if (!workspaceId) return
@@ -308,8 +360,9 @@ export default function App() {
   }
 
   const activeNavigation = view === "issue" ? "kanban" : view
-  return (
-    <>
+  let topbar: React.ReactNode = null
+  if (!embedded) {
+    topbar = (
       <header id="topbar">
         <nav aria-label={t("nav.primary")}>
           <Button
@@ -361,8 +414,13 @@ export default function App() {
           </span>
         </div>
       </header>
+    )
+  }
+  return (
+    <>
+      {topbar}
 
-      <main>{mainContent}</main>
+      <main className={embedded ? "embedded-main" : undefined}>{mainContent}</main>
 
       <DialogLayer
         state={dialog}

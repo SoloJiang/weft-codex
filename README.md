@@ -16,7 +16,8 @@ worktree 生命周期、仓库录入与拆解、workspace/kanban），以 Codex 
 - `crates/core` — store（SQLite，新 schema）、thread bus（MCP-over-HTTP，
   URL path 身份）、UI 事件通道。
 - `crates/daemon` — `weftd` 二进制。
-- `launcher/` —（Stage 3+）CDP 注入与 Weft mode 切换。
+- `launcher/` — Codex 安装检测与只读 CDP capability probes；当前不会启动、
+  修改或注入官方应用，下一阶段在此实现 renderer adapter 与 Weft mode。
 - `ui/` — React + TypeScript + Vite web app；shadcn/ui 只作为可维护的
   primitive 源码层，视觉由 Codex semantic token 驱动。生产构建由 daemon
   从 `crates/daemon/web/` 提供。
@@ -38,12 +39,32 @@ WEFTD_ADDR=127.0.0.1:47810 ./target/debug/weftd
 代理到 `127.0.0.1:47810`。不要直接编辑 `crates/daemon/web/assets/`，它是
 `pnpm build` 的提交产物。
 
+同一份 React 构建支持三种 surface：
+
+- `/?surface=standalone`：浏览器降级面，保留完整 topbar；
+- `/?surface=sidebar&bridge_id=<id>`：workspace、kanban、仓库、issue 与
+  attention 的全局导航；
+- `/?surface=workspace&bridge_id=<id>`：无重复 topbar 的主工作区。
+
+相同 `bridge_id` 的 sidebar / workspace 会同步 workspace、路由和命令。
+
+只读检查本机 Codex 安装与 renderer 能力：
+
+```sh
+cd launcher
+pnpm install
+pnpm inspect-install
+# 对一个已由用户启动的 loopback CDP endpoint：
+node dist/cli.js probe --endpoint=http://127.0.0.1:9222
+```
+
 `WEFT_CODEX_HOME` 可覆盖数据目录（默认 `~/.weft-codex`）。
 
 ## 验证
 
 ```sh
 cd ui && pnpm typecheck && pnpm build && cd ..
+cd launcher && pnpm typecheck && pnpm test && cd ..
 cargo test --workspace
 git diff --check
 ```

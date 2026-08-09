@@ -27,6 +27,8 @@ product
 ## Design Principles
 
 - Codex 原生体感优先：扩展能力融入宿主，产品边界尽量不可见。
+- Sidebar 只承载全局导航：workspace、kanban、仓库、issue 与 attention 摘要；
+  表单和任务操作留在主工作区。
 - 以 issue 和任务表达工作：direction 只作为内部编排实体存在。
 - 编排与聊天分层：Weft mode 管理工程上下文，沟通使用 Codex 原生线程。
 - 复杂度渐进披露：默认界面只呈现完成当前动作所需的信息。

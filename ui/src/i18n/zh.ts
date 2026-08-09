@@ -6,6 +6,11 @@ const zh = {
   "nav.primary": "工作区导航",
   "nav.kanban": "看板",
   "nav.repos": "仓库",
+  "sidebar.title": "工作区侧边栏",
+  "sidebar.issues": "Issues",
+  "sidebar.needsAttention": "需要处理",
+  "sidebar.noIssues": "还没有 issue",
+  "sidebar.taskProgress": "已完成 {done}/{total} 个任务",
 
   "workspace.label": "工作区",
   "workspace.none": "尚无工作区",
