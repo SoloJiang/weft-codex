@@ -29,7 +29,7 @@ function TaskDetail({ direction, repos, actions }: { direction: Direction; repos
       <header className="task-detail-head">
         <div className="task-detail-identity">
           <h3>{direction.name}</h3>
-          <p className="meta">{directionMeta(direction, repos, t)}</p>
+          <p className="meta">{directionMeta(direction, repos)}</p>
         </div>
         <span className={`status-chip status-${direction.status}`}>{t(`status.${direction.status}`)}</span>
         <DirectionActions direction={direction} actions={actions} />

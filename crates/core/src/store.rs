@@ -459,6 +459,20 @@ impl Store {
         .context("list_live_directions")
     }
 
+    /// Tasks that were durably created but never received a worker thread.
+    /// The daemon requeues these at boot so automatic dispatch survives a
+    /// crash between `task_create` and worker startup.
+    pub async fn list_undispatched_directions(&self) -> anyhow::Result<Vec<DirectionRow>> {
+        sqlx::query_as::<_, DirectionRow>(
+            "SELECT * FROM direction
+             WHERE codex_thread_id = '' AND status = 'queued'
+             ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .context("list_undispatched_directions")
+    }
+
     /// Issues with a live lead thread (boot re-attach source).
     pub async fn list_live_leads(&self) -> anyhow::Result<Vec<IssueRow>> {
         sqlx::query_as::<_, IssueRow>(
@@ -893,6 +907,12 @@ mod tests {
             .add_direction(issue, "backend", "backend", repo, "plan+impl", "main", "why", "")
             .await
             .expect("direction");
+        let undispatched = store
+            .list_undispatched_directions()
+            .await
+            .expect("undispatched");
+        assert_eq!(undispatched.len(), 1);
+        assert_eq!(undispatched[0].id, d);
         store.set_direction_thread(d, "codex-t-1").await.expect("thread");
         store.set_direction_status(d, "working").await.expect("status");
         store
@@ -910,5 +930,10 @@ mod tests {
         store.set_direction_attention(d, None).await.expect("clear");
         let row = store.get_direction(d).await.expect("get").expect("some");
         assert_eq!(row.attention, 0);
+        assert!(store
+            .list_undispatched_directions()
+            .await
+            .expect("undispatched after start")
+            .is_empty());
     }
 }

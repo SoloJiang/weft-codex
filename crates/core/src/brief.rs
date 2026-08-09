@@ -13,7 +13,7 @@ pub const LEAD_PARTY: &str = "lead";
 /// per-thread MCP endpoint (registered as the `weft-bus` MCP server).
 fn bus_block(party: &str, bus_url: &str) -> String {
     let lead_tool = if party == LEAD_PARTY {
-        "\n- `task_create(name, repo_id, spec, reason?, mandate?, base_branch?)` — create a worker task after decomposing the issue.\n- `repo_list()` — refresh the workspace repository list after the human adds repositories."
+        "\n- `task_create(name, repo_id, spec, reason?, mandate?, base_branch?)` — create and automatically dispatch a worker task after decomposing the issue.\n- `repo_list()` — refresh the workspace repository list after the human adds repositories."
     } else {
         ""
     };
@@ -97,10 +97,10 @@ pub fn lead_brief(
         lines.push_str(&format!("- `{id}`: {name}\n"));
     }
     lines.push_str(
-        "Create tasks through `task_create`; the human does not create them \
-         manually. Keep each task scoped to one repository with a complete \
-         implementation brief. Track worker bus reports, answer questions, \
-         and synthesize the final outcome for the human.",
+        "Create tasks through `task_create`; workers dispatch automatically \
+         without a human approval step. Keep each task scoped to one repository \
+         with a complete implementation brief. Track worker bus reports, answer \
+         questions, and synthesize the final outcome for the human.",
     );
     lines + &bus_block(LEAD_PARTY, bus_url)
 }
@@ -149,6 +149,7 @@ mod tests {
         assert!(b.contains("`4`: frontend-copy"));
         assert!(b.contains("`1`: api (base: main)"));
         assert!(b.contains("task_create"));
+        assert!(b.contains("dispatch automatically"));
         assert!(b.contains("repo_list"));
         assert!(b.contains("party `lead`"));
     }

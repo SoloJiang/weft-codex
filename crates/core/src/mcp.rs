@@ -4,6 +4,7 @@
 
 use crate::bus::{BusRegistry, Msg};
 use crate::events;
+use crate::orchestrator::WORKER_START_FAILED;
 use crate::store::Store;
 use axum::{
     extract::{Path, State},
@@ -13,12 +14,14 @@ use axum::{
     Json, Router,
 };
 use serde_json::{json, Value};
+use tokio::sync::mpsc::UnboundedSender;
 
 /// Shared server state.
 #[derive(Clone)]
 pub struct McpState {
     pub bus: BusRegistry,
     pub store: Store,
+    pub task_dispatch: UnboundedSender<i64>,
 }
 
 pub fn router(state: McpState) -> Router {
@@ -79,7 +82,7 @@ fn tool_list(party: &str) -> Value {
     if party == "lead" {
         tools.push(json!({
             "name": "task_create",
-            "description": "Create one worker task for the current issue. Lead only. Use this after decomposing the issue; the human does not create worker tasks manually.",
+            "description": "Create and automatically dispatch one worker task for the current issue. Lead only. Use this after decomposing the issue; the human does not create or approve worker tasks manually.",
             "annotations": {
                 "readOnlyHint": false,
                 "destructiveHint": false,
@@ -337,13 +340,33 @@ async fn create_task(state: &McpState, issue_id: i64, party: &str, args: &Value)
         "direction.updated",
         json!({ "id": task_id, "issueId": issue_id, "status": "queued" }),
     );
+    if state.task_dispatch.send(task_id).is_err() {
+        let _ = state
+            .store
+            .set_direction_attention(task_id, Some(WORKER_START_FAILED))
+            .await;
+        events::emit(
+            "direction.updated",
+            json!({
+                "id": task_id,
+                "issueId": issue_id,
+                "status": "queued",
+                "attention": true,
+                "reason": WORKER_START_FAILED
+            }),
+        );
+        return text_result(format!(
+            "error: task {task_id} was created, but automatic worker dispatch is unavailable"
+        ));
+    }
     text_result(
         json!({
             "task_id": task_id,
             "name": name,
             "repo_id": repo_id,
             "repo": repo.name,
-            "status": "queued"
+            "status": "queued",
+            "dispatch": "automatic"
         })
         .to_string(),
     )
@@ -375,19 +398,25 @@ mod tests {
     /// Returns the state plus the TempDir GUARD — the guard must outlive the
     /// test, otherwise the directory (and the SQLite file with it) is deleted
     /// while the pool is still using it.
-    async fn fixture() -> (McpState, tempfile::TempDir) {
+    async fn fixture() -> (
+        McpState,
+        tempfile::TempDir,
+        tokio::sync::mpsc::UnboundedReceiver<i64>,
+    ) {
         let dir = tempfile::tempdir().expect("tmp");
         let store = Store::open(&dir.path().join("t.db")).await.expect("open");
+        let (task_dispatch, task_dispatch_rx) = tokio::sync::mpsc::unbounded_channel();
         let state = McpState {
             bus: BusRegistry::new(),
             store,
+            task_dispatch,
         };
-        (state, dir)
+        (state, dir, task_dispatch_rx)
     }
 
     #[tokio::test]
     async fn initialize_and_tool_flow() {
-        let (st, _dir) = fixture().await;
+        let (st, _dir, _task_dispatch_rx) = fixture().await;
         let init = handle_rpc(
             &st,
             1,
@@ -493,7 +522,7 @@ mod tests {
 
     #[tokio::test]
     async fn task_create_is_lead_only_and_scoped_to_the_issue_workspace() {
-        let (st, _dir) = fixture().await;
+        let (st, _dir, mut task_dispatch_rx) = fixture().await;
         let workspace = st
             .store
             .create_workspace("Product", "product")
@@ -588,6 +617,10 @@ mod tests {
         assert_eq!(tasks[0].spec, "Repair session expiry");
         assert_eq!(tasks[0].base_branch, "trunk");
         assert_eq!(tasks[0].status, "queued");
+        assert_eq!(
+            task_dispatch_rx.try_recv().expect("automatic dispatch"),
+            tasks[0].id
+        );
 
         let other_workspace = st
             .store
@@ -630,8 +663,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn task_create_marks_attention_when_automatic_dispatch_is_unavailable() {
+        let (st, _dir, task_dispatch_rx) = fixture().await;
+        drop(task_dispatch_rx);
+        let workspace = st
+            .store
+            .create_workspace("Product", "product")
+            .await
+            .expect("workspace");
+        let repo = st
+            .store
+            .add_repo(workspace, "api", "/tmp/api", "main")
+            .await
+            .expect("repo");
+        let issue = st
+            .store
+            .create_issue(workspace, "Fix login", "fix-login")
+            .await
+            .expect("issue");
+
+        let response = handle_rpc(
+            &st,
+            issue,
+            "lead",
+            &json!({
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": { "name": "task_create", "arguments": {
+                    "name": "Backend fix", "repo_id": repo, "spec": "Repair session expiry"
+                } }
+            }),
+        )
+        .await
+        .expect("create response");
+        assert!(response["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or("")
+            .contains("automatic worker dispatch is unavailable"));
+        let task = st
+            .store
+            .list_directions(issue)
+            .await
+            .expect("tasks")
+            .pop()
+            .expect("task");
+        assert_eq!(task.attention, 1);
+        assert_eq!(task.attention_reason, WORKER_START_FAILED);
+    }
+
+    #[tokio::test]
     async fn notifications_get_no_response() {
-        let (st, _dir) = fixture().await;
+        let (st, _dir, _task_dispatch_rx) = fixture().await;
         let resp = handle_rpc(
             &st,
             1,

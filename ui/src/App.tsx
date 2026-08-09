@@ -268,8 +268,12 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
   const workActions = React.useMemo<WorkActions>(() => ({
     onError: notifyError,
     onStartLead: async (issue: Issue) => launchLead(issue.id),
-    onStartTask: async (direction: Direction) => {
-      await api(`/api/directions/${direction.id}/spawn`, jsonRequest("POST"))
+    onRetryTask: async (direction: Direction) => {
+      try {
+        await api(`/api/directions/${direction.id}/spawn`, jsonRequest("POST"))
+      } catch {
+        throw new Error(t("err.taskStart"))
+      }
       await refreshCurrent()
     },
     onCompleteTask: completeTask,
@@ -280,7 +284,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
     onMessageLead: (issue: Issue) => setDialog({ type: "message", target: "lead", id: issue.id, intent: "message" }),
     onMessageTask: (direction: Direction) => setDialog({ type: "message", target: "task", id: direction.id, intent: "message" }),
     onContinueTask: (direction: Direction) => setDialog({ type: "message", target: "task", id: direction.id, intent: "continue" }),
-  }), [notifyError, refreshCurrent, completeTask, launchLead])
+  }), [notifyError, refreshCurrent, completeTask, launchLead, t])
 
   const addRepository = async (name: string, path: string) => {
     if (!workspaceId) throw new Error(t("err.unknown"))

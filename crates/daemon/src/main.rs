@@ -53,9 +53,35 @@ async fn main() {
         Err(e) => eprintln!("[weftd] re-attach failed (bus delivery still works): {e:#}"),
     }
 
+    // Lead-created tasks dispatch automatically. A single queue preserves
+    // creation order while each started worker continues independently.
+    let (task_dispatch, mut task_dispatch_rx) = tokio::sync::mpsc::unbounded_channel::<i64>();
+    let dispatch_orch = orch.clone();
+    tokio::spawn(async move {
+        while let Some(direction_id) = task_dispatch_rx.recv().await {
+            if let Err(error) = dispatch_orch.dispatch_direction(direction_id).await {
+                eprintln!(
+                    "[weftd] automatic worker dispatch failed for task {direction_id}: {error:#}"
+                );
+            }
+        }
+    });
+
+    // Read crash leftovers before the store moves into router state. They are
+    // queued only after the HTTP listener is bound, so per-thread MCP setup
+    // cannot race daemon startup.
+    let undispatched = match store.list_undispatched_directions().await {
+        Ok(directions) => directions,
+        Err(error) => {
+            eprintln!("[weftd] list undispatched tasks failed: {error:#}");
+            Vec::new()
+        }
+    };
+
     let state = mcp::McpState {
         bus,
         store: store.clone(),
+        task_dispatch: task_dispatch.clone(),
     };
     let app = mcp::router(state).merge(api::router(api::ApiState { store, orch }));
     let app = app
@@ -66,6 +92,16 @@ async fn main() {
         .await
         .unwrap_or_else(|e| fatal(&format!("bind {addr}"), e));
     eprintln!("[weftd] thread bus MCP + kanban API + web app on http://{addr}");
+
+    for direction in undispatched {
+        if task_dispatch.send(direction.id).is_err() {
+            eprintln!(
+                "[weftd] automatic worker dispatcher stopped before task {} was queued",
+                direction.id
+            );
+            break;
+        }
+    }
 
     let server = axum::serve(listener, app);
     tokio::select! {

@@ -41,11 +41,12 @@ const zh = {
   "detail.notFoundTitle": "未找到 issue",
   "detail.notFoundBody": "该 issue 可能已被删除，或属于其他工作区。",
 
-  "dir.spawn": "启动",
   "dir.msg": "发消息",
   "dir.openThread": "打开对话",
   "dir.continue": "继续处理",
   "dir.complete": "验收完成",
+  "dir.retryStart": "重试启动",
+  "dir.startFailed": "启动失败",
   "dir.clearAttention": "清除标记",
   "dir.attention": "需要处理",
   "dir.cardLabel": "任务：{name}",
@@ -84,9 +85,6 @@ const zh = {
   "field.message": "消息",
   "field.nextInstruction": "补充要求",
 
-  "mandate.planImplShort": "规划 + 实现",
-  "mandate.implOnlyShort": "仅实现",
-
   "kind.feature": "功能",
   "kind.bugfix": "缺陷",
   "kind.refactor": "重构",
@@ -104,7 +102,7 @@ const zh = {
   "loading.creatingWorkspace": "正在创建…",
   "loading.sendingMessage": "正在发送…",
   "loading.completingTask": "正在完成…",
-  "loading.startingTask": "正在启动…",
+  "loading.retryingTask": "正在重试…",
   "loading.startingLead": "正在启动…",
   "loading.clearingFlag": "正在清除…",
   "loading.creatingIssue": "正在创建…",
@@ -132,6 +130,7 @@ const zh = {
   "empty.reposBody": "分析仓库后，lead 才能基于代码结构和依赖关系规划任务。",
 
   "err.prefix": "错误：",
+  "err.taskStart": "Worker 启动失败，请检查仓库和 Codex 状态后重试。",
   "err.network": "无法连接到服务。",
   "err.unknown": "操作未完成，请重试。",
 } satisfies Record<keyof typeof en, string>

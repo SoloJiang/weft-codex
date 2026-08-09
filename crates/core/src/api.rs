@@ -206,7 +206,7 @@ async fn spawn_lead(State(state): State<ApiState>, Path(issue_id): Path<i64>) ->
 }
 
 async fn spawn_direction(State(state): State<ApiState>, Path(direction_id): Path<i64>) -> Response {
-    match state.orch.spawn_direction(direction_id).await {
+    match state.orch.dispatch_direction(direction_id).await {
         Ok(thread_id) => ok(json!({ "codexThreadId": thread_id })),
         Err(e) => fail(e),
     }

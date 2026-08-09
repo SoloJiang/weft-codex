@@ -42,6 +42,10 @@ use crate::bus::{BusRegistry, Msg};
 use crate::store::Store;
 use crate::{brief, events, runtime, worktree};
 
+/// Stable attention reason stored when automatic worker dispatch fails. The UI
+/// translates this code instead of exposing backend error text as product copy.
+pub const WORKER_START_FAILED: &str = "worker-start-failed";
+
 /// Kanban status for a freshly spawned direction, by mandate.
 pub fn initial_status(mandate: &str) -> &'static str {
     if mandate == "impl-only" {
@@ -208,22 +212,55 @@ impl Orchestrator {
 
     // ── spawning ──────────────────────────────────────────────────────────
 
+    /// Start a worker and turn any startup failure into an actionable task
+    /// marker. Normal creation uses this path automatically; the UI calls the
+    /// same method only when retrying a failed dispatch.
+    pub async fn dispatch_direction(&self, direction_id: i64) -> anyhow::Result<String> {
+        match self.spawn_direction(direction_id).await {
+            Ok(thread_id) => Ok(thread_id),
+            Err(error) => {
+                if let Err(marker_error) = self
+                    .store
+                    .set_direction_attention(direction_id, Some(WORKER_START_FAILED))
+                    .await
+                {
+                    eprintln!(
+                        "[weftd] mark task {direction_id} dispatch failure failed: {marker_error:#}"
+                    );
+                }
+                events::emit(
+                    "direction.updated",
+                    json!({
+                        "id": direction_id,
+                        "attention": true,
+                        "reason": WORKER_START_FAILED
+                    }),
+                );
+                Err(error)
+            }
+        }
+    }
+
     /// Materialize the direction's worktree, create its Codex thread (cwd =
     /// worktree, workspace-write sandbox, per-thread bus MCP), subscribe a
     /// watcher, and kick off the brief turn. Refuses to respawn a direction
     /// that already has a thread (restart re-attach is a later stage).
     /// Returns the new Codex thread id.
     pub async fn spawn_direction(&self, direction_id: i64) -> anyhow::Result<String> {
-        if !runtime::agents_allowed() {
-            anyhow::bail!("daemon is not live; refusing to spawn agents");
-        }
+        // The automatic queue and a stale/manual retry can race on the same
+        // task. Serialize before reading the thread id so only one caller can
+        // materialize and start it; later callers reuse the durable result.
+        let gate = self.inject_lock.lock().await;
         let direction = self
             .store
             .get_direction(direction_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("unknown direction {direction_id}"))?;
         if !direction.codex_thread_id.is_empty() {
-            anyhow::bail!("direction {direction_id} already has a Codex thread");
+            return Ok(direction.codex_thread_id);
+        }
+        if !runtime::agents_allowed() {
+            anyhow::bail!("daemon is not live; refusing to spawn agents");
         }
         let issue = self
             .store
@@ -235,8 +272,6 @@ impl Orchestrator {
             .get_repo(direction.repo_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("unknown repo {}", direction.repo_id))?;
-
-        let gate = self.inject_lock.lock().await;
 
         let branch = worktree::branch_name(&issue.slug, &direction.slug);
         let wt_path = worktree::worktree_path(&self.home, &issue.slug, &direction.slug);
@@ -299,9 +334,17 @@ impl Orchestrator {
 
         let status = initial_status(&direction.mandate);
         self.store.set_direction_status(direction.id, status).await?;
+        self.store
+            .set_direction_attention(direction.id, None)
+            .await?;
         events::emit(
             "direction.updated",
-            json!({ "id": direction.id, "status": status, "codexThreadId": thread_id }),
+            json!({
+                "id": direction.id,
+                "status": status,
+                "codexThreadId": thread_id,
+                "attention": false
+            }),
         );
 
         // Flush anything queued for this party before it existed.
@@ -906,6 +949,17 @@ mod tests {
             .await
             .expect("thread");
         (issue, d)
+    }
+
+    #[tokio::test]
+    async fn dispatch_reuses_an_existing_worker_thread() {
+        let (orch, _dir) = fixture().await;
+        let (_issue, direction) = seeded_direction(&orch).await;
+        let thread = orch
+            .dispatch_direction(direction)
+            .await
+            .expect("idempotent dispatch");
+        assert_eq!(thread, "t-dir");
     }
 
     fn parked_msg() -> Msg {

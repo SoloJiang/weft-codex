@@ -26,7 +26,7 @@ In：
 
 Out（本阶段明确割舍）：
 
-- 审批流 / Ask 桥（app-server 的 approval 由 weftd 按策略自动应答）
+- 审批流 / Ask 桥（编排线程使用固定沙箱，异常 approval 由 weftd 拒绝并记录）
 - 多引擎（claude / opencode；交互式线程全面转向 Codex）
 - lead_chat 引擎全部（engine / proto / delta_hub / out_hub / window /
   revive / rewind / sentinels）——被 app-server 取代
@@ -84,12 +84,14 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
   在用户补录仓库后调用只读的 `repo_list` 刷新 repo id 与基线分支。
 - spawn worker：materialize 出 worktree（repo_id + base_branch）→ 创建线程
   （cwd = worktree）→ 首条输入为 direction brief（按 mandate 渲染，
-  plan+impl / impl-only，沿用现有 brief 模板）。
+  plan+impl / impl-only，沿用现有 brief 模板）。`task_create` 持久化任务后立即
+  进入 daemon 自动调度队列；重启时重新调度无 worker 线程的 queued 任务。
+  用户无需逐个批准或启动，只有自动启动失败时才显示“重试启动”。
 - 事件订阅：app-server notification → direction.status 推导
   （turn 进行中 = working；turn 完成 = review；error/idle 超时 = attention）。
-- approval：app-server 把 approval 请求发给发起 turn 的 client（weftd）；
-  weftd 按配置策略自动应答（默认接受只读与工作区内写入，其余拒绝并记录）。
-  不做人工审批 UI。
+- approval：编排线程固定使用 `approvalPolicy=never` 与角色对应沙箱（Lead
+  read-only，Worker workspace-write）。正常工作在沙箱内直接执行；异常到达
+  weftd 的 approval 请求只做协议级拒绝和记录，不做人工审批 UI。
 - 线程对人类可见：线程写入共享 `~/.codex` store，出现在 Desktop 线程列表；
   人在 Desktop 打开线程即手动接管（此时 weftd 对该线程转为只观察）。
 
@@ -199,9 +201,10 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
   shadcn 默认主题不是设计来源，所有颜色、字体、圆角、边框与交互状态继续映射
   Codex semantic token。前端构建产物由 weftd 作为静态文件提供。
 - Workspace home：workspace 切换、repo 注册与状态。
-- Kanban：direction 卡片按 status 分列；卡片显示 repo / branch / mandate /
-  attention 信号。状态由编排事件推进，不支持通用拖拽或任意改状态；用户在待审时
-  执行“验收完成”，也可通过“继续处理”发送补充要求并让任务回到工作中。
+- Kanban：direction 卡片按 status 分列；卡片默认只显示 repo / branch 与
+  attention 信号，mandate 保留为内部编排字段。状态由编排事件推进，不支持通用
+  拖拽、人工启动或任意改状态；用户在待审时执行“验收完成”，也可通过“继续处理”
+  发送补充要求并让任务回到工作中。自动启动失败时提供唯一的“重试启动”恢复动作。
 - Issue detail：lead 卡片 + direction 卡片列表，各自跳转 Desktop 原生线程；
   bus 活动时间线（**已完成 2026-08-09**：看板标题点击进入独立详情视图，
   时间线聊天式渲染 + `bus.message` SSE 实时刷新）。
@@ -218,7 +221,7 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
     Codex 对话，不要求先添加仓库；
   - `workspace`：Codex 主区域，只渲染 Kanban / 仓库 / issue detail，移除重复
     topbar 和重复的新建 issue 表单。Issue 详情不提供手工新建任务，任务由 lead
-    chat 调用 `task_create` 产生；lead / worker 沟通仍进入原生线程。
+    chat 调用 `task_create` 产生并自动调度；lead / worker 沟通仍进入原生线程。
 - sidebar 与 workspace URL 携带同一个随机 `bridge_id`，通过同源
   `BroadcastChannel` 做 ready/request 握手，同步 workspace、route 与白名单
   command；没有 `bridge_id` 时不开通道，避免两个独立浏览器窗口串状态。

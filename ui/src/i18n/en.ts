@@ -39,11 +39,12 @@ const en = {
   "detail.notFoundTitle": "Issue not found",
   "detail.notFoundBody": "This issue may have been removed or belongs to another workspace.",
 
-  "dir.spawn": "Start",
   "dir.msg": "Message",
   "dir.openThread": "Open chat",
   "dir.continue": "Continue",
   "dir.complete": "Accept result",
+  "dir.retryStart": "Retry start",
+  "dir.startFailed": "Start failed",
   "dir.clearAttention": "Clear flag",
   "dir.attention": "Needs attention",
   "dir.cardLabel": "Task: {name}",
@@ -82,9 +83,6 @@ const en = {
   "field.message": "Message",
   "field.nextInstruction": "Next instruction",
 
-  "mandate.planImplShort": "Plan + implement",
-  "mandate.implOnlyShort": "Implement only",
-
   "kind.feature": "Feature",
   "kind.bugfix": "Bugfix",
   "kind.refactor": "Refactor",
@@ -102,7 +100,7 @@ const en = {
   "loading.creatingWorkspace": "Creating…",
   "loading.sendingMessage": "Sending…",
   "loading.completingTask": "Accepting…",
-  "loading.startingTask": "Starting…",
+  "loading.retryingTask": "Retrying…",
   "loading.startingLead": "Starting…",
   "loading.clearingFlag": "Clearing…",
   "loading.creatingIssue": "Creating…",
@@ -130,6 +128,7 @@ const en = {
   "empty.reposBody": "Repository analysis gives the lead the structure and relationships it needs to plan work.",
 
   "err.prefix": "Error: ",
+  "err.taskStart": "The worker could not start. Check the repository and Codex status, then retry.",
   "err.network": "The service could not be reached.",
   "err.unknown": "Something went wrong.",
 } as const

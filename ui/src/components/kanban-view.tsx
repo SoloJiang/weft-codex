@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Check, Flag, MessageCircle, Play, Send } from "lucide-react"
+import { Check, Flag, MessageCircle, Play, RotateCcw, Send } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { useI18n } from "@/i18n"
@@ -10,7 +10,7 @@ import { AsyncButton, EmptyState, ThreadLink } from "./shared"
 export interface WorkActions {
   onError: (error: unknown) => void
   onStartLead: (issue: Issue) => Promise<void>
-  onStartTask: (direction: Direction) => Promise<void>
+  onRetryTask: (direction: Direction) => Promise<void>
   onCompleteTask: (direction: Direction) => Promise<void>
   onClearAttention: (direction: Direction) => Promise<void>
   onMessageLead: (issue: Issue) => void
@@ -18,20 +18,19 @@ export interface WorkActions {
   onContinueTask: (direction: Direction) => void
 }
 
-function mandateLabel(value: string, t: ReturnType<typeof useI18n>["t"]): string {
-  if (value === "impl-only") return t("mandate.implOnlyShort")
-  return t("mandate.planImplShort")
-}
-
 export function directionMeta(
   direction: Direction,
   repos: Repo[],
-  t: ReturnType<typeof useI18n>["t"],
 ): string {
   const repo = repos.find((candidate) => candidate.id === direction.repo_id)
-  const parts: Array<string | number> = [repo?.name ?? direction.repo_id, mandateLabel(direction.mandate, t)]
+  const parts: Array<string | number> = [repo?.name ?? direction.repo_id]
   if (direction.branch) parts.push(direction.branch)
   return parts.join(" · ")
+}
+
+function attentionLabel(direction: Direction, t: ReturnType<typeof useI18n>["t"]): string {
+  if (direction.attention_reason === "worker-start-failed") return t("dir.startFailed")
+  return direction.attention_reason || t("dir.attention")
 }
 
 export function DirectionActions({
@@ -43,19 +42,20 @@ export function DirectionActions({
 }) {
   const { t } = useI18n()
   const canContinue = direction.status === "review" || direction.status === "done"
+  const canRetryStart = !direction.codex_thread_id && Boolean(direction.attention)
   return (
     <div className="btns">
-      {!direction.codex_thread_id ? (
+      {canRetryStart ? (
         <AsyncButton
           variant="ghost"
-          label={t("dir.spawn")}
-          pendingLabel={t("loading.startingTask")}
-          onAction={() => actions.onStartTask(direction)}
+          label={t("dir.retryStart")}
+          pendingLabel={t("loading.retryingTask")}
+          onAction={() => actions.onRetryTask(direction)}
           onError={actions.onError}
         >
-          <Play aria-hidden="true" />
+          <RotateCcw aria-hidden="true" />
         </AsyncButton>
-      ) : (
+      ) : direction.codex_thread_id ? (
         <>
           <ThreadLink threadId={direction.codex_thread_id} />
           <Button
@@ -69,7 +69,7 @@ export function DirectionActions({
             {t(canContinue ? "dir.continue" : "dir.msg")}
           </Button>
         </>
-      )}
+      ) : null}
       {direction.status === "review" ? (
         <AsyncButton
           className="task-complete-action"
@@ -81,7 +81,7 @@ export function DirectionActions({
           <Check aria-hidden="true" />
         </AsyncButton>
       ) : null}
-      {Boolean(direction.attention) ? (
+      {Boolean(direction.attention) && !canRetryStart ? (
         <AsyncButton
           variant="ghost"
           label={t("dir.clearAttention")}
@@ -133,10 +133,10 @@ function TaskCard({ direction, repos, actions }: { direction: Direction; repos: 
       <div className="name">
         {direction.name}
         {direction.attention ? (
-          <span className="badge">{direction.attention_reason || t("dir.attention")}</span>
+          <span className="badge">{attentionLabel(direction, t)}</span>
         ) : null}
       </div>
-      <div className="sub">{directionMeta(direction, repos, t)}</div>
+      <div className="sub">{directionMeta(direction, repos)}</div>
       <DirectionActions direction={direction} actions={actions} />
     </article>
   )
