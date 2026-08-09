@@ -84,6 +84,22 @@ node dist/cli.js start --safe-mode
 ./scripts/start.sh
 ```
 
+安装为用户级全局 CLI（默认写入已在 PATH 中的 `~/.local/bin/weft-codex`）：
+
+```sh
+./scripts/install-cli.sh
+weft-codex doctor
+weft-codex
+```
+
+安装使用版本化 runtime 与稳定 wrapper，升级只切换
+`~/.local/share/weft-codex/current`；因此无论从哪个目录调用，Host 都能找到同包的
+`weftd` 与 Web assets。`WEFT_CODEX_PREFIX` 可覆盖默认安装前缀。
+
+也可以从 [GitHub Releases](https://github.com/SoloJiang/weft-codex/releases)
+下载预构建包；首个版本的完整安装命令见
+[v0.1.0 release notes](docs/releases/v0.1.0.md)。
+
 当前 Codex 发行版的 CSP 会阻止 loopback iframe。Host 只对专用实例启用
 `Page.setBypassCSP` 并重载 renderer，UI 会显示“Desktop compatibility mode”；
 Host 退出时会移除注入、关闭 bypass 并恢复 CSP 文档。Weft mode 以原生 Codex
@@ -101,7 +117,8 @@ release 版 weftd 与 Web assets：
 ./scripts/build-release.sh
 ```
 
-产物中的用户入口是无窗口命令 `bin/weft-codex`；无参数即完成官方 Codex 启动、
+产物可运行 `./install.sh` 注册全局 `weft-codex`，也可直接使用无窗口命令
+`bin/weft-codex`；无参数即完成官方 Codex 启动、
 weftd 启动和 Weft mode 注入。产物写入忽略版本控制的 `artifacts/`。构建会先
 执行 UI、Launcher 和 Rust 全套测试，再验证独立包内布局。Host 没有自己的应用
 窗口或 Dock 图标，用户始终操作它启动的官方 Codex App；正式外部分发 Host

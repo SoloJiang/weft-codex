@@ -2,7 +2,19 @@
 
 这个发行包只依赖官方 Codex Desktop，不依赖原 Weft 客户端或原 Weft 数据。
 
-## 启动
+## 安装为全局 CLI
+
+```sh
+./install.sh
+weft-codex doctor
+weft-codex
+```
+
+默认安装到 `~/.local`：稳定入口为 `~/.local/bin/weft-codex`，实际 runtime
+保存在 `~/.local/share/weft-codex/releases/`，升级时通过 `current` 原子切换。
+可通过 `WEFT_CODEX_PREFIX=/absolute/path ./install.sh` 更改安装前缀。
+
+## 直接运行
 
 运行 `bin/weft-codex doctor` 检查环境，再运行 `bin/weft-codex`。
 无参数即启动完整 Host。Host 自身没有窗口、Dock 图标或聊天界面；它启动并接入的
