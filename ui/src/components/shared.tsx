@@ -3,6 +3,7 @@ import { MessageCircle } from "lucide-react"
 
 import { Button, type buttonVariants } from "@/components/ui/button"
 import { useI18n, type MessageKey } from "@/i18n"
+import { requestHostAction } from "@/host-context"
 import { cn } from "@/lib/utils"
 import type { VariantProps } from "class-variance-authority"
 import type { RepoComponent } from "@/types"
@@ -58,6 +59,7 @@ export function codexThreadHref(threadId: string): string {
 
 export function openCodexThread(threadId: string): void {
   if (!threadId) return
+  if (requestHostAction({ action: "thread.open", threadId })) return
   window.location.assign(codexThreadHref(threadId))
 }
 
@@ -66,7 +68,12 @@ export function ThreadLink({ threadId }: { threadId: string }) {
   if (!threadId) return null
   return (
     <Button asChild variant="ghost" className="thread-link">
-      <a href={codexThreadHref(threadId)}>
+      <a
+        href={codexThreadHref(threadId)}
+        onClick={(event) => {
+          if (requestHostAction({ action: "thread.open", threadId })) event.preventDefault()
+        }}
+      >
         <MessageCircle aria-hidden="true" />
         {t("dir.openThread")}
       </a>

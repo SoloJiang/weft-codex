@@ -10,6 +10,8 @@ interface CdpResponse {
   id?: number
   result?: unknown
   error?: { code: number; message: string }
+  method?: string
+  params?: unknown
 }
 
 interface PendingRequest {
@@ -17,6 +19,8 @@ interface PendingRequest {
   reject(error: Error): void
   timeout: ReturnType<typeof setTimeout>
 }
+
+export type CdpEventListener = (params: unknown) => void
 
 function endpointUrl(endpoint: string, path: string): URL {
   const base = endpoint.endsWith("/") ? endpoint : `${endpoint}/`
@@ -46,7 +50,10 @@ export async function listCdpTargets(endpoint: string): Promise<CdpTarget[]> {
 export function selectRendererTarget(targets: CdpTarget[], urlHint?: string): CdpTarget {
   const pages = targets.filter((target) => target.type === "page" && target.webSocketDebuggerUrl)
   let selected: CdpTarget | undefined
-  if (urlHint) selected = pages.find((target) => target.url.includes(urlHint))
+  if (urlHint) {
+    selected = pages.find((target) => target.url === urlHint)
+    if (!selected) selected = pages.find((target) => target.url.includes(urlHint))
+  }
   if (!selected && pages.length === 1) selected = pages[0]
   if (!selected) {
     const candidates = pages.map((target) => `${target.title} (${target.url})`).join(", ")
@@ -58,21 +65,33 @@ export function selectRendererTarget(targets: CdpTarget[], urlHint?: string): Cd
 export class CdpSession {
   private nextId = 0
   private readonly pending = new Map<number, PendingRequest>()
+  private readonly listeners = new Map<string, Set<CdpEventListener>>()
+  private closed = false
 
   private constructor(private readonly socket: WebSocket) {
     socket.addEventListener("message", (event) => this.onMessage(String(event.data)))
-    socket.addEventListener("close", () => this.rejectPending(new Error("CDP connection closed")))
+    socket.addEventListener("close", () => {
+      this.closed = true
+      this.rejectPending(new Error("CDP connection closed"))
+      this.emit("__closed", undefined)
+    })
     socket.addEventListener("error", () => this.rejectPending(new Error("CDP connection failed")))
   }
 
   static async connect(webSocketUrl: string): Promise<CdpSession> {
     const socket = new WebSocket(webSocketUrl)
     await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        socket.close()
+        reject(new Error("CDP connection timed out"))
+      }, 5000)
       const onOpen = () => {
+        clearTimeout(timeout)
         socket.removeEventListener("error", onError)
         resolve()
       }
       const onError = () => {
+        clearTimeout(timeout)
         socket.removeEventListener("open", onOpen)
         reject(new Error("CDP connection failed"))
       }
@@ -83,6 +102,9 @@ export class CdpSession {
   }
 
   send<T>(method: string, params: Record<string, unknown> = {}): Promise<T> {
+    if (this.closed || this.socket.readyState !== WebSocket.OPEN) {
+      return Promise.reject(new Error("CDP connection is not open"))
+    }
     this.nextId += 1
     const id = this.nextId
     return new Promise<T>((resolve, reject) => {
@@ -105,8 +127,27 @@ export class CdpSession {
     })
   }
 
+  on(method: string, listener: CdpEventListener): () => void {
+    const listeners = this.listeners.get(method) ?? new Set<CdpEventListener>()
+    listeners.add(listener)
+    this.listeners.set(method, listeners)
+    return () => {
+      const current = this.listeners.get(method)
+      if (!current) return
+      current.delete(listener)
+      if (!current.size) this.listeners.delete(method)
+    }
+  }
+
+  isClosed(): boolean {
+    return this.closed
+  }
+
   close(): void {
+    if (this.closed) return
+    this.closed = true
     this.socket.close()
+    this.rejectPending(new Error("CDP connection closed"))
   }
 
   private onMessage(payload: string): void {
@@ -116,7 +157,10 @@ export class CdpSession {
     } catch {
       return
     }
-    if (typeof message.id !== "number") return
+    if (typeof message.id !== "number") {
+      if (typeof message.method === "string") this.emit(message.method, message.params)
+      return
+    }
     const pending = this.pending.get(message.id)
     if (!pending) return
     this.pending.delete(message.id)
@@ -134,5 +178,17 @@ export class CdpSession {
       pending.reject(error)
     }
     this.pending.clear()
+  }
+
+  private emit(method: string, params: unknown): void {
+    const listeners = this.listeners.get(method)
+    if (!listeners) return
+    for (const listener of [...listeners]) {
+      try {
+        listener(params)
+      } catch {
+        // A consumer callback must not break CDP response/event routing.
+      }
+    }
   }
 }

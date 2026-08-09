@@ -316,6 +316,27 @@ html[data-ui-surface="workspace"] .embedded-main {
 
 .sidebar-primary-actions { display: grid; gap: 2px; }
 
+.host-security-notice {
+  width: fit-content;
+  min-height: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  color: var(--dim);
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
+.host-security-notice::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--warn);
+}
+
 .sidebar-create-button {
   width: 100%;
   justify-content: flex-start;
@@ -983,6 +1004,14 @@ main {
 .form-field .select-shell { width: 100%; }
 .field-error { margin-top: 5px; }
 .repo-paths-input { min-height: 132px; font-family: var(--mono); font-size: 12px; }
+.repo-picker-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--dim);
+  font-size: 12px;
+}
+.repo-picker-row > span { min-width: 0; }
 .form-hint,
 .import-summary { margin: 0; color: var(--dim); font-size: 12px; line-height: 1.5; }
 .import-summary { color: var(--warn); }
@@ -1017,17 +1046,10 @@ main {
 
 /* ── responsive behavior ──────────────────────────────────────────── */
 
-@media (max-width: 1050px) {
+@media (min-width: 721px) and (max-width: 1050px) {
   .columns {
-    grid-template-columns: none;
-    grid-auto-flow: column;
-    grid-auto-columns: minmax(220px, 31vw);
-    overflow-x: auto;
-    overscroll-behavior-inline: contain;
-    scroll-snap-type: inline proximity;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
-
-  .col { scroll-snap-align: start; }
 }
 
 @media (max-width: 720px) {
@@ -1074,7 +1096,15 @@ main {
 
   .status-chip { align-self: flex-start; }
 
-  .columns { grid-auto-columns: minmax(246px, 82vw); }
+  .columns {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(246px, 82vw);
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scroll-snap-type: inline proximity;
+  }
+  .col { scroll-snap-align: start; }
   .issue-title-link { min-height: 44px; }
   .card .btns button,
   .card .btns .thread-link { height: 44px; min-height: 44px; padding: 0 10px; font-size: 13px; }

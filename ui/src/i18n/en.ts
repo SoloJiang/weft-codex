@@ -9,6 +9,8 @@ const en = {
   "sidebar.needsAttention": "Needs attention",
   "sidebar.noIssues": "No issues yet",
   "sidebar.taskProgress": "{done} of {total} tasks done",
+  "host.compatibilityMode": "Desktop compatibility mode",
+  "host.compatibilityDescription": "This Codex release requires CSP compatibility mode for the local workspace surface.",
 
   "workspace.label": "Workspace",
   "workspace.none": "No workspace yet",
@@ -50,6 +52,9 @@ const en = {
   "dir.cardLabel": "Task: {name}",
 
   "repo.add": "Add repository",
+  "repo.chooseFolders": "Choose folders",
+  "repo.choosingFolders": "Choosing…",
+  "repo.pickerHint": "Or paste local paths below",
   "repo.pageDescription": "Repositories are profiled automatically so the lead can understand boundaries and dependencies.",
   "repo.pathsLabel": "Local repository paths",
   "repo.pathsPlaceholder": "/absolute/path/to/repository\n/absolute/path/to/another-repository",

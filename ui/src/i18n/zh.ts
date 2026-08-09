@@ -11,6 +11,8 @@ const zh = {
   "sidebar.needsAttention": "需要处理",
   "sidebar.noIssues": "还没有 issue",
   "sidebar.taskProgress": "已完成 {done}/{total} 个任务",
+  "host.compatibilityMode": "桌面兼容模式",
+  "host.compatibilityDescription": "当前 Codex 版本需要通过 CSP 兼容模式载入本地工作区界面。",
 
   "workspace.label": "工作区",
   "workspace.none": "尚无工作区",
@@ -52,6 +54,9 @@ const zh = {
   "dir.cardLabel": "任务：{name}",
 
   "repo.add": "添加仓库",
+  "repo.chooseFolders": "选择文件夹",
+  "repo.choosingFolders": "正在选择…",
+  "repo.pickerHint": "也可以在下方粘贴本地路径",
   "repo.pageDescription": "仓库会在录入后自动分析，供 lead 理解边界与依赖关系。",
   "repo.pathsLabel": "本地仓库路径",
   "repo.pathsPlaceholder": "/仓库的绝对路径\n/另一个仓库的绝对路径",

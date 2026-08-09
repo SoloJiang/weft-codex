@@ -286,8 +286,10 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
   `--font-mono`、圆角 `--radius-lg|md|sm`（随宿主 corner-radius-scale
   缩放）。已实测三层：dark fallback（`#131313`/`#fcfcfc`/`#0169cc`）、
   light fallback（`#fcfcfc`/`#0d0d0d`）、React bridge receiver 的版本、locale、
-  token 白名单与圆角映射已通过模拟 host envelope 实测。跨源 iframe 到真实
-  Desktop 的端到端 bridge 仍是 Desktop spike 必验项，未验证前不得宣称实时同步。
+  token 白名单与圆角映射已通过模拟 host envelope 实测。**2026-08-09 已完成
+  真实 Desktop 端到端验证**：宿主 `lang=en → zh-CN` 与
+  `--color-token-primary → #ff00aa` 的临时变更实时到达 sidebar/workspace 两个
+  OOPIF，随后恢复原值；两侧语言与 token 均同步回宿主状态。
 
 ## 7.5 模式切换（Weft mode）
 
@@ -320,6 +322,23 @@ Work（everyday work）/ Codex 双模式（bundle 实证：`isEverydayWorkMode`�
 不破签名），经 CDP 挂载上述 web app 到侧边栏入口；Host 在 launcher 进程，
 renderer 仅 thin surface agent，通信走 CDP binding。未知版本 fail-closed
 进入 safe mode（不注入，提示用浏览器打开）。
+
+**已完成（2026-08-09，真实发行版）**：Launcher 已能独立启动/回收官方 Codex
+与 weftd，也能 attach 专用实例；两级 readiness gate 分开等待 CDP target 与 React
+hydration。Renderer Agent 通过 document-start 注入、MutationObserver 重挂载，
+同一页面只保留一个 sidebar root、workspace root 与 style。原生模式菜单实测为
+ChatGPT / Codex，Weft 作为第三个 `menuitem` 注入；进入 Weft 前先经原生菜单切到
+Codex 底座，退出 ChatGPT/Codex 后宿主 label/ARIA 正确恢复。Weft item 只显示一个
+选中图标，英文副标题不截断。
+
+当前 build 6119 的 `frame-src` 明确阻止 loopback iframe；`Page.setBypassCSP` 对已
+提交文档不追溯生效，必须先启用再 reload。Host 已按“首次握手失败 → 专用实例启用
+bypass → 安装 document-start script → reload → 双 frame handshake”执行，UI 在
+sidebar 显示兼容状态；退出时禁用 bypass 并 reload 恢复 CSP。真实 Lead deep-link
+不再依赖 renderer 内无效的 `location.assign(codex://...)`，而是按
+`data-app-action-sidebar-thread-id` 命中原生行：实测从 Kanban 打开同一 Lead Thread，
+主区由 Codex 原生渲染，再点 sidebar Kanban 返回 workspace。原生多目录 picker
+通过受控 Host action + macOS folder dialog 接入，iframe 不获得文件系统权限。
 
 官方 plugin 仍可作为 skills / MCP / 分发层，但当前公开 manifest 没有任意
 sidebar contribution point，因此 sidebar 与模式外壳属于 renderer adapter，
@@ -410,23 +429,27 @@ Desktop 相关（1、3）仍需运行时闭环；app-server 相关（2、4、5�
 
 1. `open -a ChatGPT --args --remote-debugging-port=...` + CDP attach 稳定，
    注入脚本活过页面导航与会话切换；探针需同时覆盖 Tier 2 所需的侧边栏
-   结构与顶层模式切换器锚点（见 7.5）。**PARTIAL（2026-08-09）**：已读取
+   结构与顶层模式切换器锚点（见 7.5）。**PASS（2026-08-09）**：已读取
    当前安装 `ChatGPT.app`（bundle id `com.openai.codex`，版本 `26.727.51351`，
    build `6119`），发行 bundle 存在 `data-app-action-sidebar-scroll|section|
    section-heading|project-row|thread-row` 等语义属性；`launcher/` 已实现安装检测、
-   CDP target 选择、单次 renderer probe 与 `safe-mode | additive | weft-mode`
-   分类测试。模式切换器尚无已验证语义锚点，因此 subtractive tier 当前必定
-   fail-open 为 additive。尚未重启或注入官方应用。
+   CDP target 选择、renderer hydration probe 与 `safe-mode | additive | weft-mode`
+   分类测试；专用 profile 真机完成 Weft mode 菜单注入、document-start reload、
+   React DOM 替换后的单实例重挂载、双 OOPIF handshake、CSP bypass 可见/退出恢复
+   及独立进程回收。
 2. weftd 经 app-server 创建的线程出现在 Desktop 线程列表，事件订阅正常。
    **PASS（store 层）**：`thread/start` 后 `session_index.jsonl` 同步写入、
    `state_*.sqlite threads` 表异步落库（秒~分钟级滞后，`thread/list` 读该表），
    `thread/resume` 正常。Desktop 视觉确认待做（遗留两个名为
    `weft-spike-20260808` 的测试线程供人工查看）。
-3. 从扩展内以编程方式跳转指定线程。**PASS（静态证据）**：`codex` scheme
+3. 从扩展内以编程方式跳转指定线程。**PASS**：`codex` scheme
    已在 ChatGPT.app Info.plist 注册；app bundle 内确认路由
    `codex://threads/<threadId>` 被官方 Chrome 扩展的 "Open in app" 用于
-   线程跳转（另有 `codex://threads/new`、`codex://settings/connections`）。
-   仅剩运行时确认（运行中 app 的聚焦/导航行为），随 Desktop spike 一起做。
+   线程跳转（另有 `codex://threads/new`、`codex://settings/connections`）。renderer
+   内直接 `location.assign(codex://...)` 实测无效，因此 adapter 改用当前发行版的
+   语义 thread-id 行。真实 workspace 的 Lead 链接已原地打开
+   `019fe64c-d5a0-7cb2-b6e6-295d62e34dab`，原生行变为 active，主区显示完整 Codex
+   对话；sidebar Kanban 可切回 workspace。
 4. per-thread MCP 配置能力。**PASS**：见第 6 节。回退方案不触发。
 5. 进行中线程注入语义。**PASS**：见第 6 节。关键结论：bus 投递在活跃 turn
    期间必须用 `turn/steer`，`turn/start` 会被静默丢弃。
@@ -454,12 +477,12 @@ Desktop 相关（1、3）仍需运行时闭环；app-server 相关（2、4、5�
   已迁移至 React + TypeScript + shadcn/ui primitive 并完成浏览器实测**：三视图、
   standalone/sidebar/workspace 三 surface、双 surface 路由与 workspace 同步、状态
   投影、SSE 自刷新、亮/暗主题、host context 模拟、桌面/手机断点与原生线程深链）。
-- Stage 3.5：Desktop adapter 地基（**进行中**）：安装检测、当前发行版语义锚点
-  inventory、只读 CDP capability probe 与三档兼容分类已完成；下一步是在专用
-  profile 完成 document-start 重挂载、CSP bypass 显示与 additive sidebar 注入。
+- Stage 3.5：Desktop adapter（**已完成 2026-08-09**）：安装检测、语义 probe、
+  三档兼容分类、专用 profile Launcher、document-start 重挂载、CSP bypass 显示与
+  恢复、原生第三模式、双 Surface、Host Context、原生 Thread 切换均已真机闭环。
 - Stage 4：切换（**进行中**）——新 issue 已全走新流程，仓库录入/自动拆解已
-  切换；待 Desktop adapter、存量 workspace 迁移、停发 Tauri 客户端与删除清单
-  落地后完成。
+  切换，Desktop adapter 已完成；待存量 workspace 迁移、停发 Tauri 客户端与
+  删除清单落地后完成。
 
 ## 11. 风险与对冲
 

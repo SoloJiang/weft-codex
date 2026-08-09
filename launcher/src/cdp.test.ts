@@ -16,6 +16,14 @@ test("uses a URL hint when multiple pages exist", () => {
   assert.equal(selectRendererTarget(targets, "codex/index.html").id, "codex")
 })
 
+test("prefers an exact URL over a matching auxiliary page", () => {
+  const targets = [
+    page("overlay", "app://-/index.html?initialRoute=%2Favatar-overlay"),
+    page("main", "app://-/index.html"),
+  ]
+  assert.equal(selectRendererTarget(targets, "app://-/index.html").id, "main")
+})
+
 test("fails closed when a renderer is ambiguous", () => {
   const targets = [page("one", "https://one.test"), page("two", "https://two.test")]
   assert.throws(() => selectRendererTarget(targets), /Could not select one renderer target/)

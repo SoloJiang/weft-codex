@@ -5,6 +5,7 @@ import { api } from "@/api"
 import { Button } from "@/components/ui/button"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { useI18n } from "@/i18n"
+import { requestHostAction } from "@/host-context"
 import { createSurfaceChannel, type SurfaceMessage } from "@/surface-channel"
 import { readInitialRoute, readInitialWorkspaceId, type SurfaceRoute } from "@/surface"
 import type { BoardEntry, Workspace } from "@/types"
@@ -25,7 +26,7 @@ function errorText(error: unknown, network: string, unknown: string): string {
   return unknown
 }
 
-export default function SidebarApp() {
+export default function SidebarApp({ cspBypass = false }: { cspBypass?: boolean }) {
   const { t, lang } = useI18n()
   const [workspaces, setWorkspaces] = React.useState<Workspace[]>([])
   const [workspaceId, setWorkspaceId] = React.useState<number | null>(readInitialWorkspaceId)
@@ -135,11 +136,13 @@ export default function SidebarApp() {
   }, [channel])
 
   const navigate = (next: SurfaceRoute) => {
+    requestHostAction({ action: "workspace.show" })
     setRoute(next)
     channel?.post({ type: "navigate", view: next.view, issueId: next.issueId })
   }
 
   const selectWorkspace = (id: number) => {
+    requestHostAction({ action: "workspace.show" })
     setWorkspaceId(id)
     setRoute({ view: "kanban", issueId: null })
     channel?.post({ type: "workspace.select", workspaceId: id })
@@ -201,21 +204,33 @@ export default function SidebarApp() {
           aria-label={t("ws.add")}
           title={t("ws.add")}
           disabled={!channel}
-          onClick={() => channel?.post({ type: "command", command: "workspace.create" })}
+          onClick={() => {
+            requestHostAction({ action: "workspace.show" })
+            channel?.post({ type: "command", command: "workspace.create" })
+          }}
         >
           <Plus aria-hidden="true" />
         </Button>
       </div>
+
+      {cspBypass ? (
+        <div className="host-security-notice" role="status" title={t("host.compatibilityDescription")}>
+          {t("host.compatibilityMode")}
+        </div>
+      ) : null}
 
       <div className="sidebar-primary-actions">
         <Button
           variant="ghost"
           className="sidebar-create-button"
           disabled={!channel}
-          onClick={() => channel?.post({
-            type: "command",
-            command: workspaceId ? "issue.create" : "workspace.create",
-          })}
+          onClick={() => {
+            requestHostAction({ action: "workspace.show" })
+            channel?.post({
+              type: "command",
+              command: workspaceId ? "issue.create" : "workspace.create",
+            })
+          }}
         >
           {workspaceId ? <SquarePen aria-hidden="true" /> : <Plus aria-hidden="true" />}
           {workspaceId ? t("issue.create") : t("ws.add")}

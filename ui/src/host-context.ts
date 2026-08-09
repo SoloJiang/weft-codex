@@ -6,6 +6,8 @@ const ALLOWED_TOKENS = new Set([
   "--vscode-sideBar-background",
   "--vscode-button-hoverBackground",
   "--vscode-focusBorder",
+  "--vscode-font-family",
+  "--vscode-editor-font-family",
   "--color-token-main-surface-primary",
   "--color-token-dropdown-background",
   "--color-token-border",
@@ -18,6 +20,7 @@ const ALLOWED_TOKENS = new Set([
   "--color-token-input-border",
   "--color-token-primary",
   "--color-token-button-foreground",
+  "--color-token-list-hover-background",
   "--color-token-charts-yellow",
   "--color-token-charts-red",
   "--color-token-charts-green",
@@ -29,6 +32,8 @@ const ALLOWED_TOKENS = new Set([
 ])
 
 const TOKEN_ALIASES: Record<string, string> = {
+  "--vscode-font-family": "--font",
+  "--vscode-editor-font-family": "--mono",
   "--font-sans": "--font",
   "--font-mono": "--mono",
   "--radius-lg": "--r-lg",
@@ -45,7 +50,24 @@ export interface HostContextV1 {
   projectId?: string
   threadId?: string
   sidebarCollapsed: boolean
+  security?: {
+    cspBypass: boolean
+  }
 }
+
+export type HostAction =
+  | { action: "workspace.show" }
+  | { action: "thread.open"; threadId: string }
+  | { action: "repositories.pick" }
+
+interface PendingHostAction {
+  resolve(paths: string[]): void
+  reject(error: Error): void
+  timeout: number
+}
+
+const pendingHostActions = new Map<string, PendingHostAction>()
+let hostResultListenerInstalled = false
 
 interface HostContextEnvelope {
   source: "weft-codex-host"
@@ -64,6 +86,10 @@ function isHostContext(value: unknown): value is HostContextV1 {
   if (candidate.mode !== "work" && candidate.mode !== "codex" && candidate.mode !== "weft") return false
   if (candidate.projectId !== undefined && typeof candidate.projectId !== "string") return false
   if (candidate.threadId !== undefined && typeof candidate.threadId !== "string") return false
+  if (candidate.security !== undefined) {
+    if (!candidate.security || typeof candidate.security !== "object") return false
+    if (typeof candidate.security.cspBypass !== "boolean") return false
+  }
   return typeof candidate.sidebarCollapsed === "boolean"
 }
 
@@ -80,6 +106,7 @@ function isHostEnvelope(value: unknown): value is HostContextEnvelope {
 function applyHostContext(context: HostContextV1) {
   const root = document.documentElement
   root.dataset.hostTheme = context.theme
+  root.dataset.hostCspBypass = context.security?.cspBypass ? "true" : "false"
   root.style.colorScheme = context.theme
   for (const [token, value] of Object.entries(context.tokens)) {
     if (ALLOWED_TOKENS.has(token) && typeof value === "string") {
@@ -106,8 +133,85 @@ function expectedHostOrigin(): string | null {
   }
 }
 
-export function useHostLanguage(): Language {
+export function requestHostAction(action: HostAction): boolean {
+  const hostOrigin = expectedHostOrigin()
+  if (!hostOrigin || window.parent === window) return false
+  const requestId = typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  window.parent.postMessage({
+    source: "weft-codex-ui",
+    type: "weft:host-action",
+    version: 1,
+    requestId,
+    ...action,
+  }, hostOrigin)
+  return true
+}
+
+export function hasHostBridge(): boolean {
+  return Boolean(expectedHostOrigin()) && window.parent !== window
+}
+
+function ensureHostResultListener() {
+  if (hostResultListenerInstalled) return
+  hostResultListenerInstalled = true
+  window.addEventListener("message", (event: MessageEvent<unknown>) => {
+    const hostOrigin = expectedHostOrigin()
+    if (!hostOrigin || event.source !== window.parent || event.origin !== hostOrigin) return
+    if (!event.data || typeof event.data !== "object" || Array.isArray(event.data)) return
+    const message = event.data as Record<string, unknown>
+    if (message.source !== "weft-codex-host" || message.type !== "weft:host-action-result") return
+    if (typeof message.requestId !== "string") return
+    const pending = pendingHostActions.get(message.requestId)
+    if (!pending) return
+    pendingHostActions.delete(message.requestId)
+    window.clearTimeout(pending.timeout)
+    if (message.ok !== true) {
+      const detail = typeof message.error === "string" ? message.error : "Host action failed"
+      pending.reject(new Error(detail))
+      return
+    }
+    const result = message.result
+    if (!result || typeof result !== "object" || Array.isArray(result)) {
+      pending.resolve([])
+      return
+    }
+    const paths = (result as Record<string, unknown>).paths
+    if (!Array.isArray(paths) || !paths.every((path) => typeof path === "string")) {
+      pending.reject(new Error("Host returned invalid repository paths"))
+      return
+    }
+    pending.resolve(paths)
+  })
+}
+
+export function pickRepositoryPaths(): Promise<string[]> | null {
+  const hostOrigin = expectedHostOrigin()
+  if (!hostOrigin || window.parent === window) return null
+  ensureHostResultListener()
+  const requestId = typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  return new Promise<string[]>((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      pendingHostActions.delete(requestId)
+      reject(new Error("Repository picker timed out"))
+    }, 120_000)
+    pendingHostActions.set(requestId, { resolve, reject, timeout })
+    window.parent.postMessage({
+      source: "weft-codex-ui",
+      type: "weft:host-action",
+      version: 1,
+      requestId,
+      action: "repositories.pick",
+    }, hostOrigin)
+  })
+}
+
+export function useHostContext(): { lang: Language; context: HostContextV1 | null } {
   const [lang, setLang] = React.useState<Language>(standaloneLanguage)
+  const [context, setContext] = React.useState<HostContextV1 | null>(null)
 
   React.useEffect(() => {
     const hostOrigin = expectedHostOrigin()
@@ -116,6 +220,7 @@ export function useHostLanguage(): Language {
       if (!hostOrigin || event.source !== window.parent || event.origin !== hostOrigin) return
       if (!isHostEnvelope(event.data)) return
       applyHostContext(event.data.payload)
+      setContext(event.data.payload)
       setLang(languageFromLocale(event.data.payload.locale))
     }
 
@@ -129,5 +234,5 @@ export function useHostLanguage(): Language {
     return () => window.removeEventListener("message", onMessage)
   }, [])
 
-  return lang
+  return { lang, context }
 }

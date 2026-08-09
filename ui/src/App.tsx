@@ -282,8 +282,6 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
       await api(`/api/directions/${direction.id}/attention/clear`, jsonRequest("POST"))
       await refreshCurrent()
     },
-    onMessageLead: (issue: Issue) => setDialog({ type: "message", target: "lead", id: issue.id, intent: "message" }),
-    onMessageTask: (direction: Direction) => setDialog({ type: "message", target: "task", id: direction.id, intent: "message" }),
     onContinueTask: (direction: Direction) => setDialog({ type: "message", target: "task", id: direction.id, intent: "continue" }),
   }), [notifyError, refreshCurrent, completeTask, launchLead, t])
 

@@ -1,5 +1,5 @@
 import * as React from "react"
-import { X } from "lucide-react"
+import { FolderOpen, X } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Textarea } from "@/components/ui/textarea"
+import { hasHostBridge, pickRepositoryPaths } from "@/host-context"
 import { useI18n } from "@/i18n"
 import type { DialogState, IssueKind, MessageIntent, RepoImportResponse } from "@/types"
 import { ISSUE_KINDS } from "@/types"
@@ -219,6 +220,8 @@ function RepositoryDialog({
   const [value, setValue] = React.useState("")
   const [error, setError] = React.useState("")
   const [summary, setSummary] = React.useState("")
+  const [picking, setPicking] = React.useState(false)
+  const nativePicker = React.useMemo(hasHostBridge, [])
 
   const paths = React.useMemo(() => {
     const seen = new Set<string>()
@@ -231,6 +234,28 @@ function RepositoryDialog({
         return true
       })
   }, [value])
+
+  const chooseRepositories = async () => {
+    const request = pickRepositoryPaths()
+    if (!request) return
+    setPicking(true)
+    setError("")
+    try {
+      const selected = await request
+      if (!selected.length) return
+      setValue((current) => {
+        const merged = new Set(current.split(/\r?\n/).map((path) => path.trim()).filter(Boolean))
+        for (const path of selected) merged.add(path)
+        return [...merged].join("\n")
+      })
+      setSummary("")
+    } catch (caught) {
+      if (caught instanceof Error) setError(caught.message)
+      else setError(t("err.unknown"))
+    } finally {
+      setPicking(false)
+    }
+  }
 
   return (
     <FormDialog
@@ -259,6 +284,15 @@ function RepositoryDialog({
       }}
     >
       <div className="form-stack">
+        {nativePicker ? (
+          <div className="repo-picker-row">
+            <Button type="button" variant="secondary" disabled={picking} onClick={chooseRepositories}>
+              <FolderOpen aria-hidden="true" />
+              {t(picking ? "repo.choosingFolders" : "repo.chooseFolders")}
+            </Button>
+            <span>{t("repo.pickerHint")}</span>
+          </div>
+        ) : null}
         <Field label={t("repo.pathsLabel")} htmlFor="repository-paths" error={error}>
           <Textarea
             id="repository-paths"

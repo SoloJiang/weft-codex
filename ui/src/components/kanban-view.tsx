@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Check, Flag, MessageCircle, Play, RotateCcw, Send } from "lucide-react"
+import { Check, Flag, Play, RotateCcw, Send } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { useI18n } from "@/i18n"
@@ -13,8 +13,6 @@ export interface WorkActions {
   onRetryTask: (direction: Direction) => Promise<void>
   onCompleteTask: (direction: Direction) => Promise<void>
   onClearAttention: (direction: Direction) => Promise<void>
-  onMessageLead: (issue: Issue) => void
-  onMessageTask: (direction: Direction) => void
   onContinueTask: (direction: Direction) => void
 }
 
@@ -58,16 +56,12 @@ export function DirectionActions({
       ) : direction.codex_thread_id ? (
         <>
           <ThreadLink threadId={direction.codex_thread_id} />
-          <Button
-            variant="ghost"
-            onClick={() => {
-              if (canContinue) actions.onContinueTask(direction)
-              else actions.onMessageTask(direction)
-            }}
-          >
-            <Send aria-hidden="true" />
-            {t(canContinue ? "dir.continue" : "dir.msg")}
-          </Button>
+          {canContinue ? (
+            <Button variant="ghost" onClick={() => actions.onContinueTask(direction)}>
+              <Send aria-hidden="true" />
+              {t("dir.continue")}
+            </Button>
+          ) : null}
         </>
       ) : null}
       {direction.status === "review" ? (
@@ -101,13 +95,7 @@ export function IssueActions({ issue, actions }: { issue: Issue; actions: WorkAc
   return (
     <div className="issue-actions">
       {issue.lead_codex_thread_id ? (
-        <>
-          <ThreadLink threadId={issue.lead_codex_thread_id} />
-          <Button variant="ghost" onClick={() => actions.onMessageLead(issue)}>
-            <MessageCircle aria-hidden="true" />
-            {t("issue.msgLead")}
-          </Button>
-        </>
+        <ThreadLink threadId={issue.lead_codex_thread_id} />
       ) : (
         <AsyncButton
           variant="ghost"

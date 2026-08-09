@@ -16,8 +16,9 @@ worktree 生命周期、仓库录入与拆解、workspace/kanban），以 Codex 
 - `crates/core` — store（SQLite，新 schema）、thread bus（MCP-over-HTTP，
   URL path 身份）、UI 事件通道。
 - `crates/daemon` — `weftd` 二进制。
-- `launcher/` — Codex 安装检测与只读 CDP capability probes；当前不会启动、
-  修改或注入官方应用，下一阶段在此实现 renderer adapter 与 Weft mode。
+- `launcher/` — 外置 Desktop Host：以专用 profile 启动官方 Codex 与 weftd，
+  执行 CDP capability probes、document-start 注入、Weft 第三模式、Host Context
+  与原生线程路由；不修改、重签名或覆盖官方应用。
 - `ui/` — React + TypeScript + Vite web app；shadcn/ui 只作为可维护的
   primitive 源码层，视觉由 Codex semantic token 驱动。生产构建由 daemon
   从 `crates/daemon/web/` 提供。
@@ -52,7 +53,7 @@ WEFTD_ADDR=127.0.0.1:47810 ./target/debug/weftd
 
 相同 `bridge_id` 的 sidebar / workspace 会同步 workspace、路由和命令。
 
-只读检查本机 Codex 安装与 renderer 能力：
+检查本机 Codex 安装与 renderer 能力：
 
 ```sh
 cd launcher
@@ -60,7 +61,19 @@ pnpm install
 pnpm inspect-install
 # 对一个已由用户启动的 loopback CDP endpoint：
 node dist/cli.js probe --endpoint=http://127.0.0.1:9222
+
+# 启动由 Host 管理的专用 Codex 实例：
+pnpm start
+
+# 或接入一个已用 loopback CDP 启动的专用实例：
+node dist/cli.js attach --endpoint=http://127.0.0.1:9222
 ```
+
+当前 Codex 发行版的 CSP 会阻止 loopback iframe。Host 只对专用实例启用
+`Page.setBypassCSP` 并重载 renderer，UI 会显示“Desktop compatibility mode”；
+Host 退出时会移除注入、关闭 bypass 并恢复 CSP 文档。Weft mode 以原生 Codex
+模式为底座，Sidebar 只显示 workspace / issue / kanban / repositories，打开
+Lead/Worker 时主区域切回 Codex 原生 Thread，点击 Sidebar 导航可返回工作区。
 
 `WEFT_CODEX_HOME` 可覆盖数据目录（默认 `~/.weft-codex`）。
 
