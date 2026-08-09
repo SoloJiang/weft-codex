@@ -98,6 +98,7 @@ textarea { font: inherit; }
 
 button,
 .thread-link {
+  height: var(--control-h);
   min-height: var(--control-h);
   display: inline-flex;
   align-items: center;
@@ -157,6 +158,9 @@ textarea {
   background: var(--color-token-input-background, var(--panel-2));
   color: var(--text);
 }
+
+select,
+input { height: var(--control-h); }
 
 textarea {
   width: 100%;
@@ -227,6 +231,7 @@ a { color: var(--link); }
 .nav-btn.active { background: var(--hover); }
 
 .connection {
+  height: var(--control-h);
   min-height: var(--control-h);
   display: inline-flex;
   align-items: center;
@@ -329,7 +334,7 @@ main {
 .issue-head {
   min-width: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-3);
   padding: 10px 12px;
@@ -346,6 +351,7 @@ main {
 .issue-identity h2 { margin: 0; }
 
 .issue-title-link {
+  height: auto;
   min-height: 28px;
   max-width: 100%;
   justify-content: flex-start;
@@ -354,6 +360,7 @@ main {
   font-weight: 600;
   line-height: 1.4;
   text-align: left;
+  vertical-align: top;
   white-space: normal;
   overflow-wrap: anywhere;
 }
@@ -407,9 +414,15 @@ main {
 .card .btns { align-items: stretch; flex-wrap: wrap; gap: var(--space-1); }
 .card .btns button,
 .card .btns .thread-link {
+  height: 28px;
   min-height: 28px;
   padding: 0 7px;
   font-size: 12px;
+}
+
+.card .btns > :first-child {
+  margin-inline-start: -1px;
+  padding-inline-start: 0;
 }
 
 .badge {
@@ -429,6 +442,10 @@ main {
 /* ── issue detail ─────────────────────────────────────────────────── */
 
 .detail-nav { margin-bottom: var(--space-3); }
+.detail-nav > :first-child {
+  margin-inline-start: -1px;
+  padding-inline-start: 0;
+}
 .detail-head { margin-bottom: 0; border: 1px solid var(--border); border-radius: var(--r-lg); }
 .detail-title { font-size: 16px; font-weight: 650; overflow-wrap: anywhere; }
 
@@ -457,7 +474,7 @@ main {
 .task-detail-head {
   min-width: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
 }
 
@@ -699,6 +716,10 @@ details.advanced > .form-stack { margin-top: 10px; }
 
   .col { scroll-snap-align: start; }
   .repo-toolbar { flex-direction: column; }
+  .analysis-actions > :first-child {
+    margin-inline-start: -1px;
+    padding-inline-start: 0;
+  }
 }
 
 @media (max-width: 720px) {
@@ -740,10 +761,18 @@ details.advanced > .form-stack { margin-top: 10px; }
   .repo-actions,
   .task-detail .btns { justify-content: flex-start; }
 
+  .issue-actions > :first-child,
+  .task-detail .btns > :first-child {
+    margin-inline-start: -1px;
+    padding-inline-start: 0;
+  }
+
+  .status-chip { align-self: flex-start; }
+
   .columns { grid-auto-columns: minmax(246px, 82vw); }
   .issue-title-link { min-height: 44px; }
   .card .btns button,
-  .card .btns .thread-link { min-height: 44px; padding: 0 10px; font-size: 13px; }
+  .card .btns .thread-link { height: 44px; min-height: 44px; padding: 0 10px; font-size: 13px; }
 
   .empty-state { margin: 48px auto; }
   .modal-body { width: calc(100vw - 24px); max-height: calc(100dvh - 24px); padding: 16px; }
