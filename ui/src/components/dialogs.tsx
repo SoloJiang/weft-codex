@@ -9,19 +9,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Textarea } from "@/components/ui/textarea"
 import { useI18n } from "@/i18n"
-import type { DialogState, DirectionStatus } from "@/types"
-import { STATUSES } from "@/types"
+import type { DialogState, MessageIntent } from "@/types"
 import { Field } from "./shared"
 
 interface DialogLayerProps {
   state: DialogState
   onClose: () => void
   onCreateWorkspace: (name: string) => Promise<void>
-  onSendMessage: (target: "lead" | "task", id: number, text: string) => Promise<void>
-  onMoveTask: (id: number, status: DirectionStatus) => Promise<void>
+  onSendMessage: (target: "lead" | "task", id: number, text: string, intent: MessageIntent) => Promise<void>
 }
 
 interface FormDialogProps {
@@ -132,21 +129,24 @@ function WorkspaceDialog({
 function MessageDialog({
   target,
   id,
+  intent,
   onClose,
   onSend,
 }: {
   target: "lead" | "task"
   id: number
+  intent: MessageIntent
   onClose: () => void
-  onSend: (target: "lead" | "task", id: number, text: string) => Promise<void>
+  onSend: (target: "lead" | "task", id: number, text: string, intent: MessageIntent) => Promise<void>
 }) {
   const { t } = useI18n()
   const [text, setText] = React.useState("")
   const [error, setError] = React.useState("")
+  const continuing = intent === "continue"
   return (
     <FormDialog
-      title={t("modal.messageTitle")}
-      submitLabel={t("modal.sendMessage")}
+      title={t(continuing ? "modal.continueTaskTitle" : "modal.messageTitle")}
+      submitLabel={t(continuing ? "modal.continueTask" : "modal.sendMessage")}
       pendingLabel={t("loading.sendingMessage")}
       onClose={onClose}
       onSubmit={async () => {
@@ -154,11 +154,11 @@ function MessageDialog({
           setError(t("validation.message"))
           return false
         }
-        await onSend(target, id, text.trim())
+        await onSend(target, id, text.trim(), intent)
       }}
     >
       <div className="form-stack">
-        <Field label={t("field.message")} htmlFor="message-text" error={error}>
+        <Field label={t(continuing ? "field.nextInstruction" : "field.message")} htmlFor="message-text" error={error}>
           <Textarea
             id="message-text"
             autoFocus
@@ -173,38 +173,6 @@ function MessageDialog({
   )
 }
 
-function MoveDialog({
-  id,
-  initialStatus,
-  onClose,
-  onMove,
-}: {
-  id: number
-  initialStatus: DirectionStatus
-  onClose: () => void
-  onMove: (id: number, status: DirectionStatus) => Promise<void>
-}) {
-  const { t } = useI18n()
-  const [status, setStatus] = React.useState<DirectionStatus>(initialStatus)
-  return (
-    <FormDialog
-      title={t("modal.moveTaskTitle")}
-      submitLabel={t("modal.moveTask")}
-      pendingLabel={t("loading.movingTask")}
-      onClose={onClose}
-      onSubmit={() => onMove(id, status)}
-    >
-      <div className="form-stack">
-        <Field label={t("field.status")} htmlFor="task-status">
-          <NativeSelect className="w-full" id="task-status" autoFocus value={status} onChange={(event) => setStatus(event.target.value as DirectionStatus)}>
-            {STATUSES.map((item) => <NativeSelectOption key={item} value={item}>{t(`status.${item}`)}</NativeSelectOption>)}
-          </NativeSelect>
-        </Field>
-      </div>
-    </FormDialog>
-  )
-}
-
 export function DialogLayer(props: DialogLayerProps) {
   const { state } = props
   if (!state) return null
@@ -212,7 +180,7 @@ export function DialogLayer(props: DialogLayerProps) {
     return <WorkspaceDialog onClose={props.onClose} onCreate={props.onCreateWorkspace} />
   }
   if (state.type === "message") {
-    return <MessageDialog target={state.target} id={state.id} onClose={props.onClose} onSend={props.onSendMessage} />
+    return <MessageDialog target={state.target} id={state.id} intent={state.intent} onClose={props.onClose} onSend={props.onSendMessage} />
   }
-  return <MoveDialog id={state.direction.id} initialStatus={state.direction.status} onClose={props.onClose} onMove={props.onMoveTask} />
+  return null
 }

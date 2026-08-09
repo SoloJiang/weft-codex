@@ -2,6 +2,7 @@ export const STATUSES = ["queued", "planning", "working", "review", "done"] as c
 
 export type DirectionStatus = (typeof STATUSES)[number]
 export type AppView = "kanban" | "repos" | "issue"
+export type MessageIntent = "message" | "continue"
 
 export interface Workspace {
   id: number
@@ -99,8 +100,7 @@ export interface BusMessage {
 
 export type DialogState =
   | { type: "workspace" }
-  | { type: "message"; target: "lead" | "task"; id: number }
-  | { type: "move"; direction: Direction }
+  | { type: "message"; target: "lead" | "task"; id: number; intent: MessageIntent }
   | null
 
 export type ToastKind = "info" | "success" | "error"

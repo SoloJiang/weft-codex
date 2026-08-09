@@ -42,7 +42,8 @@ const zh = {
   "dir.spawn": "启动",
   "dir.msg": "发消息",
   "dir.openThread": "打开对话",
-  "dir.move": "移动",
+  "dir.continue": "继续处理",
+  "dir.complete": "验收完成",
   "dir.clearAttention": "清除标记",
   "dir.attention": "需要处理",
   "dir.cardLabel": "任务：{name}",
@@ -67,15 +68,15 @@ const zh = {
 
   "modal.cancel": "取消",
   "modal.messageTitle": "发送消息",
+  "modal.continueTaskTitle": "继续处理任务",
   "modal.workspaceTitle": "新建工作区",
-  "modal.moveTaskTitle": "移动任务",
   "modal.createWorkspace": "创建工作区",
   "modal.sendMessage": "发送",
-  "modal.moveTask": "移动任务",
+  "modal.continueTask": "发送并继续",
 
   "field.name": "名称",
   "field.message": "消息",
-  "field.status": "状态",
+  "field.nextInstruction": "补充要求",
 
   "mandate.planImplShort": "规划 + 实现",
   "mandate.implOnlyShort": "仅实现",
@@ -92,7 +93,7 @@ const zh = {
 
   "loading.creatingWorkspace": "正在创建…",
   "loading.sendingMessage": "正在发送…",
-  "loading.movingTask": "正在移动…",
+  "loading.completingTask": "正在完成…",
   "loading.startingTask": "正在启动…",
   "loading.startingLead": "正在启动…",
   "loading.clearingFlag": "正在清除…",
@@ -104,7 +105,8 @@ const zh = {
 
   "success.workspaceCreated": "工作区已创建。",
   "success.messageSent": "消息已发送。",
-  "success.taskMoved": "任务已移至“{status}”。",
+  "success.continueSent": "补充要求已发送。",
+  "success.taskCompleted": "任务已验收完成。",
   "success.issueCreated": "Issue 已创建。",
   "success.repoAdded": "仓库已添加。",
   "success.analysisStarted": "分析已开始。",

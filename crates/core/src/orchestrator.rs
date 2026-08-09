@@ -57,9 +57,6 @@ pub fn status_after_turn_end() -> &'static str {
     "review"
 }
 
-/// Statuses a human may drag a direction into (kanban columns).
-pub const HUMAN_STATUSES: [&str; 5] = ["queued", "planning", "working", "review", "done"];
-
 fn non_empty(s: String) -> Option<String> {
     if s.is_empty() {
         None
@@ -585,19 +582,45 @@ impl Orchestrator {
         Ok(())
     }
 
-    /// Human kanban drag; only [`HUMAN_STATUSES`] are accepted.
-    pub async fn set_direction_status(
-        &self,
-        direction_id: i64,
-        status: &str,
-    ) -> anyhow::Result<()> {
-        if !HUMAN_STATUSES.contains(&status) {
-            anyhow::bail!("invalid status {status:?}; expected one of {HUMAN_STATUSES:?}");
+    /// Accept a worker result. Runtime states are event-derived, so the only
+    /// human status transition is review -> done. A repeated acceptance is
+    /// idempotent; a concurrent resume wins over a stale acceptance click.
+    pub async fn complete_direction(&self, direction_id: i64) -> anyhow::Result<()> {
+        let direction = self
+            .store
+            .get_direction(direction_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("unknown direction {direction_id}"))?;
+        if direction.status == "done" {
+            return Ok(());
         }
-        self.store.set_direction_status(direction_id, status).await?;
+        if direction.status != "review" {
+            anyhow::bail!(
+                "cannot complete task {direction_id} from status {:?}; expected review",
+                direction.status
+            );
+        }
+        if !self
+            .store
+            .complete_direction_if_review(direction_id)
+            .await?
+        {
+            let current = self
+                .store
+                .get_direction(direction_id)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("unknown direction {direction_id}"))?;
+            if current.status == "done" {
+                return Ok(());
+            }
+            anyhow::bail!(
+                "cannot complete task {direction_id} from status {:?}; expected review",
+                current.status
+            );
+        }
         events::emit(
             "direction.updated",
-            json!({ "id": direction_id, "status": status }),
+            json!({ "id": direction_id, "status": "done", "attention": false }),
         );
         Ok(())
     }
@@ -762,8 +785,6 @@ mod tests {
         assert_eq!(initial_status("impl-only"), "working");
         assert_eq!(initial_status("anything-else"), "planning");
         assert_eq!(status_after_turn_end(), "review");
-        assert!(HUMAN_STATUSES.contains(&"done"));
-        assert!(!HUMAN_STATUSES.contains(&"bogus"));
     }
 
     #[tokio::test]
@@ -835,7 +856,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn set_direction_status_validates() {
+    async fn complete_direction_requires_review_and_is_idempotent() {
         let (orch, _dir) = fixture().await;
         let ws = orch.store.create_workspace("W", "w").await.expect("ws");
         let repo = orch
@@ -849,10 +870,21 @@ mod tests {
             .add_direction(issue, "backend", "backend", repo, "impl-only", "main", "", "")
             .await
             .expect("d");
-        assert!(orch.set_direction_status(d, "bogus").await.is_err());
-        orch.set_direction_status(d, "done").await.expect("done");
+        assert!(orch.complete_direction(d).await.is_err());
+        orch.store
+            .set_direction_status(d, "review")
+            .await
+            .expect("review");
+        orch.store
+            .set_direction_attention(d, Some("turn failed"))
+            .await
+            .expect("attention");
+        orch.complete_direction(d).await.expect("done");
+        orch.complete_direction(d).await.expect("idempotent");
         let row = orch.store.get_direction(d).await.expect("get").expect("some");
         assert_eq!(row.status, "done");
+        assert_eq!(row.attention, 0);
+        assert!(row.attention_reason.is_empty());
     }
 
     /// Seed a direction WITH a Codex thread id, so delivery paths resolve.

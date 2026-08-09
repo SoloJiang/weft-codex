@@ -443,6 +443,22 @@ impl Store {
         Ok(())
     }
 
+    /// Accept a task only if it is still waiting for review. The conditional
+    /// update prevents a concurrent worker message from being overwritten by
+    /// a stale completion click. Acceptance also resolves any attention flag.
+    pub async fn complete_direction_if_review(&self, id: i64) -> anyhow::Result<bool> {
+        let result = sqlx::query(
+            "UPDATE direction
+             SET status = 'done', attention = 0, attention_reason = ''
+             WHERE id = ? AND status = 'review'",
+        )
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .context("complete_direction_if_review")?;
+        Ok(result.rows_affected() == 1)
+    }
+
     pub async fn set_direction_thread(&self, id: i64, thread_id: &str) -> anyhow::Result<()> {
         sqlx::query("UPDATE direction SET codex_thread_id = ? WHERE id = ?")
             .bind(thread_id)

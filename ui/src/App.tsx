@@ -16,8 +16,8 @@ import type {
   BoardEntry,
   DialogState,
   Direction,
-  DirectionStatus,
   Issue,
+  MessageIntent,
   Repo,
   RepoMap,
   ToastKind,
@@ -241,17 +241,17 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
     notify(t("success.issueCreated"), "success")
   }
 
-  const sendMessage = async (target: "lead" | "task", id: number, text: string) => {
+  const sendMessage = async (target: "lead" | "task", id: number, text: string, intent: MessageIntent) => {
     const path = target === "lead" ? `/api/issues/${id}/message` : `/api/directions/${id}/message`
     await api(path, jsonRequest("POST", { text }))
     await refreshCurrent()
-    notify(t("success.messageSent"), "success")
+    notify(t(intent === "continue" ? "success.continueSent" : "success.messageSent"), "success")
   }
 
-  const moveTask = React.useCallback(async (id: number, status: DirectionStatus) => {
-    await api(`/api/directions/${id}/status`, jsonRequest("POST", { status }))
+  const completeTask = React.useCallback(async (direction: Direction) => {
+    await api(`/api/directions/${direction.id}/complete`, jsonRequest("POST"))
     await refreshCurrent()
-    notify(t("success.taskMoved", { status: t(`status.${status}`) }), "success")
+    notify(t("success.taskCompleted"), "success")
   }, [notify, refreshCurrent, t])
 
   const workActions = React.useMemo<WorkActions>(() => ({
@@ -264,15 +264,15 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
       await api(`/api/directions/${direction.id}/spawn`, jsonRequest("POST"))
       await refreshCurrent()
     },
+    onCompleteTask: completeTask,
     onClearAttention: async (direction: Direction) => {
       await api(`/api/directions/${direction.id}/attention/clear`, jsonRequest("POST"))
       await refreshCurrent()
     },
-    onMoveTask: moveTask,
-    onMessageLead: (issue: Issue) => setDialog({ type: "message", target: "lead", id: issue.id }),
-    onMessageTask: (direction: Direction) => setDialog({ type: "message", target: "task", id: direction.id }),
-    onMoveTaskDialog: (direction: Direction) => setDialog({ type: "move", direction }),
-  }), [notifyError, refreshCurrent, moveTask])
+    onMessageLead: (issue: Issue) => setDialog({ type: "message", target: "lead", id: issue.id, intent: "message" }),
+    onMessageTask: (direction: Direction) => setDialog({ type: "message", target: "task", id: direction.id, intent: "message" }),
+    onContinueTask: (direction: Direction) => setDialog({ type: "message", target: "task", id: direction.id, intent: "continue" }),
+  }), [notifyError, refreshCurrent, completeTask])
 
   const addRepository = async (name: string, path: string) => {
     if (!workspaceId) throw new Error(t("err.unknown"))
@@ -414,7 +414,6 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
         onClose={() => setDialog(null)}
         onCreateWorkspace={createWorkspace}
         onSendMessage={sendMessage}
-        onMoveTask={moveTask}
       />
 
       <div className="notifications" aria-live="polite" aria-atomic="false">

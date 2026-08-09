@@ -1,5 +1,5 @@
 import * as React from "react"
-import { ChevronRight, Flag, MessageCircle, Play, Plus, Send } from "lucide-react"
+import { Check, Flag, MessageCircle, Play, Plus, Send } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -12,11 +12,11 @@ export interface WorkActions {
   onError: (error: unknown) => void
   onStartLead: (issue: Issue) => Promise<void>
   onStartTask: (direction: Direction) => Promise<void>
+  onCompleteTask: (direction: Direction) => Promise<void>
   onClearAttention: (direction: Direction) => Promise<void>
-  onMoveTask: (id: number, status: DirectionStatus) => Promise<void>
   onMessageLead: (issue: Issue) => void
   onMessageTask: (direction: Direction) => void
-  onMoveTaskDialog: (direction: Direction) => void
+  onContinueTask: (direction: Direction) => void
 }
 
 function mandateLabel(value: string, t: ReturnType<typeof useI18n>["t"]): string {
@@ -43,6 +43,7 @@ export function DirectionActions({
   actions: WorkActions
 }) {
   const { t } = useI18n()
+  const canContinue = direction.status === "review" || direction.status === "done"
   return (
     <div className="btns">
       {!direction.codex_thread_id ? (
@@ -58,16 +59,29 @@ export function DirectionActions({
       ) : (
         <>
           <ThreadLink threadId={direction.codex_thread_id} />
-          <Button variant="ghost" onClick={() => actions.onMessageTask(direction)}>
+          <Button
+            variant="ghost"
+            onClick={() => {
+              if (canContinue) actions.onContinueTask(direction)
+              else actions.onMessageTask(direction)
+            }}
+          >
             <Send aria-hidden="true" />
-            {t("dir.msg")}
+            {t(canContinue ? "dir.continue" : "dir.msg")}
           </Button>
         </>
       )}
-      <Button variant="ghost" onClick={() => actions.onMoveTaskDialog(direction)}>
-        <ChevronRight aria-hidden="true" />
-        {t("dir.move")}
-      </Button>
+      {direction.status === "review" ? (
+        <AsyncButton
+          className="task-complete-action"
+          label={t("dir.complete")}
+          pendingLabel={t("loading.completingTask")}
+          onAction={() => actions.onCompleteTask(direction)}
+          onError={actions.onError}
+        >
+          <Check aria-hidden="true" />
+        </AsyncButton>
+      ) : null}
       {Boolean(direction.attention) ? (
         <AsyncButton
           variant="ghost"
@@ -115,9 +129,7 @@ function TaskCard({ direction, repos, actions }: { direction: Direction; repos: 
   return (
     <article
       className={`card${direction.attention ? " attention" : ""}`}
-      draggable
       aria-label={t("dir.cardLabel", { name: direction.name })}
-      onDragStart={(event) => event.dataTransfer.setData("text/plain", String(direction.id))}
     >
       <div className="name">
         {direction.name}
@@ -145,32 +157,10 @@ function KanbanColumn({
   actions: WorkActions
 }) {
   const { t } = useI18n()
-  const [over, setOver] = React.useState(false)
-  const [busy, setBusy] = React.useState(false)
   const headingId = `issue-${issueId}-status-${status}`
 
   return (
-    <section
-      className={`col${over ? " over" : ""}`}
-      aria-labelledby={headingId}
-      aria-busy={busy}
-      onDragOver={(event) => { event.preventDefault(); setOver(true) }}
-      onDragLeave={() => setOver(false)}
-      onDrop={async (event) => {
-        event.preventDefault()
-        setOver(false)
-        const id = Number(event.dataTransfer.getData("text/plain"))
-        if (!Number.isFinite(id) || busy) return
-        setBusy(true)
-        try {
-          await actions.onMoveTask(id, status)
-        } catch (error) {
-          actions.onError(error)
-        } finally {
-          setBusy(false)
-        }
-      }}
-    >
+    <section className="col" aria-labelledby={headingId}>
       <h3 id={headingId}>{t(`status.${status}`)}</h3>
       {directions.filter((direction) => direction.status === status).map((direction) => (
         <TaskCard key={direction.id} direction={direction} repos={repos} actions={actions} />

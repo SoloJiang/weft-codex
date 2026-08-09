@@ -42,7 +42,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/issues/{id}/bus", get(bus_log))
         .route("/api/directions/{id}/spawn", post(spawn_direction))
         .route("/api/directions/{id}/message", post(message_direction))
-        .route("/api/directions/{id}/status", post(set_status))
+        .route("/api/directions/{id}/complete", post(complete_direction))
         .route(
             "/api/directions/{id}/attention/clear",
             post(clear_attention),
@@ -78,7 +78,10 @@ fn fail(e: anyhow::Error) -> Response {
     let msg = format!("{e:#}");
     let status = if msg.contains("unknown") {
         StatusCode::NOT_FOUND
-    } else if msg.contains("already has") || msg.contains("no Codex thread") {
+    } else if msg.contains("already has")
+        || msg.contains("no Codex thread")
+        || msg.contains("cannot complete task")
+    {
         StatusCode::CONFLICT
     } else if msg.contains("invalid") || msg.contains("not in") || msg.contains("required") {
         StatusCode::BAD_REQUEST
@@ -245,17 +248,11 @@ async fn message_direction(
     }
 }
 
-#[derive(Deserialize)]
-struct SetStatus {
-    status: String,
-}
-
-async fn set_status(
+async fn complete_direction(
     State(state): State<ApiState>,
     Path(direction_id): Path<i64>,
-    Json(body): Json<SetStatus>,
 ) -> Response {
-    match state.orch.set_direction_status(direction_id, &body.status).await {
+    match state.orch.complete_direction(direction_id).await {
         Ok(()) => ok(json!({ "ok": true })),
         Err(e) => fail(e),
     }

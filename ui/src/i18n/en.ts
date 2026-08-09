@@ -40,7 +40,8 @@ const en = {
   "dir.spawn": "Start",
   "dir.msg": "Message",
   "dir.openThread": "Open chat",
-  "dir.move": "Move",
+  "dir.continue": "Continue",
+  "dir.complete": "Accept result",
   "dir.clearAttention": "Clear flag",
   "dir.attention": "Needs attention",
   "dir.cardLabel": "Task: {name}",
@@ -65,15 +66,15 @@ const en = {
 
   "modal.cancel": "Cancel",
   "modal.messageTitle": "Send message",
+  "modal.continueTaskTitle": "Continue task",
   "modal.workspaceTitle": "New workspace",
-  "modal.moveTaskTitle": "Move task",
   "modal.createWorkspace": "Create workspace",
   "modal.sendMessage": "Send",
-  "modal.moveTask": "Move task",
+  "modal.continueTask": "Send and continue",
 
   "field.name": "Name",
   "field.message": "Message",
-  "field.status": "Status",
+  "field.nextInstruction": "Next instruction",
 
   "mandate.planImplShort": "Plan + implement",
   "mandate.implOnlyShort": "Implement only",
@@ -90,7 +91,7 @@ const en = {
 
   "loading.creatingWorkspace": "Creating…",
   "loading.sendingMessage": "Sending…",
-  "loading.movingTask": "Moving…",
+  "loading.completingTask": "Accepting…",
   "loading.startingTask": "Starting…",
   "loading.startingLead": "Starting…",
   "loading.clearingFlag": "Clearing…",
@@ -102,7 +103,8 @@ const en = {
 
   "success.workspaceCreated": "Workspace created.",
   "success.messageSent": "Message sent.",
-  "success.taskMoved": "Task moved to {status}.",
+  "success.continueSent": "Next instruction sent.",
+  "success.taskCompleted": "Task accepted as complete.",
   "success.issueCreated": "Issue created.",
   "success.repoAdded": "Repository added.",
   "success.analysisStarted": "Analysis started.",

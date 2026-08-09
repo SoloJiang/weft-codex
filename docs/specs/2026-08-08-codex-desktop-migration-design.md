@@ -198,7 +198,8 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
   Codex semantic token。前端构建产物由 weftd 作为静态文件提供。
 - Workspace home：workspace 切换、repo 注册与状态。
 - Kanban：direction 卡片按 status 分列；卡片显示 repo / branch / mandate /
-  attention 信号；拖拽改状态。
+  attention 信号。状态由编排事件推进，不支持通用拖拽或任意改状态；用户在待审时
+  执行“验收完成”，也可通过“继续处理”发送补充要求并让任务回到工作中。
 - Issue detail：lead 卡片 + direction 卡片列表，各自跳转 Desktop 原生线程；
   bus 活动时间线（**已完成 2026-08-09**：看板标题点击进入独立详情视图，
   时间线聊天式渲染 + `bus.message` SSE 实时刷新）。
@@ -410,7 +411,7 @@ Desktop 相关（1、3）仍需运行时闭环；app-server 相关（2、4、5�
 - Stage 3：扩展 UI v1——workspace home + kanban + issue detail（**2026-08-09
   已迁移至 React + TypeScript + shadcn/ui primitive 并完成浏览器实测**：三视图、
   standalone/sidebar/workspace 三 surface、双 surface 路由与 workspace 同步、状态
-  移动、SSE 自刷新、亮/暗主题、host context 模拟、桌面/手机断点与原生线程深链）。
+  投影、SSE 自刷新、亮/暗主题、host context 模拟、桌面/手机断点与原生线程深链）。
 - Stage 3.5：Desktop adapter 地基（**进行中**）：安装检测、当前发行版语义锚点
   inventory、只读 CDP capability probe 与三档兼容分类已完成；下一步是在专用
   profile 完成 document-start 重挂载、CSP bypass 显示与 additive sidebar 注入。
