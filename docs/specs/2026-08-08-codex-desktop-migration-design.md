@@ -189,6 +189,10 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
 
 ## 7. UI 表面（weftd serve 的 web app）
 
+- 实现基座：`ui/` 使用 React + TypeScript + Vite；shadcn/ui 作为组件源码层，
+  只提供 Dialog、Button、Input、Select 等无业务状态的 primitive。
+  shadcn 默认主题不是设计来源，所有颜色、字体、圆角、边框与交互状态继续映射
+  Codex semantic token。前端构建产物由 weftd 作为静态文件提供。
 - Workspace home：workspace 切换、repo 注册与状态。
 - Kanban：direction 卡片按 status 分列；卡片显示 repo / branch / mandate /
   attention 信号；拖拽改状态。
@@ -197,13 +201,13 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
   时间线聊天式渲染 + `bus.message` SSE 实时刷新）。
 - Repo map：仓库依赖图与 components 展开视图（RepoMapView / RepoGraph 平移）。
 - 全部 i18n 字符串沿用 en/zh 双文件约束。
-- **主题同步（2026-08-09 落定，引用式而非快照式）**：Codex 本身的主题可
-  配置（dark/light、corner-radius scale），所以 web app 不硬编码颜色，
-  而是**引用宿主 CSS token**——每个语义变量形如
-  `var(--color-token-…, fallback)`：嵌入 Codex 应用（Weft mode）时宿主
-  实时 token 生效，宿主切主题我们零成本跟随；独立浏览器里 fallback
-  呈现 codex-dark 解析值（`prefers-color-scheme: light` 时切 codex-light
-  解析值）。token 名逐一核对自发行包（ChatGPT.app webview 资产）：
+- **主题同步（2026-08-09 修订）**：Codex 本身的主题可配置（dark/light、
+  corner-radius scale），所以 web app 不硬编码主题，而是引用宿主 semantic
+  token；但 CSS custom property **不会跨 iframe 自动继承**。同文档挂载时可
+  直接读取，跨源 iframe 必须由第 7.6 节的 Host Context Bridge 读取允许列表、
+  通过 `postMessage` 同步并写入 iframe 的 `documentElement.style`。独立浏览器
+  使用 fallback，`prefers-color-scheme` 决定 dark/light。token 允许列表逐一
+  核对自发行包（ChatGPT.app webview 资产）：
   表面 `--color-token-main-surface-primary` /
   `--color-token-dropdown-background` / `--vscode-sideBar-background`、
   文本 `--color-token-foreground` / `--color-token-text-secondary`、
@@ -216,8 +220,9 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
   `--color-token-input-background|border`、字体 `--font-sans` /
   `--font-mono`、圆角 `--radius-lg|md|sm`（随宿主 corner-radius-scale
   缩放）。已实测三层：dark fallback（`#131313`/`#fcfcfc`/`#0169cc`）、
-  light fallback（`#fcfcfc`/`#0d0d0d`）、宿主注入任意主题（紫系 +
-  radius 20px）时全部变量跟随宿主而非 fallback。
+  light fallback（`#fcfcfc`/`#0d0d0d`）、React bridge receiver 的版本、locale、
+  token 白名单与圆角映射已通过模拟 host envelope 实测。跨源 iframe 到真实
+  Desktop 的端到端 bridge 仍是 Desktop spike 必验项，未验证前不得宣称实时同步。
 
 ## 7.5 模式切换（Weft mode）
 
@@ -250,6 +255,69 @@ Work（everyday work）/ Codex 双模式（bundle 实证：`isEverydayWorkMode`�
 不破签名），经 CDP 挂载上述 web app 到侧边栏入口；Host 在 launcher 进程，
 renderer 仅 thin surface agent，通信走 CDP binding。未知版本 fail-closed
 进入 safe mode（不注入，提示用浏览器打开）。
+
+## 7.6 Host Context Bridge 与注入生命周期
+
+Desktop 接入不允许 UI 自己猜宿主状态。launcher / renderer agent 与 React UI
+之间定义版本化消息协议：
+
+```ts
+interface HostContextV1 {
+  version: 1;
+  theme: "light" | "dark";
+  locale: string;
+  tokens: Record<AllowedCodexToken, string>;
+  mode: "work" | "codex" | "weft";
+  projectId?: string;
+  threadId?: string;
+  sidebarCollapsed: boolean;
+}
+```
+
+- iframe URL 必须携带 launcher 写入的 `host_origin`；UI 只向该 origin 发送
+  `{ source: "weft-codex-ui", type: "weft:host-context-request", version: 1 }`。
+  host 回包固定为 `{ source: "weft-codex-host", type:
+  "weft:host-context", payload: HostContextV1 }`，UI 同时校验 `event.source ===
+  window.parent`、`event.origin` 与 payload schema。没有 `host_origin` 时只允许
+  同源 parent，独立顶层页面不发送请求。
+- `tokens` 只允许固定白名单；renderer 用 `getComputedStyle` 读取解析值，React
+  UI 写入自己的根节点。宿主主题或圆角变化后重新发布快照。
+- `locale` 由宿主明确传递，iframe 不使用自己的 `navigator.language` 猜测宿主
+  语言；独立浏览器才回退到系统语言。
+- 所有 frame → host 请求使用固定 origin、版本、action allowlist 与 payload
+  schema；禁止 `postMessage("*")` 执行高权限动作。
+- 注入使用独立 profile、loopback-only CDP、document-start 脚本与 ready
+  handshake；renderer 被导航或替换后重新探测、重新挂载，不能重复注册入口。
+- 若当前发行版 CSP 阻止本地 iframe，只允许 launcher 对专用实例启用 CSP
+  bypass；UI 必须展示该安全状态。CDP 端口无应用层认证，launcher 存活期间
+  仅允许可信本机代码，退出时关闭端口与子进程。
+- capability probes 至少覆盖：主 renderer、页面 mount、侧边栏入口、原生
+  thread route、模式切换器、主题/locale、titlebar drag region。Tier 2 任一
+  subtractive probe 失败即回 Tier 1；基础挂载失败则 safe mode。
+- 原生线程跳转优先使用稳定 route/deep link；composer prefill 只用于创建普通
+  人类线程，不替代 weftd 通过 app-server 创建的 lead/worker 线程。
+
+## 7.7 同类 taskboard 的吸收边界
+
+对照独立 taskboard 产品后，吸收下面这些产品原则：
+
+- 看板是 daemon 状态的清晰投影，不在浏览器里再造 agent runtime；写操作走
+  明确 API，SSE 只作提示并重新读取真值。
+- workspace → repositories → issue → tasks 是用户主路径；卡片状态、归属仓库、
+  执行模式与 attention 都可扫读，但用户界面不暴露 `direction` 内部术语。
+- 独立 web app 是一等降级面，同一份 React 构建再嵌入 Desktop；不能维护一套
+  浏览器 UI 和一套 Desktop UI。
+- 交互 primitive 统一到 shadcn/ui 源码层，但不继承它的品牌视觉；宿主主题、
+  locale、原生线程和模式入口仍由 Codex 决定。
+
+明确不吸收的范围：
+
+- 不重建 AI Chat、模型选择器、sandbox picker 或 transcript timeline；聊天继续
+  使用 Codex 原生线程。
+- MVP 不加入 Dashboard、甘特图、通用 Workflow Builder、周期任务等横向项目
+  管理能力；它们会稀释多仓库 issue 编排主线。
+- 评论、附件、issue 关系、乐观并发版本是可选的后续基础设施，但不得替代
+  lead/worker、bus、worktree 与 curator 数据模型。
 
 ## 8. 删除清单
 
@@ -303,9 +371,10 @@ Desktop 相关（1、3）待验；app-server 相关（2、4、5）**已于 2026-
   Tauri 客户端同期继续可用。
 - Stage 2：orchestrator——`codex_app_server.rs` Stage 2 接线 + lead/worker
   spawn + bus 投递 + 事件 → 状态推导。本迁移最大的一块。
-- Stage 3：扩展 UI v1——workspace home + kanban + issue detail（**web app 已
-  完成并浏览器实测**：三视图、拖拽、SSE 自刷新、codex:// 深链；注入嵌入
-  随后，依赖 Desktop spike）。
+- Stage 3：扩展 UI v1——workspace home + kanban + issue detail（**2026-08-09
+  已迁移至 React + TypeScript + shadcn/ui primitive 并完成浏览器实测**：三视图、
+  状态移动、SSE 自刷新、亮/暗主题、host context 模拟、桌面/手机断点与原生线程
+  深链；Desktop 注入仍依赖下一阶段 spike 与跨源 Host Context Bridge 验证）。
 - Stage 4：切换——新 issue 全走新流程；停发 Tauri 客户端；删除清单落地。
 
 ## 11. 风险与对冲
@@ -313,6 +382,10 @@ Desktop 相关（1、3）待验；app-server 相关（2、4、5）**已于 2026-
 - Codex 平台演进吃掉编排层：编排逻辑在 weftd 内、UI 是薄皮，官方若推出
   原生多 agent 编排，迁移成本限于 UI 层。
 - 注入脆弱性：fail-closed + 浏览器降级路径（见第 3、9 节）。
+- iframe 隔离：主题 token、locale、当前 project/thread 不会天然跨 frame；
+  必须通过版本化 Host Context Bridge 同步，不允许 UI 靠 DOM 猜测。
+- CDP 暴露：仅绑定 loopback 与专用 profile，launcher 退出即回收；CSP bypass
+  只对专用实例开启并在 UI 中可见。
 - app-server 协议漂移：`generate-ts` / `generate-json-schema` 生成绑定，
   min-version 硬开关（沿用 Stage 2 既定策略）。
 - 多引擎损失：接受。若未来需要，非 Codex 引擎以无头任务形态回归，

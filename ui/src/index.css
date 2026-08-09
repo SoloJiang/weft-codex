@@ -1,3 +1,28 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --color-card: var(--panel-2);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--panel);
+  --color-popover-foreground: var(--text);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--on-accent);
+  --color-secondary: var(--panel-2);
+  --color-secondary-foreground: var(--text);
+  --color-muted: var(--hover);
+  --color-muted-foreground: var(--dim);
+  --color-accent: var(--hover);
+  --color-accent-foreground: var(--text);
+  --color-destructive: var(--danger);
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--focus);
+}
+
 /* Host tokens are the source of truth in Weft mode. Fallbacks keep the same
    visual hierarchy when this thin UI is opened in a standalone browser. */
 :root {
@@ -44,6 +69,48 @@
   }
 }
 
+:root[data-host-theme="dark"] {
+  color-scheme: dark;
+  --fb-bg: #131313;
+  --fb-panel: #181818;
+  --fb-panel-2: #212121;
+  --fb-border: rgba(252, 252, 252, 0.1);
+  --fb-border-strong: rgba(252, 252, 252, 0.18);
+  --fb-text: #fcfcfc;
+  --fb-dim: rgba(252, 252, 252, 0.7);
+  --fb-placeholder: #b8b8b8;
+  --fb-accent: #0169cc;
+  --fb-accent-hover: #0285ff;
+  --fb-on-accent: #ffffff;
+  --fb-link: #5cadff;
+  --fb-warn: #ffc300;
+  --fb-danger: #fa423e;
+  --fb-ok: #04b84c;
+  --fb-hover: rgba(252, 252, 252, 0.08);
+  --fb-focus: #339cff;
+}
+
+:root[data-host-theme="light"] {
+  color-scheme: light;
+  --fb-bg: #fcfcfc;
+  --fb-panel: #ffffff;
+  --fb-panel-2: #f3f3f3;
+  --fb-border: rgba(13, 13, 13, 0.11);
+  --fb-border-strong: rgba(13, 13, 13, 0.22);
+  --fb-text: #0d0d0d;
+  --fb-dim: rgba(13, 13, 13, 0.68);
+  --fb-placeholder: #5f5f5f;
+  --fb-accent: #0169cc;
+  --fb-accent-hover: #005cad;
+  --fb-on-accent: #ffffff;
+  --fb-link: #0169cc;
+  --fb-warn: #946f00;
+  --fb-danger: #d62925;
+  --fb-ok: #087d35;
+  --fb-hover: rgba(13, 13, 13, 0.06);
+  --fb-focus: #0169cc;
+}
+
 :root {
   --bg: var(--vscode-sideBar-background, var(--fb-bg));
   --panel: var(--color-token-main-surface-primary, var(--fb-panel));
@@ -62,11 +129,11 @@
   --ok: var(--color-token-charts-green, var(--fb-ok));
   --hover: var(--color-token-list-hover-background, var(--fb-hover));
   --focus: var(--vscode-focusBorder, var(--fb-focus));
-  --r-lg: var(--radius-lg, 10px);
-  --r-md: var(--radius-md, 8px);
-  --r-sm: var(--radius-sm, 6px);
-  --font: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif);
-  --mono: var(--font-mono, ui-monospace, "SFMono-Regular", "SF Mono", Menlo, monospace);
+  --r-lg: 10px;
+  --r-md: 8px;
+  --r-sm: 6px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+  --mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, monospace;
   --control-h: 32px;
   --space-1: 4px;
   --space-2: 8px;
@@ -96,29 +163,6 @@ input,
 select,
 textarea { font: inherit; }
 
-button,
-.thread-link {
-  height: var(--control-h);
-  min-height: var(--control-h);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 0 10px;
-  border: 1px solid transparent;
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: var(--text);
-  cursor: pointer;
-  line-height: 1;
-  text-decoration: none;
-  white-space: nowrap;
-  transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease;
-}
-
-button:hover,
-.thread-link:hover { background: var(--hover); }
-
 button:focus-visible,
 .thread-link:focus-visible,
 select:focus-visible,
@@ -129,15 +173,7 @@ summary:focus-visible {
   outline-offset: 2px;
 }
 
-button.primary {
-  background: var(--accent);
-  color: var(--on-accent);
-}
-
-button.primary:hover { background: var(--accent-hover); }
-button:disabled { opacity: 0.48; cursor: default; }
-button:disabled:hover { background: transparent; }
-button.primary:disabled:hover { background: var(--accent); }
+button:disabled { cursor: default; }
 button.loading { cursor: progress; }
 
 button svg,
@@ -285,6 +321,12 @@ a { color: var(--link); }
 main {
   min-width: 0;
   padding: var(--space-4);
+}
+
+.app-loading {
+  padding: clamp(56px, 12vh, 112px) var(--space-4);
+  color: var(--dim);
+  text-align: center;
 }
 
 .view { display: none; }
@@ -660,6 +702,7 @@ main {
 
 .modal-body {
   width: min(460px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
   max-height: calc(100dvh - 32px);
   overflow: auto;
   padding: 18px;
@@ -694,19 +737,28 @@ main {
 .form-field .select-shell { width: 100%; }
 .field-error { margin-top: 5px; }
 
-details.advanced { margin-top: 12px; }
+details.advanced { margin-top: 0; }
 details.advanced summary {
   min-height: var(--control-h);
   display: inline-flex;
   align-items: center;
+  gap: 5px;
   border-radius: var(--r-sm);
   color: var(--dim);
   cursor: pointer;
+  list-style: none;
   user-select: none;
 }
 
+details.advanced summary::-webkit-details-marker { display: none; }
+details.advanced summary svg {
+  width: 13px;
+  height: 13px;
+  transition: transform 120ms ease;
+}
+details.advanced[open] summary svg { transform: rotate(180deg); }
 details.advanced summary:hover { color: var(--text); }
-details.advanced > .form-stack { margin-top: 10px; }
+details.advanced > .form-stack { margin-top: 6px; }
 .modal-error { margin-top: 12px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
 
