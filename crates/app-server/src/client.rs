@@ -1,13 +1,10 @@
-//! Codex `app-server` protocol layer (Stage 1 of the exec→app-server migration,
-//! spec: docs/superpowers/specs/2026-06-12-codex-app-server-migration-design.md).
+//! Codex `app-server` protocol and runtime client used by the weft-codex
+//! orchestrator and curator.
 //!
-//! This module is the PURE, source-verified wire layer: it encodes client→server
-//! requests, classifies incoming lines, and maps server notifications to the
-//! engine's existing `ChatEvent`. It is intentionally NOT yet wired into the
-//! engine — codex still runs via `exec` — so nothing here can break the live
-//! path. Wiring (a single global multiplexed `codex app-server` keyed by
-//! thread_id), approval round-trips, and the hard min-version switch are Stage
-//! 2+, which require validation against a live `codex app-server` binary.
+//! It encodes client→server requests, classifies incoming lines, maps server
+//! notifications to [`ChatEvent`], multiplexes subscriptions by thread id, and
+//! rejects every unexpected blocking request because the product has no
+//! approval or elicitation surface.
 //!
 //! Wire format (verified against openai/codex main, app-server-protocol):
 //! codex uses a JSON-RPC-LIKE envelope with NO `"jsonrpc":"2.0"` field. Messages
@@ -17,8 +14,6 @@
 //!   - response  (to our request):   has `id` AND `result`
 //!   - error     (to our request):   has `id` AND `error{code,message}`
 //! `id` (RequestId) is untagged: a JSON string or integer. We send integer ids.
-#![allow(dead_code)] // Stage 1: protocol layer landed + tested; engine wire-in is Stage 2.
-
 use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::{Arc, OnceLock};
@@ -263,8 +258,8 @@ pub fn turn_id_of(result: &Value) -> Option<String> {
     result["turn"]["id"].as_str().map(String::from)
 }
 
-/// Whether a server→client request is an approval ask (Stage 2 routes these to
-/// the Ask Bridge). Both command-exec and file-change approvals qualify.
+/// Whether a server→client request is an unexpected approval ask. Orchestrated
+/// threads use `approvalPolicy=never`; any such request is declined in-client.
 pub fn is_approval_request(method: &str) -> bool {
     matches!(
         method,
@@ -274,36 +269,19 @@ pub fn is_approval_request(method: &str) -> bool {
     )
 }
 
-/// The in-protocol decline `result` for a non-approval server request, or `None`
-/// when it should get a JSON-RPC error instead. Shapes verified against the codex
-/// 0.139.0 app-server JSON schema: elicitation → `{action:"decline"}` (we can't
-/// collect its `content`); requestUserInput → `{answers:{}}` (no answers).
+/// The in-protocol decline result for every known blocking request, or `None`
+/// when an unknown method should receive a JSON-RPC error instead.
 pub fn decline_response(method: &str) -> Option<Value> {
-    if is_elicitation_request(method) {
+    if method == "item/permissions/requestApproval" {
+        Some(json!({ "permissions": {} }))
+    } else if is_approval_request(method) {
+        Some(json!({ "decision": "decline" }))
+    } else if is_elicitation_request(method) {
         Some(json!({ "action": "decline" }))
     } else if method == "item/tool/requestUserInput" {
         Some(json!({ "answers": {} }))
     } else {
         None
-    }
-}
-
-/// The `result` payload that ANSWERS an approval request, by kind. A permission
-/// ask (`item/permissions/requestApproval`) requires `{permissions}` — the granted
-/// profile on allow, an EMPTY object on deny; a `{decision}` reply NO-OPS the grant
-/// and leaves the turn hanging until timeout. Command-exec / file-change asks use
-/// `{decision: accept|decline}`. Shared by the lead-chat engine (human-routed) and
-/// the curator (always-decline) so neither path can drift to the wrong shape.
-pub(crate) fn codex_approval_reply(is_perm: bool, allow: bool, requested: Option<Value>) -> Value {
-    if is_perm {
-        let granted = if allow {
-            requested.unwrap_or_else(|| json!({}))
-        } else {
-            json!({})
-        };
-        json!({ "permissions": granted })
-    } else {
-        json!({ "decision": if allow { "accept" } else { "decline" } })
     }
 }
 
@@ -450,8 +428,8 @@ pub fn turn_error_text(params: &Value) -> Option<String> {
 }
 
 /// True only for a machine-readable quota cause attached to this completed
-/// turn. Do not inspect the display message: generic transport, auth, or tool
-/// errors may contain similar words but must never trigger a provider switch.
+/// turn. Do not inspect display text: generic transport, auth, or tool errors
+/// may contain similar words but must not create a false attention signal.
 pub fn turn_reports_quota_exceeded(params: &Value) -> bool {
     let error = &params["turn"]["error"];
     let mut codes = [
@@ -467,55 +445,6 @@ pub fn turn_reports_quota_exceeded(params: &Value) -> bool {
             code.trim().to_ascii_lowercase().as_str(),
             "rate_limit_exceeded" | "rate_limit_reached" | "quota_exceeded" | "usage_limit_exceeded"
         )
-    })
-}
-
-/// A codex app-server `RateLimitSnapshot` (the `rateLimits` field of an
-/// `account/rateLimits/updated` notification, or of an `account/rateLimits/read`
-/// response) → an [`crate::engine_quota::QuotaSnapshot`] for "codex".
-///
-/// Ground truth: openai/codex `codex-rs/app-server-protocol/src/protocol/v2/account.rs`.
-/// `primary`/`secondary` are independent rolling windows (`usedPercent`: 0-100
-/// int, `resetsAt`: unix seconds, both camelCase on the wire); `rateLimitReachedType`
-/// is present (any string variant) only once the account has ACTUALLY hit a
-/// limit — that field, not a bare `usedPercent >= 100`, is the authoritative
-/// "exceeded" signal, since a sparse rolling update can carry the reached-type
-/// without a fresh percent on either window. When both windows are present, the
-/// more severe one wins (picked by percent, ties favor `primary`). `None` when
-/// the payload carries nothing usable — never fabricates an `Ok` reading from an
-/// absent/malformed snapshot.
-pub(crate) fn codex_quota_snapshot(rate_limits: &Value) -> Option<crate::engine_quota::QuotaSnapshot> {
-    if !rate_limits.is_object() {
-        return None;
-    }
-    let reached = rate_limits["rateLimitReachedType"].as_str().is_some();
-    let window = |key: &str| -> Option<(u32, Option<i64>)> {
-        let w = &rate_limits[key];
-        let pct = w["usedPercent"].as_i64()?.clamp(0, 100) as u32;
-        Some((pct, w["resetsAt"].as_i64()))
-    };
-    let primary = window("primary").map(|(pct, resets)| (pct, resets, "primary"));
-    let secondary = window("secondary").map(|(pct, resets)| (pct, resets, "secondary"));
-    let picked = match (primary, secondary) {
-        (Some(p), Some(s)) => Some(if s.0 > p.0 { s } else { p }),
-        (Some(p), None) => Some(p),
-        (None, Some(s)) => Some(s),
-        (None, None) => None,
-    };
-    let (used_percent, resets_at, window_label) = match picked {
-        Some((pct, resets, label)) => (Some(pct), resets, Some(label.to_string())),
-        None => (None, None, None),
-    };
-    if used_percent.is_none() && !reached {
-        return None;
-    }
-    Some(crate::engine_quota::QuotaSnapshot {
-        tool: "codex".to_string(),
-        status: crate::engine_quota::status_for(used_percent, reached),
-        used_percent,
-        resets_at,
-        window_label,
-        observed_at: crate::engine_quota::now_unix(),
     })
 }
 
@@ -541,7 +470,7 @@ fn appserver_tool_call(item: &Value) -> crate::proto::ToolCall {
 /// `item/started` (the child doesn't exist yet) and for every non-collab item —
 /// `receiverThreadIds` simply isn't present on those, so the field reads empty
 /// rather than erroring. The frontend uses whichever row FIRST reveals a given
-/// thread id as that sub-agent's branch anchor (`src/session/collabBranches.ts`).
+/// thread id as that sub-agent's branch anchor.
 fn appserver_collab_threads(item: &Value) -> Vec<String> {
     item["receiverThreadIds"]
         .as_array()
@@ -564,8 +493,7 @@ fn appserver_tool_result(item: &Value) -> crate::proto::ToolResultItem {
         output: appserver_tool_output(item),
         is_error: appserver_tool_is_error(item),
         collab_threads: appserver_collab_threads(item),
-        // app-server's item.completed inbound image content isn't parsed yet
-        // (only claude's tool_result and the ACP dialect are, so far).
+        // app-server's item.completed inbound image content isn't parsed yet.
         images: Vec::new(),
     }
 }
@@ -579,7 +507,7 @@ fn appserver_tool_input(item: &Value) -> Value {
             }
         }
     }
-    // Cap like the exec/claude path: a big MCP `arguments` or `changes` payload
+    // A big MCP `arguments` or `changes` payload
     // would otherwise bloat the persisted row + its push even though output is
     // capped. Small inputs pass through unchanged (UI still renders the object).
     crate::proto::cap_input(Value::Object(obj))
@@ -659,16 +587,7 @@ fn cap_out(s: &str) -> String {
     out
 }
 
-// ───────────────────── runtime client (Stage 1.5 — UNWIRED) ─────────────────
-//
-// One global, multiplexed `codex app-server` connection: spawn once, handshake
-// once, route every session's turns/notifications/approvals by thread_id. This
-// is the decided architecture made concrete; NOTHING calls `client()` yet, so it
-// cannot affect the live (exec) codex path. It compiles and reuses the
-// unit-tested protocol helpers above, but the live handshake/turn/approval
-// round-trips are UNVALIDATED until run against a real `codex app-server` binary
-// — that validation is the gate before Stage 2 wires this into the engine and
-// flips the hard switch.
+// ─────────────────────────── runtime client ────────────────────────────────
 
 /// What the demux delivers to a session subscribed on a thread_id.
 #[derive(Debug)]
@@ -688,23 +607,9 @@ pub enum ThreadMsg {
     /// means someone ELSE is driving (human takeover in Desktop) — mid-turn
     /// injection must then stand down (turn/start would be silently dropped).
     TurnStarted { turn_id: String },
-    /// An approval ask the session must answer with the method-specific result
-    /// shape (echoing `id`), else the turn hangs.
-    Approval {
-        id: Value,
-        method: String,
-        params: Value,
-    },
-    /// The server cleared a still-open ask (`serverRequest/resolved`, e.g. on
-    /// interrupt) — the consumer cancels the matching Needs-you card so it doesn't
-    /// linger and send a stale reply when clicked. `request_id` echoes the ask's id.
-    AskResolved { request_id: Value },
 }
 
 struct Inner {
-    /// Exact binary that spawned this app-server process. It stays immutable for
-    /// the connection's lifetime even if the global command override changes.
-    command: String,
     /// Channel to the dedicated stdin writer task. Holds no `ChildStdin` directly,
     /// so async writes never need the state lock.
     // Each entry is (bytes, optional flush-ack): the writer task acks AFTER
@@ -779,11 +684,6 @@ impl Client {
         self.0.lock().await.is_some()
     }
 
-    /// The immutable binary that owns this connection's account/quota events.
-    pub async fn spawned_command(&self) -> Option<String> {
-        self.0.lock().await.as_ref().map(|inner| inner.command.clone())
-    }
-
     /// Same underlying connection? Lets a consumer tell a genuine disconnect (still
     /// the engine's active client → run the disconnect cleanup) from an intentional
     /// teardown/replace (client taken or swapped → skip cleanup, don't clobber the
@@ -801,9 +701,8 @@ impl Client {
         Client(Arc::new(Mutex::new(None)))
     }
 
-    /// Decline a non-approval server request so the turn doesn't hang, using the
-    /// `decline_response` shape (or a JSON-RPC error when there's no in-protocol
-    /// decline).
+    /// Decline a blocking server request so the turn cannot hang, using the
+    /// method-specific shape or a JSON-RPC error for unknown methods.
     async fn decline_server_request(&self, id: &Value, method: &str) {
         match decline_response(method) {
             Some(result) => {
@@ -851,10 +750,8 @@ impl Client {
     }
 
     async fn connect(&self) -> anyhow::Result<()> {
-        // The app-scoped global client has no per-session pin; use the global codex
-        // override (alias).
         self.spawn_inner(
-            &crate::tool_command::command_for("codex"),
+            &crate::command::codex_command(),
             &[],
             &[],
             None,
@@ -875,8 +772,6 @@ impl Client {
         if g.is_some() {
             return Ok(());
         }
-        // `program` is the effective codex binary for this session — a per-session
-        // pin (alias opt-out) when present, else the global codex override.
         let mut command = Command::new(program);
         command.arg("app-server").arg("--stdio").args(extra_args);
         if let Some(c) = cwd {
@@ -938,7 +833,6 @@ impl Client {
         });
 
         *g = Some(Inner {
-            command: program.to_string(),
             write_tx,
             next_id: 1,
             pending: HashMap::new(),
@@ -950,9 +844,8 @@ impl Client {
         drop(g);
 
         let me = self.clone();
-        let read_quota_command = program.to_string();
         tokio::spawn(async move {
-            me.read_loop(stdout, read_quota_command).await;
+            me.read_loop(stdout).await;
         });
 
         // Handshake: initialize (await), then the `initialized` notification. If it
@@ -975,37 +868,12 @@ impl Client {
             self.shutdown_and_reap().await;
             return Err(e);
         }
-        // Issue #97: prime the quota hub right away instead of waiting for the
-        // first `account/rateLimits/updated` push, which may not arrive until
-        // AFTER a turn already ran on this connection — decoupled task so a
-        // slow/unsupported endpoint can never delay the connection itself.
-        let quota_probe = self.clone();
-        let probe_quota_command = program.to_string();
-        tokio::spawn(async move {
-            quota_probe
-                .refresh_quota_snapshot(&probe_quota_command)
-                .await;
-        });
         Ok(())
-    }
-
-    /// Best-effort `account/rateLimits/read` → the engine_quota hub.
-    /// Errors (older codex without this endpoint, a transient hiccup) are
-    /// swallowed: this is a proactive nice-to-have, never load-bearing for the
-    /// connection or a turn — the notification path (`read_loop`'s
-    /// `account/rateLimits/updated` branch) still populates the hub reactively
-    /// either way.
-    async fn refresh_quota_snapshot(&self, command: &str) {
-        if let Ok(result) = self.request("account/rateLimits/read", Value::Null).await {
-            if let Some(snapshot) = codex_quota_snapshot(&result["rateLimits"]) {
-                crate::engine_quota::report_for_command(snapshot, command);
-            }
-        }
     }
 
     /// Demux the server's stdout for the connection's lifetime: correlate replies
     /// by id, route notifications + approval requests to the owning thread.
-    async fn read_loop(&self, stdout: tokio::process::ChildStdout, quota_command: String) {
+    async fn read_loop(&self, stdout: tokio::process::ChildStdout) {
         let mut lines = BufReader::new(stdout).lines();
         while let Ok(Some(line)) = lines.next_line().await {
             match classify(&line) {
@@ -1055,40 +923,16 @@ impl Client {
                         let turn_id = params["turn"]["id"].as_str().unwrap_or("").to_string();
                         self.route_resolved(tid.as_deref(), ThreadMsg::TurnStarted { turn_id })
                             .await;
-                    } else if method == "serverRequest/resolved" {
-                        // The server cleared an open ask (e.g. on interrupt) — tell
-                        // the consumer to cancel the matching Needs-you card.
-                        self.route_resolved(
-                            tid.as_deref(),
-                            ThreadMsg::AskResolved { request_id: params["requestId"].clone() },
-                        )
-                        .await;
-                    } else if method == "account/rateLimits/updated" {
-                        // Issue #97: account-scoped, no threadId to route on (and
-                        // no chat row to render) — land straight in the quota hub
-                        // instead of going through ChatEvent/route_resolved.
-                        if let Some(snapshot) = codex_quota_snapshot(&params["rateLimits"]) {
-                            crate::engine_quota::report_for_command(snapshot, &quota_command);
-                        }
                     }
                 }
-                Incoming::ServerRequest { id, method, params } => {
-                    // Approval requests route to the owning thread. The headless
-                    // orchestrator normally runs with approvalPolicy=never and
-                    // defensively declines any anomaly using the method-specific
-                    // response shape. EVERY other server→client request also blocks
-                    // the turn until answered, but needs interactive content this
-                    // transport cannot collect — decline so the turn proceeds.
+                Incoming::ServerRequest { id, method, .. } => {
+                    // No approval or elicitation UI exists. Every blocking request
+                    // is declined inside the protocol client so no higher layer can
+                    // accidentally add an allow path.
                     if is_approval_request(&method) {
-                        let tid = params["threadId"].as_str().map(String::from);
-                        self.route_resolved(
-                            tid.as_deref(),
-                            ThreadMsg::Approval { id, method, params },
-                        )
-                        .await;
-                    } else {
-                        self.decline_server_request(&id, &method).await;
+                        eprintln!("[weftd] declined unexpected Codex approval request: {method}");
                     }
+                    self.decline_server_request(&id, &method).await;
                 }
                 Incoming::Other => {}
             }
@@ -1317,10 +1161,7 @@ impl Client {
             .await?;
         Ok(r["turnId"].as_str().unwrap_or(expected_turn_id).to_string())
     }
-    /// Answer a server→client request with a raw `result` payload. Each ask kind
-    /// has its own shape: approval `{decision}`, permissions `{permissions}`,
-    /// elicitation `{action}` — the caller builds the right one.
-    pub async fn reply_result(&self, id: &Value, result: Value) -> anyhow::Result<()> {
+    async fn reply_result(&self, id: &Value, result: Value) -> anyhow::Result<()> {
         let g = self.0.lock().await;
         let inner = g
             .as_ref()
@@ -1331,80 +1172,6 @@ impl Client {
             .send((line.into_bytes(), None))
             .map_err(|_| anyhow::anyhow!("codex app-server writer closed"))?;
         Ok(())
-    }
-
-    /// Answer an approval request. `decision` ∈ accept | acceptForSession | decline | cancel.
-    pub async fn reply_approval(&self, id: &Value, decision: &str) -> anyhow::Result<()> {
-        self.reply_result(id, json!({ "decision": decision })).await
-    }
-
-    /// Answer an approval request using the exact result schema for its method.
-    /// Generic permissions requests require `{permissions}` rather than the
-    /// `{decision}` used by command/file-change approvals.
-    pub async fn reply_approval_request(
-        &self,
-        id: &Value,
-        method: &str,
-        params: &Value,
-        allow: bool,
-    ) -> anyhow::Result<()> {
-        let is_permissions = method == "item/permissions/requestApproval";
-        let requested = params.get("permissions").cloned();
-        self.reply_result(
-            id,
-            codex_approval_reply(is_permissions, allow, requested),
-        )
-        .await
-    }
-}
-
-#[cfg(test)]
-impl Client {
-    /// Test-only stand-in connection (review round 4, P2's mutation-proofing
-    /// ask): registers a real, but trivial and no-IPC, short-lived child
-    /// process the same way [`Client::connect_session`] would, WITHOUT
-    /// spawning a real `codex app-server` binary or running its handshake.
-    /// Exists purely so an `engine.rs` test can put a genuine `Client` VALUE
-    /// into `EngineInner.codex_client` to exercise the take/shutdown wiring
-    /// AROUND it (`take_frozen_turn`'s atomic re-validation) — that wiring
-    /// only cares that `Option<Client>` is `Some` and that `.shutdown()`
-    /// works, never that the connection can actually talk app-server
-    /// protocol. Mirrors `proc_registry`'s own test helpers (`sh -c "sleep
-    /// …"` as a portable stand-in child — see its `null_cmd`). Never call
-    /// this outside `#[cfg(test)]`.
-    pub(crate) fn test_stub() -> Client {
-        let mut command = Command::new("sh");
-        command
-            .arg("-c")
-            .arg("sleep 30")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
-        let configured = crate::proc_registry::configure(
-            &mut command,
-            crate::proc_registry::Owner::other("codex-app-server-test-stub"),
-        );
-        // Test-only code (this whole impl is `#[cfg(test)]`) — the crate's
-        // no-panic rule (CLAUDE.md) governs PRODUCTION paths; a trivial `sh`
-        // spawn failing here would mean the test host itself is broken, so
-        // failing loudly beats silently handing back a misleadingly "already
-        // dead" client.
-        let child = command
-            .spawn()
-            .expect("spawn `sh` stub for codex_app_server test");
-        let reg = configured.register(&child);
-        let (write_tx, _write_rx) = mpsc::unbounded_channel();
-        Client(Arc::new(Mutex::new(Some(Inner {
-            command: "codex".to_string(),
-            write_tx,
-            next_id: 1,
-            pending: HashMap::new(),
-            threads: HashMap::new(),
-            active_turn: HashMap::new(),
-            _child: child,
-            _reg: reg,
-        }))))
     }
 }
 
@@ -1894,67 +1661,6 @@ mod tests {
     }
 
     #[test]
-    fn codex_quota_snapshot_reads_the_more_severe_window() {
-        use crate::engine_quota::QuotaStatus;
-        // Real-shaped `RateLimitSnapshot` (openai/codex app-server-protocol v2):
-        // a healthy primary (5h) window, secondary (7d weekly) approaching its cap.
-        let snapshot = codex_quota_snapshot(&json!({
-            "limitId": "codex",
-            "limitName": null,
-            "primary": {"usedPercent": 20, "windowDurationMins": 300, "resetsAt": 1_700_003_600},
-            "secondary": {"usedPercent": 85, "windowDurationMins": 10080, "resetsAt": 1_700_500_000},
-            "credits": null,
-            "individualLimit": null,
-            "spendControlReached": null,
-            "planType": "plus",
-            "rateLimitReachedType": null,
-        }))
-        .expect("usable snapshot");
-        assert_eq!(snapshot.tool, "codex");
-        assert_eq!(snapshot.status, QuotaStatus::Warning);
-        assert_eq!(snapshot.used_percent, Some(85));
-        assert_eq!(snapshot.resets_at, Some(1_700_500_000));
-        assert_eq!(snapshot.window_label.as_deref(), Some("secondary"));
-    }
-
-    #[test]
-    fn codex_quota_snapshot_reached_type_wins_even_over_a_low_percent() {
-        use crate::engine_quota::QuotaStatus;
-        // A sparse rolling update: the account just got rejected, but this
-        // particular push carries a stale/low usedPercent alongside it — the
-        // reached-type flag must still win (see the function's own doc).
-        let snapshot = codex_quota_snapshot(&json!({
-            "primary": {"usedPercent": 12, "resetsAt": null},
-            "secondary": null,
-            "rateLimitReachedType": "rate_limit_reached",
-        }))
-        .expect("usable snapshot");
-        assert_eq!(snapshot.status, QuotaStatus::Exceeded);
-    }
-
-    #[test]
-    fn codex_quota_snapshot_none_for_empty_or_malformed_payload() {
-        assert!(codex_quota_snapshot(&json!(null)).is_none());
-        assert!(codex_quota_snapshot(&json!({})).is_none());
-        assert!(codex_quota_snapshot(&json!({"primary": null, "secondary": null, "rateLimitReachedType": null})).is_none());
-        // Malformed usedPercent (not a number) on both windows: nothing usable.
-        assert!(codex_quota_snapshot(&json!({"primary": {"usedPercent": "oops"}})).is_none());
-    }
-
-    #[test]
-    fn codex_quota_snapshot_single_window_only() {
-        use crate::engine_quota::QuotaStatus;
-        // Only primary present (a freshly-created account has no secondary yet).
-        // A full percentage is advisory until the provider sends a reached type.
-        let snapshot = codex_quota_snapshot(&json!({
-            "primary": {"usedPercent": 100, "resetsAt": 1_700_100_000},
-        }))
-        .expect("usable snapshot");
-        assert_eq!(snapshot.status, QuotaStatus::Warning);
-        assert_eq!(snapshot.window_label.as_deref(), Some("primary"));
-    }
-
-    #[test]
     fn only_real_tool_item_types_open_rows() {
         // The tool-call item types per the 0.139.0 ThreadItem union — note the collab
         // type is `collabAgentToolCall` (NOT the README's `collabToolCall`), and
@@ -2066,8 +1772,7 @@ mod tests {
 
     #[test]
     fn elicitation_is_not_an_approval() {
-        // Elicitation blocks the turn but is NOT an approval: it's declined in the
-        // read_loop (we can't collect its content), not routed to the Ask Bridge.
+        // Elicitation blocks the turn but is not an approval; both are declined.
         assert!(is_elicitation_request("mcpServer/elicitation/request"));
         assert!(!is_approval_request("mcpServer/elicitation/request"));
         // requestUserInput is likewise not an approval → declined generically.
@@ -2079,6 +1784,18 @@ mod tests {
     fn decline_responses_match_schema() {
         // Verified vs the 0.139.0 app-server JSON schema.
         assert_eq!(
+            decline_response("item/commandExecution/requestApproval"),
+            Some(json!({ "decision": "decline" }))
+        );
+        assert_eq!(
+            decline_response("item/fileChange/requestApproval"),
+            Some(json!({ "decision": "decline" }))
+        );
+        assert_eq!(
+            decline_response("item/permissions/requestApproval"),
+            Some(json!({ "permissions": {} }))
+        );
+        assert_eq!(
             decline_response("mcpServer/elicitation/request"),
             Some(json!({ "action": "decline" }))
         );
@@ -2088,21 +1805,6 @@ mod tests {
         );
         // No in-protocol decline for an unknown blocking request → JSON-RPC error.
         assert_eq!(decline_response("item/tool/call"), None);
-    }
-
-    #[test]
-    fn approval_reply_uses_per_kind_shape() {
-        // A permission deny MUST be `{permissions:{}}` — a `{decision}` reply no-ops
-        // the grant and hangs the turn (the curator's bug this helper de-dupes).
-        assert_eq!(codex_approval_reply(true, false, None), json!({ "permissions": {} }));
-        // Permission allow echoes the requested profile.
-        assert_eq!(
-            codex_approval_reply(true, true, Some(json!({ "disk": "read" }))),
-            json!({ "permissions": { "disk": "read" } })
-        );
-        // Command / file-change asks use `{decision}`.
-        assert_eq!(codex_approval_reply(false, false, None), json!({ "decision": "decline" }));
-        assert_eq!(codex_approval_reply(false, true, None), json!({ "decision": "accept" }));
     }
 
     #[test]

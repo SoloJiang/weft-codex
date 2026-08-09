@@ -68,9 +68,10 @@ Codex Desktop（官方，不修改安装包）
   引擎事件改为 app-server 线程事件 + 明确的验收动作，五态不变
   （queued | planning | working | review | done）。
 - `session` 实体废止（被 Codex 线程取代）；历史数据随客户端一起退役。
-- `lead_message` / bus 记录保留。
-- 迁移：一次性迁移脚本为存量 open issue 标记 `legacy`，不为其创建 Codex
-  线程；新流程只服务新 issue。
+- 新流程保留 durable bus 记录；聊天历史由 Codex 原生线程持有，不再新增
+  `lead_message` transcript store。
+- 数据边界：weft-codex 使用独立 `~/.weft-codex` 与 fresh schema，不读取、迁移
+  或修改原 Weft 数据。旧 Weft 数据迁移明确不在本项目范围。
 
 ## 5. 会话引擎替换：lead_chat → orchestrator
 
@@ -410,7 +411,26 @@ interface HostContextV1 {
 - 评论、附件、issue 关系、乐观并发版本是可选的后续基础设施，但不得替代
   lead/worker、bus、worktree 与 curator 数据模型。
 
+## 7.8 独立发布与回退
+
+发布物不依赖源码 checkout：
+
+- Host 由 Bun 编译为单个 macOS 原生可执行文件，用户不需要安装 Node；
+- 同包携带 release `weftd` 与构建后的 React assets；Host 根据自身可执行文件
+  位置解析 archive layout；
+- 不发布第二个 `.app`。Host 是无窗口、无 Dock 图标的后台进程，只负责启动
+  `/Applications/ChatGPT.app` 中的官方 Codex 并接入；发行包保留 `doctor`、
+  `probe`、`attach` 等诊断入口；
+- 用户入口统一为无窗口命令 `weft-codex`：无参数完成 weftd、官方 Codex 启动和
+  注入并默认进入 Weft mode；`weft-codex --safe-mode` 不启动 weftd、不注入 UI，
+  只打开专用 profile 的官方 Codex；退出 Host 会恢复 CSP 并回收自己创建的进程；
+- 本地构建使用 ad-hoc 签名。对外分发必须在相同产物上增加 Developer ID 签名、
+  notarization 与发布渠道校验，不把重签官方 Codex 纳入任何步骤。
+
 ## 8. 删除清单
+
+这是 **weft-codex 新项目的排除清单**，表示这些能力不得进入新 runtime；不要求、
+也不授权修改或清理原 `weft` 仓库：
 
 - `src/session/` 全部（ChatTimeline / WorkerConversation / LeadTab /
   SessionInfoPanel / transcriptBits / MindMapEditor 等）
@@ -438,10 +458,10 @@ Desktop 相关（1、3）仍需运行时闭环；app-server 相关（2、4、5�
    React DOM 替换后的单实例重挂载、双 OOPIF handshake、CSP bypass 可见/退出恢复
    及独立进程回收。
 2. weftd 经 app-server 创建的线程出现在 Desktop 线程列表，事件订阅正常。
-   **PASS（store 层）**：`thread/start` 后 `session_index.jsonl` 同步写入、
+   **PASS**：`thread/start` 后 `session_index.jsonl` 同步写入、
    `state_*.sqlite threads` 表异步落库（秒~分钟级滞后，`thread/list` 读该表），
-   `thread/resume` 正常。Desktop 视觉确认待做（遗留两个名为
-   `weft-spike-20260808` 的测试线程供人工查看）。
+   `thread/resume` 正常；真实 Lead/Worker 线程已在 Desktop 原生列表及主区打开，
+   daemon 重启后的 watcher 与 bus delivery 也已恢复。
 3. 从扩展内以编程方式跳转指定线程。**PASS**：`codex` scheme
    已在 ChatGPT.app Info.plist 注册；app bundle 内确认路由
    `codex://threads/<threadId>` 被官方 Chrome 扩展的 "Open in app" 用于
@@ -480,9 +500,14 @@ Desktop 相关（1、3）仍需运行时闭环；app-server 相关（2、4、5�
 - Stage 3.5：Desktop adapter（**已完成 2026-08-09**）：安装检测、语义 probe、
   三档兼容分类、专用 profile Launcher、document-start 重挂载、CSP bypass 显示与
   恢复、原生第三模式、双 Surface、Host Context、原生 Thread 切换均已真机闭环。
-- Stage 4：切换（**进行中**）——新 issue 已全走新流程，仓库录入/自动拆解已
-  切换，Desktop adapter 已完成；待存量 workspace 迁移、停发 Tauri 客户端与
-  删除清单落地后完成。
+- Stage 4：独立交付（**已完成 2026-08-09**）——用户入口收敛为无窗口
+  `weft-codex` 命令，不发布第二个 App；单命令已从最终 archive 真机启动官方
+  Codex、weftd 并完成 `tier=weft-mode` 双 surface 注入。`--safe-mode` 实测只启动
+  官方 Codex、不启动 weftd；退出后 CDP/weftd 端口与专用 profile 进程均为零。
+  Release pipeline 通过 55 个 Codex app-server、46 个 core、25 个 Launcher 测试，
+  UI typecheck/build、daemon HTTP + MCP roundtrip、签名与 SHA-256 均通过。runtime
+  已移除其他引擎 parser/routing 与可接受 approval 的 API；旧数据及原 Weft 仓库
+  明确不在范围内。
 
 ## 11. 风险与对冲
 

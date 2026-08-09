@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process"
+import { existsSync } from "node:fs"
 import { access, mkdir } from "node:fs/promises"
 import { createServer } from "node:net"
 import { homedir } from "node:os"
@@ -22,16 +23,64 @@ export interface WeftdOptions {
   homeDir?: string | undefined
 }
 
+export interface RuntimeLayout {
+  weftdPath: string
+  webDir: string
+  source: "override" | "bundle" | "source"
+}
+
+interface RuntimeLayoutOptions {
+  executablePath?: string | undefined
+  moduleUrl?: string | undefined
+  runtimeRoot?: string | undefined
+  exists?: ((candidate: string) => boolean) | undefined
+}
+
 export function defaultProfileDir(): string {
   return path.join(homedir(), ".weft-codex", "desktop-profile")
 }
 
+function layoutAt(root: string, source: RuntimeLayout["source"]): RuntimeLayout {
+  return {
+    weftdPath: path.join(root, "bin", "weftd"),
+    webDir: path.join(root, "share", "weft-codex", "web"),
+    source,
+  }
+}
+
+/** Resolve colocated runtime files before falling back to the source checkout. */
+export function resolveRuntimeLayout(options: RuntimeLayoutOptions = {}): RuntimeLayout {
+  const exists = options.exists ?? existsSync
+  const executablePath = options.executablePath ?? process.execPath
+  const moduleUrl = options.moduleUrl ?? import.meta.url
+
+  if (options.runtimeRoot) {
+    return layoutAt(path.resolve(options.runtimeRoot), "override")
+  }
+
+  const archiveRoot = path.dirname(path.dirname(executablePath))
+  const archiveLayout = layoutAt(archiveRoot, "bundle")
+  if (exists(archiveLayout.weftdPath) && exists(path.join(archiveLayout.webDir, "index.html"))) {
+    return archiveLayout
+  }
+
+  const modulePath = fileURLToPath(moduleUrl)
+  const sourceRoot = path.resolve(path.dirname(modulePath), "../..")
+  const releaseDaemon = path.join(sourceRoot, "target", "release", "weftd")
+  const debugDaemon = path.join(sourceRoot, "target", "debug", "weftd")
+  return {
+    weftdPath: exists(debugDaemon) ? debugDaemon : releaseDaemon,
+    webDir: path.join(sourceRoot, "crates", "daemon", "web"),
+    source: "source",
+  }
+}
+
 export function defaultWeftdPath(): string {
-  return fileURLToPath(new URL("../../target/debug/weftd", import.meta.url))
+  return resolveRuntimeLayout({ runtimeRoot: process.env.WEFT_CODEX_RUNTIME_ROOT }).weftdPath
 }
 
 export function defaultWebDir(): string {
-  return fileURLToPath(new URL("../../crates/daemon/web", import.meta.url))
+  return resolveRuntimeLayout({ runtimeRoot: process.env.WEFT_CODEX_RUNTIME_ROOT }).webDir
 }
 
 export function codexLaunchArgs(profileDir: string, debugPort: number): string[] {

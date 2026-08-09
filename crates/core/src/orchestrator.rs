@@ -822,8 +822,8 @@ fn join_envelopes(msgs: &[Msg]) -> String {
 }
 
 /// Per-thread notification fold: turn completion → kanban state; anomalous
-/// approval asks → defensive decline (approvalPolicy is `never`, so an ask
-/// reaching us is itself noteworthy); quota → attention flag.
+/// quota → attention flag. Blocking approval/elicitation requests are always
+/// declined inside the app-server protocol client and never reach this layer.
 async fn watch(
     orch: Orchestrator,
     client: Client,
@@ -857,15 +857,6 @@ async fn watch(
                         json!({ "threadId": thread_id }),
                     );
                 }
-            }
-            ThreadMsg::Approval { id, method, params } => {
-                let _ = client
-                    .reply_approval_request(&id, &method, &params, false)
-                    .await;
-                events::emit(
-                    "approval.declined",
-                    json!({ "threadId": thread_id, "method": method }),
-                );
             }
             ThreadMsg::QuotaExceeded => {
                 if let WatchTarget::Direction(id) = target {

@@ -45,7 +45,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::process::{Child, Command};
 
 /// 每个受管子进程携带的实例标记 env。codex 会清洗它(见模块文档),故它**不是**主
-/// 口径;对不清洗环境的 spawner(opencode/preview 等)及调试/未来跨重启仍有价值。
+/// 口径；对调试与未来跨重启清理仍有价值。
 const ENV_INSTANCE: &str = "WEFT_INSTANCE_ID";
 /// 属主标记 env(便于调试 / T2 按属主定向)。
 const ENV_OWNER: &str = "WEFT_PROC_OWNER";
@@ -117,18 +117,6 @@ macro_rules! owner_kinds {
 owner_kinds! {
     /// 全局(app-scoped)codex app-server。
     GlobalAppServer => "global_app_server",
-    /// 某个 worker 会话。
-    Session => "session",
-    /// 某个 lead thread 会话。
-    LeadThread => "lead_thread",
-    /// 仓库图谱扫描(每仓库/关系一发,短命)。
-    Curator => "curator",
-    /// opencode server。
-    Opencode => "opencode",
-    /// rewind 预览静态服务。
-    Preview => "preview",
-    /// 探测(版本/能力,短命)。
-    Probe => "probe",
     /// 其它 / 测试。
     Other => "other",
 }
@@ -147,24 +135,6 @@ impl Owner {
     }
     pub fn global_app_server() -> Owner {
         Owner::new(OwnerKind::GlobalAppServer, "")
-    }
-    pub fn session(id: impl Into<String>) -> Owner {
-        Owner::new(OwnerKind::Session, id)
-    }
-    pub fn lead_thread(id: impl Into<String>) -> Owner {
-        Owner::new(OwnerKind::LeadThread, id)
-    }
-    pub fn curator() -> Owner {
-        Owner::new(OwnerKind::Curator, "")
-    }
-    pub fn opencode(id: impl Into<String>) -> Owner {
-        Owner::new(OwnerKind::Opencode, id)
-    }
-    pub fn preview(id: impl Into<String>) -> Owner {
-        Owner::new(OwnerKind::Preview, id)
-    }
-    pub fn probe() -> Owner {
-        Owner::new(OwnerKind::Probe, "")
     }
     pub fn other(id: impl Into<String>) -> Owner {
         Owner::new(OwnerKind::Other, id)
@@ -1878,12 +1848,6 @@ mod tests {
             OwnerKind::all(),
             vec![
                 OwnerKind::GlobalAppServer,
-                OwnerKind::Session,
-                OwnerKind::LeadThread,
-                OwnerKind::Curator,
-                OwnerKind::Opencode,
-                OwnerKind::Preview,
-                OwnerKind::Probe,
                 OwnerKind::Other,
             ]
         );
@@ -1944,15 +1908,15 @@ mod tests {
         let _g = test_guard();
         let mut cmd = null_cmd("sh");
         cmd.arg("-c").arg("sleep 30");
-        let cfg = configure(&mut cmd, Owner::session("s1"));
+        let cfg = configure(&mut cmd, Owner::other("codex-session"));
         let mut child = cmd.spawn().expect("spawn");
         let reg = cfg.register(&child);
         tokio::time::sleep(Duration::from_millis(150)).await;
 
         let counts = instance_owner_counts();
         assert!(
-            counts.iter().any(|c| c.kind == "session" && c.count >= 1),
-            "the registered session-owned child must show up under the session kind"
+            counts.iter().any(|c| c.kind == "other" && c.count >= 1),
+            "the registered child must show up under the other kind"
         );
         assert!(
             counts.iter().all(|c| c.count > 0),

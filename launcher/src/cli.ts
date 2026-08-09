@@ -1,15 +1,22 @@
 #!/usr/bin/env node
 
 import type { ChildProcess } from "node:child_process"
+import { constants as fsConstants } from "node:fs"
+import { access } from "node:fs/promises"
+import path from "node:path"
 
+import { hostCommand } from "./arguments.js"
 import { inspectCodexInstall } from "./codex-install.js"
 import { CdpSession, listCdpTargets, selectRendererTarget } from "./cdp.js"
 import { pickRepositoryDirectories } from "./native-dialogs.js"
 import { readHostPreferences, writeHostPreferences } from "./preferences.js"
 import {
   defaultProfileDir,
+  defaultWebDir,
+  defaultWeftdPath,
   ensureWeftd,
   reserveLoopbackPort,
+  resolveRuntimeLayout,
   spawnCodex,
   stopProcess,
   waitForHttp,
@@ -18,6 +25,8 @@ import {
 import { probeRenderer } from "./probes.js"
 import { RendererSupervisor, type RendererHostEvent, type RendererReadySnapshot } from "./renderer-host.js"
 import type { HostMode } from "./renderer-agent.js"
+
+const HOST_VERSION = "0.1.0"
 
 function option(name: string): string | undefined {
   const prefix = `--${name}=`
@@ -48,6 +57,70 @@ async function inspectInstall(): Promise<void> {
   process.stdout.write(`${JSON.stringify(install, null, 2)}\n`)
 }
 
+interface DoctorCheck {
+  id: string
+  ok: boolean
+  detail: string
+}
+
+async function pathCheck(id: string, candidate: string, mode: number): Promise<DoctorCheck> {
+  try {
+    await access(candidate, mode)
+    return { id, ok: true, detail: candidate }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return { id, ok: false, detail: `${candidate}: ${message}` }
+  }
+}
+
+function runtimeCheck(): DoctorCheck {
+  const bunVersion = (process.versions as NodeJS.ProcessVersions & { bun?: string }).bun
+  if (bunVersion) return { id: "runtime", ok: true, detail: `Bun ${bunVersion} compiled host` }
+  const major = Number(process.versions.node.split(".")[0])
+  return {
+    id: "runtime",
+    ok: Number.isInteger(major) && major >= 22,
+    detail: `Node ${process.versions.node}; Node 22 or newer is required`,
+  }
+}
+
+async function doctor(): Promise<void> {
+  const layout = resolveRuntimeLayout({ runtimeRoot: process.env.WEFT_CODEX_RUNTIME_ROOT })
+  const weftdPath = option("weftd-path") ?? defaultWeftdPath()
+  const webDir = option("web-dir") ?? defaultWebDir()
+  const checks: DoctorCheck[] = [
+    runtimeCheck(),
+    await pathCheck("weftd", weftdPath, fsConstants.X_OK),
+    await pathCheck("web", path.join(webDir, "index.html"), fsConstants.R_OK),
+  ]
+  try {
+    const install = await inspectCodexInstall(option("app-path"))
+    checks.push({
+      id: "codex",
+      ok: install.bundleId === "com.openai.codex",
+      detail: `${install.appPath} ${install.version} (${install.build}) · ${install.bundleId}`,
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    checks.push({ id: "codex", ok: false, detail: message })
+  }
+  const ok = checks.every((check) => check.ok)
+  process.stdout.write(`${JSON.stringify({
+    ok,
+    version: HOST_VERSION,
+    layout,
+    checks,
+  }, null, 2)}\n`)
+  if (!ok) process.exitCode = 1
+}
+
+function help(): void {
+  process.stdout.write(`weft-codex ${HOST_VERSION}\n\n`)
+  process.stdout.write("Usage: weft-codex [start|doctor|inspect-install|probe|attach] [options]\n")
+  process.stdout.write("Running without a command starts a managed Codex instance in Weft mode.\n")
+  process.stdout.write("Use --safe-mode to launch the isolated official Codex without weftd or UI injection.\n")
+}
+
 async function probe(): Promise<void> {
   const endpoint = option("endpoint") ?? "http://127.0.0.1:9222"
   const install = await inspectCodexInstall(option("app-path"))
@@ -69,17 +142,17 @@ function publicTarget(target: { id: string; title: string; url: string }) {
 
 function eventLogger(event: RendererHostEvent): void {
   if (event.type === "mode.changed" || event.type === "thread.open.missing") {
-    process.stderr.write(`[weft-codex-host] ${event.type} ${JSON.stringify(event)}\n`)
+    process.stderr.write(`[weft-codex] ${event.type} ${JSON.stringify(event)}\n`)
   }
 }
 
 function readyLogger(snapshot: RendererReadySnapshot): void {
   if (snapshot.safeMode) {
-    process.stderr.write(`[weft-codex-host] safe mode: ${snapshot.reason ?? "unknown compatibility failure"}\n`)
+    process.stderr.write(`[weft-codex] safe mode: ${snapshot.reason ?? "unknown compatibility failure"}\n`)
     return
   }
   process.stderr.write(
-    `[weft-codex-host] renderer ready: tier=${snapshot.probe.tier} mode=${snapshot.status?.mode ?? "unknown"} cspBypass=${snapshot.status?.cspBypass ?? false}\n`,
+    `[weft-codex] renderer ready: tier=${snapshot.probe.tier} mode=${snapshot.status?.mode ?? "unknown"} cspBypass=${snapshot.status?.cspBypass ?? false}\n`,
   )
 }
 
@@ -103,12 +176,12 @@ async function runHost(endpoint: string, ownedCodex: SpawnedProcess | null): Pro
         .then(() => writeHostPreferences({ version: 1, mode: event.mode as HostMode }, preferencesPath))
         .catch((error: unknown) => {
           const message = error instanceof Error ? error.message : String(error)
-          process.stderr.write(`[weft-codex-host] preference write failed: ${message}\n`)
+          process.stderr.write(`[weft-codex] preference write failed: ${message}\n`)
         })
     },
     onReady: readyLogger,
     onWarning(message) {
-      process.stderr.write(`[weft-codex-host] ${message}\n`)
+      process.stderr.write(`[weft-codex] ${message}\n`)
     },
     pickRepositories: pickRepositoryDirectories,
   })
@@ -146,18 +219,26 @@ async function attach(): Promise<void> {
 
 async function start(): Promise<void> {
   const install = await inspectCodexInstall(option("app-path"))
-  const daemon = await ensureWeftd({
-    url: option("weftd-url"),
-    executablePath: option("weftd-path"),
-    webDir: option("web-dir"),
-    homeDir: option("weft-home"),
-  })
+  const safeMode = flag("safe-mode")
+  const daemon = safeMode
+    ? null
+    : await ensureWeftd({
+      url: option("weftd-url"),
+      executablePath: option("weftd-path"),
+      webDir: option("web-dir"),
+      homeDir: option("weft-home"),
+    })
   let codex: SpawnedProcess | null = null
   try {
     const debugPort = positivePort(option("debug-port")) ?? await reserveLoopbackPort()
     codex = await spawnCodex(install, option("profile-dir") ?? defaultProfileDir(), debugPort)
     const endpoint = `http://127.0.0.1:${debugPort}`
     await waitForHttp(new URL("/json/version", endpoint).href, 30_000)
+    if (safeMode) {
+      process.stdout.write(`${JSON.stringify({ endpoint, safeMode: true }, null, 2)}\n`)
+      await waitForShutdown(codex.child)
+      return
+    }
     await runHost(endpoint, codex)
   } finally {
     await stopProcess(codex)
@@ -183,7 +264,19 @@ function waitForShutdown(child?: ChildProcess): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const command = process.argv[2] ?? "inspect-install"
+  const command = hostCommand(process.argv)
+  if (command === "--version" || command === "version") {
+    process.stdout.write(`${HOST_VERSION}\n`)
+    return
+  }
+  if (command === "--help" || command === "help") {
+    help()
+    return
+  }
+  if (command === "doctor") {
+    await doctor()
+    return
+  }
   if (command === "inspect-install") {
     await inspectInstall()
     return
@@ -205,6 +298,6 @@ async function main(): Promise<void> {
 
 main().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error)
-  process.stderr.write(`weft-codex-host: ${message}\n`)
+  process.stderr.write(`weft-codex: ${message}\n`)
   process.exitCode = 1
 })
