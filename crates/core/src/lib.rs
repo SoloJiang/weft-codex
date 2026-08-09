@@ -11,6 +11,7 @@ pub mod curator;
 pub mod events;
 pub mod mcp;
 pub mod orchestrator;
+pub mod repo_intake;
 pub mod runtime;
 pub mod store;
 pub mod worktree;

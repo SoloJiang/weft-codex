@@ -24,6 +24,8 @@ CREATE TABLE IF NOT EXISTS repo_ref (
     name TEXT NOT NULL,
     path TEXT NOT NULL,
     base_ref TEXT NOT NULL DEFAULT '',
+    remote_url TEXT NOT NULL DEFAULT '',
+    base_ref_is_default INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS issue (
@@ -112,6 +114,38 @@ pub fn now_unix() -> String {
     format!("{secs}")
 }
 
+/// Compare common HTTPS/SSH spellings of the same Git remote without making
+/// an empty or local-only remote match anything else. Host names are
+/// case-insensitive; repository paths are preserved.
+fn git_url_key(value: &str) -> String {
+    let value = value.trim().trim_end_matches('/');
+    if value.is_empty() {
+        return String::new();
+    }
+
+    let (host, path) = if let Some((_, rest)) = value.split_once("://") {
+        let Some((authority, path)) = rest.split_once('/') else {
+            return value.to_string();
+        };
+        let host = authority.rsplit('@').next().unwrap_or(authority);
+        (host, path)
+    } else if let Some((authority, path)) = value.split_once(':') {
+        if authority.contains('@') && !authority.contains('/') {
+            (authority.rsplit('@').next().unwrap_or(authority), path)
+        } else {
+            return value.trim_end_matches(".git").to_string();
+        }
+    } else {
+        return value.trim_end_matches(".git").to_string();
+    };
+
+    let path = path.trim_matches('/').trim_end_matches(".git");
+    if host.is_empty() || path.is_empty() {
+        return value.trim_end_matches(".git").to_string();
+    }
+    format!("{}/{path}", host.to_ascii_lowercase())
+}
+
 /// Add `column` to `table` when missing (idempotent). `definition` is the
 /// full column type + constraints, e.g. "TEXT NOT NULL DEFAULT ''".
 async fn ensure_column(
@@ -129,10 +163,12 @@ async fn ensure_column(
         .filter_map(|r| r.try_get::<String, _>("name").ok())
         .any(|name| name == column);
     if !exists {
-        sqlx::query(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"))
-            .execute(pool)
-            .await
-            .with_context(|| format!("alter {table} add {column}"))?;
+        sqlx::query(&format!(
+            "ALTER TABLE {table} ADD COLUMN {column} {definition}"
+        ))
+        .execute(pool)
+        .await
+        .with_context(|| format!("alter {table} add {column}"))?;
     }
     Ok(())
 }
@@ -152,6 +188,8 @@ pub struct RepoRow {
     pub name: String,
     pub path: String,
     pub base_ref: String,
+    pub remote_url: String,
+    pub base_ref_is_default: i64,
     pub created_at: String,
 }
 
@@ -249,6 +287,14 @@ impl Store {
         ensure_column(&pool, "direction", "spec", "TEXT NOT NULL DEFAULT ''").await?;
         ensure_column(&pool, "workspace", "repo_map", "TEXT NOT NULL DEFAULT ''").await?;
         ensure_column(&pool, "issue", "kind", "TEXT NOT NULL DEFAULT 'feature'").await?;
+        ensure_column(&pool, "repo_ref", "remote_url", "TEXT NOT NULL DEFAULT ''").await?;
+        ensure_column(
+            &pool,
+            "repo_ref",
+            "base_ref_is_default",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+        .await?;
         Ok(Self { pool })
     }
 
@@ -274,24 +320,134 @@ impl Store {
         path: &str,
         base_ref: &str,
     ) -> anyhow::Result<i64> {
+        let (repo, _) = self
+            .register_repo(workspace_id, name, path, base_ref, "", false)
+            .await?;
+        Ok(repo.id)
+    }
+
+    /// Register a canonical local repository idempotently within a workspace.
+    /// Matching paths or normalized non-empty origin URLs return the existing
+    /// row. A newly vetted default branch repairs stale registration metadata.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn register_repo(
+        &self,
+        workspace_id: i64,
+        name: &str,
+        path: &str,
+        base_ref: &str,
+        remote_url: &str,
+        base_ref_is_default: bool,
+    ) -> anyhow::Result<(RepoRow, bool)> {
+        let workspace_exists =
+            sqlx::query_scalar::<_, i64>("SELECT id FROM workspace WHERE id = ?")
+                .bind(workspace_id)
+                .fetch_optional(&self.pool)
+                .await
+                .context("register_repo workspace")?
+                .is_some();
+        if !workspace_exists {
+            anyhow::bail!("unknown workspace {workspace_id}");
+        }
+        let name = name.trim();
+        let path = path.trim();
+        if name.is_empty() || path.is_empty() {
+            anyhow::bail!("invalid repository: name and path are required");
+        }
+
+        let existing = self.list_repos(workspace_id).await?;
+        let remote_key = git_url_key(remote_url);
+        let duplicate = existing.into_iter().find(|repo| {
+            if repo.path == path {
+                return true;
+            }
+            !remote_key.is_empty() && git_url_key(&repo.remote_url) == remote_key
+        });
+        if let Some(repo) = duplicate {
+            let repair_default =
+                base_ref_is_default && (repo.base_ref_is_default == 0 || repo.base_ref != base_ref);
+            let repair_fallback = repo.base_ref.is_empty() && !base_ref.is_empty();
+            let repair_remote = !remote_url.is_empty() && repo.remote_url != remote_url;
+            if repair_default || repair_fallback || repair_remote {
+                let next_base = if repair_default || repair_fallback {
+                    base_ref
+                } else {
+                    repo.base_ref.as_str()
+                };
+                let next_remote = if repair_remote {
+                    remote_url
+                } else {
+                    repo.remote_url.as_str()
+                };
+                let next_default = if repair_default {
+                    1
+                } else {
+                    repo.base_ref_is_default
+                };
+                sqlx::query(
+                    "UPDATE repo_ref SET base_ref = ?, remote_url = ?,
+                     base_ref_is_default = ? WHERE id = ?",
+                )
+                .bind(next_base)
+                .bind(next_remote)
+                .bind(next_default)
+                .bind(repo.id)
+                .execute(&self.pool)
+                .await
+                .context("repair registered repo metadata")?;
+                let repaired = self
+                    .get_repo(repo.id)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("unknown repo {} after update", repo.id))?;
+                return Ok((repaired, false));
+            }
+            return Ok((repo, false));
+        }
+
         let row = sqlx::query(
-            "INSERT INTO repo_ref (workspace_id, name, path, base_ref, created_at)
-             VALUES (?, ?, ?, ?, ?) RETURNING id",
+            "INSERT INTO repo_ref
+             (workspace_id, name, path, base_ref, remote_url, base_ref_is_default, created_at)
+             SELECT ?, ?, ?, ?, ?, ?, ?
+             WHERE NOT EXISTS (
+               SELECT 1 FROM repo_ref WHERE workspace_id = ? AND path = ?
+             )
+             RETURNING id",
         )
         .bind(workspace_id)
         .bind(name)
         .bind(path)
         .bind(base_ref)
+        .bind(remote_url)
+        .bind(i64::from(base_ref_is_default))
         .bind(now_unix())
-        .fetch_one(&self.pool)
+        .bind(workspace_id)
+        .bind(path)
+        .fetch_optional(&self.pool)
         .await
-        .context("add_repo")?;
-        Ok(row.get::<i64, _>("id"))
+        .context("register_repo")?;
+        let id = match row {
+            Some(row) => row.get::<i64, _>("id"),
+            None => {
+                let existing = self
+                    .list_repos(workspace_id)
+                    .await?
+                    .into_iter()
+                    .find(|repo| repo.path == path)
+                    .ok_or_else(|| anyhow::anyhow!("repository registration raced for {path}"))?;
+                return Ok((existing, false));
+            }
+        };
+        let repo = self
+            .get_repo(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("unknown repo {id} after insert"))?;
+        Ok((repo, true))
     }
 
     pub async fn get_repo(&self, id: i64) -> anyhow::Result<Option<RepoRow>> {
         sqlx::query_as::<_, RepoRow>(
-            "SELECT id, workspace_id, name, path, base_ref, created_at
+            "SELECT id, workspace_id, name, path, base_ref, remote_url,
+                    base_ref_is_default, created_at
              FROM repo_ref WHERE id = ?",
         )
         .bind(id)
@@ -311,7 +467,8 @@ impl Store {
 
     pub async fn list_repos(&self, workspace_id: i64) -> anyhow::Result<Vec<RepoRow>> {
         sqlx::query_as::<_, RepoRow>(
-            "SELECT id, workspace_id, name, path, base_ref, created_at
+            "SELECT id, workspace_id, name, path, base_ref, remote_url,
+                    base_ref_is_default, created_at
              FROM repo_ref WHERE workspace_id = ? ORDER BY id",
         )
         .bind(workspace_id)
@@ -440,13 +597,11 @@ impl Store {
     }
 
     pub async fn list_directions(&self, issue_id: i64) -> anyhow::Result<Vec<DirectionRow>> {
-        sqlx::query_as::<_, DirectionRow>(
-            "SELECT * FROM direction WHERE issue_id = ? ORDER BY id",
-        )
-        .bind(issue_id)
-        .fetch_all(&self.pool)
-        .await
-        .context("list_directions")
+        sqlx::query_as::<_, DirectionRow>("SELECT * FROM direction WHERE issue_id = ? ORDER BY id")
+            .bind(issue_id)
+            .fetch_all(&self.pool)
+            .await
+            .context("list_directions")
     }
 
     /// Directions with a live Codex thread (boot re-attach source).
@@ -839,11 +994,92 @@ mod tests {
     #[tokio::test]
     async fn bus_roundtrip() {
         let (store, _dir) = fixture().await;
-        let id = store.bus_append(7, "lead", "3", "hello").await.expect("append");
+        let id = store
+            .bus_append(7, "lead", "3", "hello")
+            .await
+            .expect("append");
         assert!(id > 0);
         let inbox = store.bus_inbox(7, "3").await.expect("inbox");
         assert_eq!(inbox.len(), 1);
         assert_eq!(inbox[0].text, "hello");
+    }
+
+    #[test]
+    fn git_remote_key_matches_https_and_ssh() {
+        assert_eq!(
+            git_url_key("https://github.com/example/product.git"),
+            git_url_key("git@github.com:example/product.git")
+        );
+        assert_eq!(git_url_key(""), "");
+    }
+
+    #[tokio::test]
+    async fn repo_registration_is_workspace_idempotent_and_repairs_default() {
+        let (store, _dir) = fixture().await;
+        let ws = store.create_workspace("W", "w").await.expect("workspace");
+        let (first, inserted) = store
+            .register_repo(
+                ws,
+                "product",
+                "/tmp/product-a",
+                "feature/current",
+                "git@github.com:example/product.git",
+                false,
+            )
+            .await
+            .expect("register");
+        assert!(inserted);
+
+        let (same, inserted) = store
+            .register_repo(
+                ws,
+                "renamed checkout",
+                "/tmp/product-b",
+                "develop",
+                "https://github.com/example/product.git",
+                true,
+            )
+            .await
+            .expect("dedupe");
+        assert!(!inserted);
+        assert_eq!(same.id, first.id);
+        assert_eq!(same.path, "/tmp/product-a");
+        assert_eq!(same.base_ref, "develop");
+        assert_eq!(same.base_ref_is_default, 1);
+        assert_eq!(store.list_repos(ws).await.expect("list").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn repo_metadata_columns_are_added_to_existing_database() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let path = dir.path().join("t.db");
+        let store = Store::open(&path).await.expect("open");
+        sqlx::query("ALTER TABLE repo_ref DROP COLUMN remote_url")
+            .execute(&store.pool)
+            .await
+            .expect("drop remote_url");
+        sqlx::query("ALTER TABLE repo_ref DROP COLUMN base_ref_is_default")
+            .execute(&store.pool)
+            .await
+            .expect("drop default marker");
+        drop(store);
+
+        let store = Store::open(&path).await.expect("reopen");
+        let ws = store.create_workspace("W", "w").await.expect("workspace");
+        let (repo, inserted) = store
+            .register_repo(
+                ws,
+                "api",
+                "/tmp/api",
+                "main",
+                "https://example.com/api.git",
+                true,
+            )
+            .await
+            .expect("register");
+        assert!(inserted);
+        assert_eq!(repo.remote_url, "https://example.com/api.git");
+        assert_eq!(repo.base_ref_is_default, 1);
     }
 
     #[tokio::test]
@@ -859,7 +1095,10 @@ mod tests {
         let store = Store::open(&path).await.expect("reopen");
         // add_direction binds spec — this fails if the guard did not run.
         let ws = store.create_workspace("W", "w").await.expect("ws");
-        let repo = store.add_repo(ws, "r", "/tmp/r", "main").await.expect("repo");
+        let repo = store
+            .add_repo(ws, "r", "/tmp/r", "main")
+            .await
+            .expect("repo");
         let issue = store.create_issue(ws, "i", "i").await.expect("issue");
         store
             .add_direction(issue, "d", "d", repo, "impl-only", "main", "", "the task")
@@ -902,9 +1141,21 @@ mod tests {
             .add_repo(ws, "api", "/tmp/api", "main")
             .await
             .expect("repo");
-        let issue = store.create_issue(ws, "Fix login", "fix-login").await.expect("issue");
+        let issue = store
+            .create_issue(ws, "Fix login", "fix-login")
+            .await
+            .expect("issue");
         let d = store
-            .add_direction(issue, "backend", "backend", repo, "plan+impl", "main", "why", "")
+            .add_direction(
+                issue,
+                "backend",
+                "backend",
+                repo,
+                "plan+impl",
+                "main",
+                "why",
+                "",
+            )
             .await
             .expect("direction");
         let undispatched = store
@@ -913,8 +1164,14 @@ mod tests {
             .expect("undispatched");
         assert_eq!(undispatched.len(), 1);
         assert_eq!(undispatched[0].id, d);
-        store.set_direction_thread(d, "codex-t-1").await.expect("thread");
-        store.set_direction_status(d, "working").await.expect("status");
+        store
+            .set_direction_thread(d, "codex-t-1")
+            .await
+            .expect("thread");
+        store
+            .set_direction_status(d, "working")
+            .await
+            .expect("status");
         store
             .set_direction_attention(d, Some("turn failed"))
             .await

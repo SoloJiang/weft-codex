@@ -112,6 +112,22 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
   `repo_profile`；RepoMapView / RepoGraph（含 components 展开视图）作为
   扩展 web app 的第四个表面保留。
 
+**已完成（2026-08-09，录入体验闭环）**：
+
+- Workspace 仓库入口收敛为一个多仓导入动作；每行一个本地路径，单次最多
+  64 个，逐项成功/失败，不因其中一个坏路径回滚已录入仓库。
+- 路径由 daemon 规范化到真实 Git 根目录并校验至少有一个 commit；名称从目录
+  推导。`base_ref` 不再由 UI 写死 `main`，按 origin/HEAD → main/master →
+  当前非标准分支 → HEAD 的本地证据链识别，同时记录 origin URL 与默认分支
+  可信标记。
+- 工作区内按 canonical path 或 normalized origin URL 幂等去重；重新录入可修复
+  旧行缺失的 remote/default metadata。
+- 新仓库自动进入 profile 分析，全部新画像完成后自动刷新 relations/layers/
+  repo map；UI 只保留单仓失败重试/重新分析，不再暴露割裂的“分析工作区”和
+  “分析关系”主流程按钮。monorepo components 已可在仓库卡片展开。
+- 浏览器降级面暂以多行绝对路径录入；Desktop adapter 落地时由 Host Bridge
+  提供原生多目录选择，复用同一批量 API，不把文件系统权限交给 iframe。
+
 **已验证（2026-08-08 晚，Stage 2.5 真机冒烟）**：
 
 - `outputSchema` 在 ChatGPT 后端**非严格**：管线完整（turn/start →
@@ -421,7 +437,9 @@ Desktop 相关（1、3）仍需运行时闭环；app-server 相关（2、4、5�
 - Stage 3.5：Desktop adapter 地基（**进行中**）：安装检测、当前发行版语义锚点
   inventory、只读 CDP capability probe 与三档兼容分类已完成；下一步是在专用
   profile 完成 document-start 重挂载、CSP bypass 显示与 additive sidebar 注入。
-- Stage 4：切换——新 issue 全走新流程；停发 Tauri 客户端；删除清单落地。
+- Stage 4：切换（**进行中**）——新 issue 已全走新流程，仓库录入/自动拆解已
+  切换；待 Desktop adapter、存量 workspace 迁移、停发 Tauri 客户端与删除清单
+  落地后完成。
 
 ## 11. 风险与对冲
 

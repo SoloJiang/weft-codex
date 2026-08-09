@@ -21,6 +21,7 @@ import type {
   IssueKind,
   MessageIntent,
   Repo,
+  RepoImportResponse,
   RepoMap,
   ToastKind,
   Workspace,
@@ -286,30 +287,21 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
     onContinueTask: (direction: Direction) => setDialog({ type: "message", target: "task", id: direction.id, intent: "continue" }),
   }), [notifyError, refreshCurrent, completeTask, launchLead, t])
 
-  const addRepository = async (name: string, path: string) => {
+  const importRepositories = async (paths: string[]): Promise<RepoImportResponse> => {
     if (!workspaceId) throw new Error(t("err.unknown"))
-    await api(`/api/workspaces/${workspaceId}/repos`, jsonRequest("POST", { name, path, base_ref: "main" }))
+    const response = await api<RepoImportResponse>(
+      `/api/workspaces/${workspaceId}/repos/import`,
+      jsonRequest("POST", { paths }),
+    )
     await refreshCurrent()
-    notify(t("success.repoAdded"), "success")
+    if (response.added) notify(t("success.reposAdded", { count: response.added }), "success")
+    else if (!response.failed) notify(t("success.reposExisting"), "info")
+    return response
   }
 
   const analyzeRepository = async (id: number) => {
     await api(`/api/repos/${id}/analyze`, jsonRequest("POST"))
     notify(t("success.analysisStarted"), "success")
-    await refreshCurrent()
-  }
-
-  const analyzeWorkspace = async () => {
-    if (!workspaceId) return
-    await api(`/api/workspaces/${workspaceId}/analyze`, jsonRequest("POST"))
-    notify(t("success.analysisStarted"), "success")
-    await refreshCurrent()
-  }
-
-  const analyzeRelations = async () => {
-    if (!workspaceId) return
-    await api(`/api/workspaces/${workspaceId}/analyze-relations`, jsonRequest("POST"))
-    notify(t("success.relationsStarted"), "success")
     await refreshCurrent()
   }
 
@@ -328,10 +320,8 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
         workspaceId={workspaceId}
         repoMap={repoMap}
         onCreateWorkspace={() => setDialog({ type: "workspace" })}
-        onAddRepository={addRepository}
+        onOpenImport={() => setDialog({ type: "repositories" })}
         onAnalyzeRepository={analyzeRepository}
-        onAnalyzeWorkspace={analyzeWorkspace}
-        onAnalyzeRelations={analyzeRelations}
         onError={notifyError}
       />
     )
@@ -427,6 +417,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
         onClose={() => setDialog(null)}
         onCreateWorkspace={createWorkspace}
         onCreateIssue={createIssue}
+        onImportRepositories={importRepositories}
         onSendMessage={sendMessage}
       />
 

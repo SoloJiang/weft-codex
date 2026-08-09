@@ -262,8 +262,8 @@ async fn run_analysis_turn(cwd: &str, brief: &str, schema: Value) -> Result<Stri
         )
         .await
         .map_err(|e| format!("thread/start: {e:#}"))?;
-    let thread_id = codex::thread_id_of(&result)
-        .ok_or_else(|| "thread/start: no thread.id".to_string())?;
+    let thread_id =
+        codex::thread_id_of(&result).ok_or_else(|| "thread/start: no thread.id".to_string())?;
     let rx = client.subscribe(&thread_id).await;
     let turn = client
         .request(
@@ -272,8 +272,7 @@ async fn run_analysis_turn(cwd: &str, brief: &str, schema: Value) -> Result<Stri
         )
         .await
         .map_err(|e| format!("turn/start: {e:#}"))?;
-    let turn_id = codex::turn_id_of(&turn)
-        .ok_or_else(|| "turn/start: no turn.id".to_string())?;
+    let turn_id = codex::turn_id_of(&turn).ok_or_else(|| "turn/start: no turn.id".to_string())?;
     client.set_active_turn(&thread_id, &turn_id).await;
     let outcome = tokio::time::timeout(ANALYSIS_TIMEOUT, collect_final_text(rx)).await;
     let (text, is_error) = match outcome {
@@ -308,14 +307,20 @@ pub async fn analyze_repo(store: &Store, repo_id: i64) -> anyhow::Result<()> {
     }
 
     store.profile_mark_running(repo_id, "").await?;
-    events::emit("repo.profile", json!({ "repoId": repo_id, "runState": "running" }));
+    events::emit(
+        "repo.profile",
+        json!({ "repoId": repo_id, "runState": "running" }),
+    );
 
     let outcome = run_analysis_turn(&repo.path, &profile_brief(&repo.name), profile_schema()).await;
     let text = match outcome {
         Ok(t) => t,
         Err(msg) => {
             store.profile_fail(repo_id, &msg).await?;
-            events::emit("repo.profile", json!({ "repoId": repo_id, "runState": "failed" }));
+            events::emit(
+                "repo.profile",
+                json!({ "repoId": repo_id, "runState": "failed" }),
+            );
             return Ok(());
         }
     };
@@ -328,14 +333,23 @@ pub async fn analyze_repo(store: &Store, repo_id: i64) -> anyhow::Result<()> {
             store
                 .profile_complete(repo_id, tier, &stack, summary, &components)
                 .await?;
-            events::emit("repo.profile", json!({ "repoId": repo_id, "runState": "done" }));
+            events::emit(
+                "repo.profile",
+                json!({ "repoId": repo_id, "runState": "done" }),
+            );
         }
         None => {
             let snippet: String = text.chars().take(200).collect();
             store
-                .profile_fail(repo_id, &format!("no schema JSON in output; text: {snippet:?}"))
+                .profile_fail(
+                    repo_id,
+                    &format!("no schema JSON in output; text: {snippet:?}"),
+                )
                 .await?;
-            events::emit("repo.profile", json!({ "repoId": repo_id, "runState": "failed" }));
+            events::emit(
+                "repo.profile",
+                json!({ "repoId": repo_id, "runState": "failed" }),
+            );
         }
     }
     Ok(())
@@ -379,6 +393,45 @@ pub async fn analyze_workspace(store: &Store, workspace_id: i64) -> anyhow::Resu
     analyze_relations(store, workspace_id).await
 }
 
+/// Intake pipeline: profile only newly registered repos, then refresh the
+/// cross-repo map once all of those passes settle. Existing profiles are not
+/// needlessly re-run when another repository joins the workspace.
+pub async fn analyze_imported_repos(
+    store: &Store,
+    workspace_id: i64,
+    repo_ids: Vec<i64>,
+) -> anyhow::Result<()> {
+    if !runtime::agents_allowed() {
+        anyhow::bail!("daemon is not live; refusing to spawn agents");
+    }
+    let mut set = tokio::task::JoinSet::new();
+    for repo_id in repo_ids {
+        let repo = store
+            .get_repo(repo_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("unknown repo {repo_id}"))?;
+        if repo.workspace_id != workspace_id {
+            anyhow::bail!("repo {repo_id} is not in workspace {workspace_id}");
+        }
+        let store = store.clone();
+        set.spawn(async move { analyze_repo(&store, repo_id).await });
+    }
+    while let Some(result) = set.join_next().await {
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => events::emit(
+                "repo.profile",
+                json!({ "workspaceId": workspace_id, "error": format!("{error:#}") }),
+            ),
+            Err(error) => events::emit(
+                "repo.profile",
+                json!({ "workspaceId": workspace_id, "error": format!("analysis task: {error}") }),
+            ),
+        }
+    }
+    analyze_relations(store, workspace_id).await
+}
+
 /// Cross-repo relations/layers pass alone (repos already profiled) — fed
 /// with every done profile's summary as its context.
 pub async fn analyze_relations(store: &Store, workspace_id: i64) -> anyhow::Result<()> {
@@ -408,7 +461,10 @@ pub async fn analyze_relations(store: &Store, workspace_id: i64) -> anyhow::Resu
     let text = match outcome {
         Ok(t) => t,
         Err(msg) => {
-            events::emit("repo.relations", json!({ "workspaceId": workspace_id, "error": msg }));
+            events::emit(
+                "repo.relations",
+                json!({ "workspaceId": workspace_id, "error": msg }),
+            );
             return Ok(());
         }
     };
@@ -427,10 +483,7 @@ pub async fn analyze_relations(store: &Store, workspace_id: i64) -> anyhow::Resu
     // ids; either resolves here).
     let known: std::collections::HashMap<String, i64> = repos
         .iter()
-        .flat_map(|r| [
-            (r.name.clone(), r.id),
-            (r.id.to_string(), r.id),
-        ])
+        .flat_map(|r| [(r.name.clone(), r.id), (r.id.to_string(), r.id)])
         .collect();
     let mut relations: Vec<RelationRow> = Vec::new();
     if let Some(items) = parsed["relations"].as_array() {
@@ -532,10 +585,16 @@ mod tests {
     fn schemas_are_strict_shaped() {
         let p = profile_schema();
         assert_eq!(p["additionalProperties"], false);
-        assert_eq!(p["required"], json!(["tier", "stack", "summary", "components"]));
+        assert_eq!(
+            p["required"],
+            json!(["tier", "stack", "summary", "components"])
+        );
         let r = relations_schema();
         assert_eq!(r["additionalProperties"], false);
-        assert_eq!(r["required"], json!(["relations", "layers", "repoMapMarkdown"]));
+        assert_eq!(
+            r["required"],
+            json!(["relations", "layers", "repoMapMarkdown"])
+        );
         // Relations items must carry the full evidence set.
         let item = &r["properties"]["relations"]["items"];
         assert_eq!(item["additionalProperties"], false);
@@ -548,8 +607,18 @@ mod tests {
     #[test]
     fn relations_brief_lists_only_known_repos() {
         let brief = relations_brief(&[
-            (1, "api".to_string(), "/srv/api".to_string(), "backend service".to_string()),
-            (2, "web".to_string(), "/srv/web".to_string(), "frontend".to_string()),
+            (
+                1,
+                "api".to_string(),
+                "/srv/api".to_string(),
+                "backend service".to_string(),
+            ),
+            (
+                2,
+                "web".to_string(),
+                "/srv/web".to_string(),
+                "frontend".to_string(),
+            ),
         ]);
         assert!(brief.contains("`api` (id 1) — /srv/api — backend service"));
         assert!(brief.contains("`web` (id 2) — /srv/web — frontend"));
@@ -614,7 +683,10 @@ mod tests {
     fn parse_output_raw_and_fenced() {
         // Strict backend: the whole message is the JSON.
         let raw = r#"{"tier":"app","summary":"s"}"#;
-        assert_eq!(parse_output(raw, &["tier", "summary"]).expect("raw")["tier"], "app");
+        assert_eq!(
+            parse_output(raw, &["tier", "summary"]).expect("raw")["tier"],
+            "app"
+        );
         // Non-strict backend: prose + fenced JSON — take the LAST object
         // carrying the required keys (earlier prose objects must not hide it).
         let fenced = "Analysis done.\n\n{\"unrelated\": true}\n\n```json\n\
@@ -640,5 +712,4 @@ mod tests {
         assert_eq!(json_ref_string(&json!(3)), "3");
         assert_eq!(json_ref_string(&json!(null)), "");
     }
-
 }

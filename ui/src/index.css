@@ -517,25 +517,19 @@ main {
 .view { display: none; }
 .view.active { display: block; }
 
-.actions { margin: 0; }
-
-.repo-register .inline-error { grid-column: 1 / -1; }
-
-.repo-toolbar {
+.view-heading {
+  max-width: 1100px;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: var(--space-3);
+  gap: var(--space-4);
   margin-bottom: var(--space-4);
 }
 
-.repo-register {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(150px, 220px) minmax(260px, 520px) max-content;
-  align-items: start;
-  gap: var(--space-2);
-}
+.view-heading h1 { margin: 0; font-size: 18px; line-height: 1.35; }
+.view-heading p { margin: 4px 0 0; color: var(--dim); font-size: 12px; }
+
+.actions { margin: 0; }
 
 .inline-error,
 .field-error,
@@ -838,6 +832,17 @@ main {
   overflow-wrap: anywhere;
 }
 
+.repo-base {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.repo-base svg { width: 12px; height: 12px; }
+
 .repo-actions { flex: none; }
 .repo .summary { margin: 10px 0 0; line-height: 1.55; }
 .repo .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 9px 0 0; }
@@ -856,8 +861,43 @@ main {
 }
 
 .tag.layer { border-color: var(--link); color: var(--link); }
+.repo-components { margin-top: var(--space-3); border-top: 1px solid var(--border); }
+.repo-components summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  color: var(--dim);
+  font-size: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+.repo-components summary::-webkit-details-marker { display: none; }
+.repo-components summary svg { width: 13px; height: 13px; }
+.repo-component-list {
+  display: grid;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.repo-component { padding: 9px 10px; background: var(--panel-2); }
+.repo-component + .repo-component { border-top: 1px solid var(--border); }
+.repo-component > div { display: flex; align-items: baseline; gap: var(--space-2); }
+.repo-component strong { font-size: 12px; }
+.repo-component code {
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.repo-component p { margin: 4px 0 0; color: var(--dim); font-size: 12px; }
 .relations { margin-top: var(--space-5); }
-.rel { margin: 6px 0; color: var(--dim); font-size: 12px; overflow-wrap: anywhere; }
+.rel { padding: 9px 0; color: var(--dim); font-size: 12px; overflow-wrap: anywhere; }
+.rel + .rel { border-top: 1px solid var(--border); }
+.rel strong { display: block; color: var(--text); font-weight: 600; }
+.rel span { display: block; margin-top: 2px; font-size: 11px; }
+.rel p { margin: 4px 0 0; }
 .repo-map-section { margin-top: var(--space-5); }
 
 #repo-map-doc {
@@ -942,6 +982,11 @@ main {
 .form-field textarea { width: 100%; }
 .form-field .select-shell { width: 100%; }
 .field-error { margin-top: 5px; }
+.repo-paths-input { min-height: 132px; font-family: var(--mono); font-size: 12px; }
+.form-hint,
+.import-summary { margin: 0; color: var(--dim); font-size: 12px; line-height: 1.5; }
+.import-summary { color: var(--warn); }
+.field-error { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .modal-error { margin-top: 12px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
@@ -983,11 +1028,6 @@ main {
   }
 
   .col { scroll-snap-align: start; }
-  .repo-toolbar { flex-direction: column; }
-  .analysis-actions > :first-child {
-    margin-inline-start: -1px;
-    padding-inline-start: 0;
-  }
 }
 
 @media (max-width: 720px) {
@@ -1012,9 +1052,8 @@ main {
   .workspace-select-shell { width: auto; max-width: none; flex: 1; }
   main { padding: 12px; }
 
-  .repo-register { width: 100%; grid-template-columns: 1fr; }
-  .repo-register .inline-error { grid-column: 1; }
-  .analysis-actions { width: 100%; flex-wrap: wrap; }
+  .view-heading { align-items: stretch; flex-direction: column; }
+  .view-heading > button { align-self: flex-start; }
 
   .issue-head,
   .repo-head,

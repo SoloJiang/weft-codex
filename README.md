@@ -22,6 +22,10 @@ worktree 生命周期、仓库录入与拆解、workspace/kanban），以 Codex 
   primitive 源码层，视觉由 Codex semantic token 驱动。生产构建由 daemon
   从 `crates/daemon/web/` 提供。
 
+仓库录入支持一次提交多个本地 Git 路径。daemon 会规范化 Git 根目录、识别默认
+分支与 origin、在工作区内幂等去重，并自动运行仓库画像及跨仓关系分析；UI 不需要
+手工指定仓库名、`main` 或逐步触发分析。
+
 ## 运行
 
 ```sh

@@ -21,7 +21,7 @@ use tokio_stream::StreamExt;
 
 use crate::orchestrator::Orchestrator;
 use crate::store::Store;
-use crate::{curator, events};
+use crate::{curator, events, repo_intake};
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -31,11 +31,12 @@ pub struct ApiState {
 
 pub fn router(state: ApiState) -> Router {
     Router::new()
-        .route("/api/workspaces", post(create_workspace).get(list_workspaces))
         .route(
-            "/api/workspaces/{id}/repos",
-            post(add_repo).get(list_repos),
+            "/api/workspaces",
+            post(create_workspace).get(list_workspaces),
         )
+        .route("/api/workspaces/{id}/repos", post(add_repo).get(list_repos))
+        .route("/api/workspaces/{id}/repos/import", post(import_repos))
         .route("/api/issues", post(create_issue).get(kanban))
         .route("/api/issues/{id}/spawn-lead", post(spawn_lead))
         .route("/api/issues/{id}/message", post(message_lead))
@@ -123,9 +124,30 @@ async fn list_workspaces(State(state): State<ApiState>) -> Response {
 
 #[derive(Deserialize)]
 struct AddRepo {
-    name: String,
+    name: Option<String>,
     path: String,
-    base_ref: Option<String>,
+}
+
+fn queue_intake_analysis(store: Store, workspace_id: i64, repo_ids: Vec<i64>) {
+    if repo_ids.is_empty() {
+        return;
+    }
+    tokio::spawn(async move {
+        if let Err(error) = curator::analyze_imported_repos(&store, workspace_id, repo_ids).await {
+            events::emit(
+                "repo.relations",
+                json!({ "workspaceId": workspace_id, "error": format!("{error:#}") }),
+            );
+        }
+    });
+}
+
+async fn repo_needs_analysis(store: &Store, repo_id: i64) -> anyhow::Result<bool> {
+    let profile = store.get_profile(repo_id).await?;
+    Ok(match profile {
+        None => true,
+        Some(profile) => profile.run_state == "idle" || profile.run_state == "failed",
+    })
 }
 
 async fn add_repo(
@@ -133,18 +155,151 @@ async fn add_repo(
     Path(workspace_id): Path<i64>,
     Json(body): Json<AddRepo>,
 ) -> Response {
-    let base_ref = body.base_ref.unwrap_or_default();
-    match state
+    let inspected = match repo_intake::inspect_local_repo(&body.path, body.name.as_deref()).await {
+        Ok(repo) => repo,
+        Err(error) => return fail(error),
+    };
+    let (repo, added) = match state
         .store
-        .add_repo(workspace_id, &body.name, &body.path, &base_ref)
+        .register_repo(
+            workspace_id,
+            &inspected.name,
+            &inspected.path,
+            &inspected.base_ref,
+            &inspected.remote_url,
+            inspected.base_ref_is_default,
+        )
         .await
     {
-        Ok(id) => {
-            events::emit("repo.added", json!({ "id": id, "workspaceId": workspace_id }));
-            ok(json!({ "id": id }))
-        }
-        Err(e) => fail(e),
+        Ok(result) => result,
+        Err(error) => return fail(error),
+    };
+    if added {
+        events::emit(
+            "repo.added",
+            json!({ "id": repo.id, "workspaceId": workspace_id }),
+        );
     }
+    let analysis_queued = match repo_needs_analysis(&state.store, repo.id).await {
+        Ok(needs_analysis) => needs_analysis,
+        Err(error) => return fail(error),
+    };
+    if analysis_queued {
+        queue_intake_analysis(state.store.clone(), workspace_id, vec![repo.id]);
+    }
+    ok(json!({
+        "id": repo.id,
+        "repo": repo,
+        "added": added,
+        "analysisQueued": analysis_queued,
+    }))
+}
+
+#[derive(Deserialize)]
+struct ImportRepos {
+    paths: Vec<String>,
+}
+
+/// Batch local-repository intake. Each row is independent so one malformed
+/// path does not discard repositories already validated in the same action.
+async fn import_repos(
+    State(state): State<ApiState>,
+    Path(workspace_id): Path<i64>,
+    Json(body): Json<ImportRepos>,
+) -> Response {
+    if body.paths.is_empty() {
+        return fail(anyhow::anyhow!(
+            "invalid repository import: at least one path is required"
+        ));
+    }
+    if body.paths.len() > 64 {
+        return fail(anyhow::anyhow!(
+            "invalid repository import: at most 64 paths are allowed"
+        ));
+    }
+
+    let mut results = Vec::with_capacity(body.paths.len());
+    let mut analysis_ids = std::collections::BTreeSet::new();
+    let mut added_count = 0usize;
+    let mut existing_count = 0usize;
+    let mut failed_count = 0usize;
+    for requested_path in body.paths {
+        let inspected = match repo_intake::inspect_local_repo(&requested_path, None).await {
+            Ok(repo) => repo,
+            Err(error) => {
+                failed_count += 1;
+                results.push(json!({
+                    "requested_path": requested_path,
+                    "status": "error",
+                    "error": format!("{error:#}"),
+                }));
+                continue;
+            }
+        };
+        let registration = state
+            .store
+            .register_repo(
+                workspace_id,
+                &inspected.name,
+                &inspected.path,
+                &inspected.base_ref,
+                &inspected.remote_url,
+                inspected.base_ref_is_default,
+            )
+            .await;
+        let (repo, added) = match registration {
+            Ok(result) => result,
+            Err(error) => {
+                failed_count += 1;
+                results.push(json!({
+                    "requested_path": requested_path,
+                    "status": "error",
+                    "error": format!("{error:#}"),
+                }));
+                continue;
+            }
+        };
+        if added {
+            added_count += 1;
+            events::emit(
+                "repo.added",
+                json!({ "id": repo.id, "workspaceId": workspace_id }),
+            );
+        } else {
+            existing_count += 1;
+        }
+        match repo_needs_analysis(&state.store, repo.id).await {
+            Ok(true) => {
+                analysis_ids.insert(repo.id);
+            }
+            Ok(false) => {}
+            Err(error) => {
+                failed_count += 1;
+                results.push(json!({
+                    "requested_path": requested_path,
+                    "status": "error",
+                    "error": format!("{error:#}"),
+                }));
+                continue;
+            }
+        }
+        results.push(json!({
+            "requested_path": requested_path,
+            "status": if added { "added" } else { "existing" },
+            "repo": repo,
+        }));
+    }
+
+    let analysis_ids: Vec<i64> = analysis_ids.into_iter().collect();
+    let analysis_queued = !analysis_ids.is_empty();
+    queue_intake_analysis(state.store.clone(), workspace_id, analysis_ids);
+    ok(json!({
+        "results": results,
+        "added": added_count,
+        "existing": existing_count,
+        "failed": failed_count,
+        "analysisQueued": analysis_queued,
+    }))
 }
 
 async fn list_repos(State(state): State<ApiState>, Path(workspace_id): Path<i64>) -> Response {
@@ -162,10 +317,7 @@ struct CreateIssue {
     kind: String,
 }
 
-async fn create_issue(
-    State(state): State<ApiState>,
-    Json(body): Json<CreateIssue>,
-) -> Response {
+async fn create_issue(State(state): State<ApiState>, Json(body): Json<CreateIssue>) -> Response {
     match state
         .store
         .create_issue_with_kind(body.workspace_id, &body.title, &body.slug, &body.kind)
@@ -186,7 +338,11 @@ struct KanbanQuery {
 
 /// The kanban board payload: every issue with its directions.
 async fn kanban(State(state): State<ApiState>, Query(q): Query<KanbanQuery>) -> Response {
-    match state.store.list_issues_with_directions(q.workspace_id).await {
+    match state
+        .store
+        .list_issues_with_directions(q.workspace_id)
+        .await
+    {
         Ok(pairs) => {
             let board: Vec<Value> = pairs
                 .iter()
@@ -284,7 +440,9 @@ async fn analyze_repo(State(state): State<ApiState>, Path(repo_id): Path<i64>) -
     }
     match state.store.get_profile(repo_id).await {
         Ok(Some(p)) if p.run_state == "running" => {
-            return fail(anyhow::anyhow!("repo {repo_id} already has a running analysis"));
+            return fail(anyhow::anyhow!(
+                "repo {repo_id} already has a running analysis"
+            ));
         }
         Ok(_) => {}
         Err(e) => return fail(e),
@@ -311,10 +469,15 @@ async fn repo_profile(State(state): State<ApiState>, Path(repo_id): Path<i64>) -
 
 /// Kick the full workspace pass: profile every repo, then cross-repo
 /// relations + layers + the repo-map document.
-async fn analyze_workspace(State(state): State<ApiState>, Path(workspace_id): Path<i64>) -> Response {
+async fn analyze_workspace(
+    State(state): State<ApiState>,
+    Path(workspace_id): Path<i64>,
+) -> Response {
     match state.store.list_repos(workspace_id).await {
         Ok(repos) if repos.is_empty() => {
-            return fail(anyhow::anyhow!("invalid analyze: workspace {workspace_id} has no repos"));
+            return fail(anyhow::anyhow!(
+                "invalid analyze: workspace {workspace_id} has no repos"
+            ));
         }
         Ok(_) => {}
         Err(e) => return fail(e),
@@ -332,7 +495,10 @@ async fn analyze_workspace(State(state): State<ApiState>, Path(workspace_id): Pa
 }
 
 /// Re-run ONLY the cross-repo pass (profiles must already be done).
-async fn analyze_relations(State(state): State<ApiState>, Path(workspace_id): Path<i64>) -> Response {
+async fn analyze_relations(
+    State(state): State<ApiState>,
+    Path(workspace_id): Path<i64>,
+) -> Response {
     let store = state.store.clone();
     tokio::spawn(async move {
         if let Err(e) = curator::analyze_relations(&store, workspace_id).await {

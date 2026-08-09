@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Textarea } from "@/components/ui/textarea"
 import { useI18n } from "@/i18n"
-import type { DialogState, IssueKind, MessageIntent } from "@/types"
+import type { DialogState, IssueKind, MessageIntent, RepoImportResponse } from "@/types"
 import { ISSUE_KINDS } from "@/types"
 import { Field } from "./shared"
 
@@ -23,6 +23,7 @@ interface DialogLayerProps {
   onClose: () => void
   onCreateWorkspace: (name: string) => Promise<void>
   onCreateIssue: (title: string, kind: IssueKind) => Promise<void>
+  onImportRepositories: (paths: string[]) => Promise<RepoImportResponse>
   onSendMessage: (target: "lead" | "task", id: number, text: string, intent: MessageIntent) => Promise<void>
 }
 
@@ -207,6 +208,79 @@ function IssueDialog({
   )
 }
 
+function RepositoryDialog({
+  onClose,
+  onImport,
+}: {
+  onClose: () => void
+  onImport: (paths: string[]) => Promise<RepoImportResponse>
+}) {
+  const { t } = useI18n()
+  const [value, setValue] = React.useState("")
+  const [error, setError] = React.useState("")
+  const [summary, setSummary] = React.useState("")
+
+  const paths = React.useMemo(() => {
+    const seen = new Set<string>()
+    return value
+      .split(/\r?\n/)
+      .map((path) => path.trim())
+      .filter((path) => {
+        if (!path || seen.has(path)) return false
+        seen.add(path)
+        return true
+      })
+  }, [value])
+
+  return (
+    <FormDialog
+      title={t("modal.repositoriesTitle")}
+      description={t("modal.repositoriesDescription")}
+      submitLabel={t("modal.addRepositories", { count: paths.length })}
+      pendingLabel={t("loading.addingRepos")}
+      submitDisabled={!paths.length}
+      onClose={onClose}
+      onSubmit={async () => {
+        if (!paths.length) {
+          setError(t("validation.repoPaths"))
+          return false
+        }
+        const response = await onImport(paths)
+        if (!response.failed) return
+        const failures = response.results.filter((result) => result.status === "error")
+        setValue(failures.map((result) => result.requested_path).join("\n"))
+        setSummary(t("repo.importPartial", {
+          added: response.added,
+          existing: response.existing,
+          failed: response.failed,
+        }))
+        setError(failures.map((result) => `${result.requested_path}: ${result.error ?? t("err.unknown")}`).join("\n"))
+        return false
+      }}
+    >
+      <div className="form-stack">
+        <Field label={t("repo.pathsLabel")} htmlFor="repository-paths" error={error}>
+          <Textarea
+            id="repository-paths"
+            autoFocus
+            className="repo-paths-input"
+            placeholder={t("repo.pathsPlaceholder")}
+            value={value}
+            aria-invalid={Boolean(error)}
+            onChange={(event) => {
+              setValue(event.target.value)
+              setError("")
+              setSummary("")
+            }}
+          />
+        </Field>
+        {summary ? <p className="import-summary" role="status">{summary}</p> : null}
+        <p className="form-hint">{t("repo.analysisAutomatic")}</p>
+      </div>
+    </FormDialog>
+  )
+}
+
 function MessageDialog({
   target,
   id,
@@ -263,6 +337,9 @@ export function DialogLayer(props: DialogLayerProps) {
   }
   if (state.type === "issue") {
     return <IssueDialog onClose={props.onClose} onCreate={props.onCreateIssue} />
+  }
+  if (state.type === "repositories") {
+    return <RepositoryDialog onClose={props.onClose} onImport={props.onImportRepositories} />
   }
   if (state.type === "message") {
     return <MessageDialog target={state.target} id={state.id} intent={state.intent} onClose={props.onClose} onSend={props.onSendMessage} />

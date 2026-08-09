@@ -19,7 +19,30 @@ export interface Repo {
   name: string
   path: string
   base_ref: string
+  remote_url: string
+  base_ref_is_default: number
   created_at: string
+}
+
+export interface RepoImportItem {
+  requested_path: string
+  status: "added" | "existing" | "error"
+  repo?: Repo
+  error?: string
+}
+
+export interface RepoImportResponse {
+  results: RepoImportItem[]
+  added: number
+  existing: number
+  failed: number
+  analysisQueued: boolean
+}
+
+export interface RepoComponent {
+  name: string
+  path: string
+  summary: string
 }
 
 export interface Issue {
@@ -104,6 +127,7 @@ export interface BusMessage {
 export type DialogState =
   | { type: "workspace" }
   | { type: "issue" }
+  | { type: "repositories" }
   | { type: "message"; target: "lead" | "task"; id: number; intent: MessageIntent }
   | null
 

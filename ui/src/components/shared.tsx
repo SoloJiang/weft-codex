@@ -5,6 +5,7 @@ import { Button, type buttonVariants } from "@/components/ui/button"
 import { useI18n, type MessageKey } from "@/i18n"
 import { cn } from "@/lib/utils"
 import type { VariantProps } from "class-variance-authority"
+import type { RepoComponent } from "@/types"
 
 interface AsyncButtonProps
   extends Omit<React.ComponentProps<typeof Button>, "onClick">,
@@ -121,6 +122,25 @@ export function parseStack(value: string): string[] {
     const parsed: unknown = JSON.parse(value || "[]")
     if (!Array.isArray(parsed)) return []
     return parsed.filter((item): item is string => typeof item === "string")
+  } catch {
+    return []
+  }
+}
+
+export function parseComponents(value: string): RepoComponent[] {
+  try {
+    const parsed: unknown = JSON.parse(value || "[]")
+    if (!Array.isArray(parsed)) return []
+    return parsed.flatMap((item) => {
+      if (!item || typeof item !== "object") return []
+      const candidate = item as Partial<RepoComponent>
+      if (typeof candidate.name !== "string" || typeof candidate.path !== "string") return []
+      return [{
+        name: candidate.name,
+        path: candidate.path,
+        summary: typeof candidate.summary === "string" ? candidate.summary : "",
+      }]
+    })
   } catch {
     return []
   }
