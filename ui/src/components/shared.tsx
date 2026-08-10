@@ -3,7 +3,7 @@ import { MessageCircle } from "lucide-react"
 
 import { Button, type buttonVariants } from "@/components/ui/button"
 import { useI18n, type MessageKey } from "@/i18n"
-import { requestHostAction } from "@/host-context"
+import { hasHostBridge, requestThreadOpen } from "@/host-context"
 import { cn } from "@/lib/utils"
 import type { VariantProps } from "class-variance-authority"
 import type { RepoComponent } from "@/types"
@@ -57,25 +57,42 @@ export function codexThreadHref(threadId: string): string {
   return `codex://threads/${encodeURIComponent(threadId)}`
 }
 
-export function openCodexThread(threadId: string): void {
-  if (!threadId) return
-  if (requestHostAction({ action: "thread.open", threadId })) return
+export function openCodexThread(threadId: string): Promise<void> {
+  if (!threadId) return Promise.reject(new Error("Thread id is required"))
+  const request = requestThreadOpen(threadId)
+  if (request) return request
   window.location.assign(codexThreadHref(threadId))
+  return Promise.resolve()
 }
 
-export function ThreadLink({ threadId }: { threadId: string }) {
+export function ThreadLink({
+  threadId,
+  onError,
+}: {
+  threadId: string
+  onError?: (error: unknown) => void
+}) {
   const { t } = useI18n()
+  const [pending, setPending] = React.useState(false)
   if (!threadId) return null
   return (
     <Button asChild variant="ghost" className="thread-link">
       <a
         href={codexThreadHref(threadId)}
+        aria-busy={pending}
+        aria-disabled={pending}
         onClick={(event) => {
-          if (requestHostAction({ action: "thread.open", threadId })) event.preventDefault()
+          if (!hasHostBridge()) return
+          event.preventDefault()
+          if (pending) return
+          setPending(true)
+          void openCodexThread(threadId)
+            .catch(() => onError?.(new Error(t("err.threadOpen"))))
+            .finally(() => setPending(false))
         }}
       >
         <MessageCircle aria-hidden="true" />
-        {t("dir.openThread")}
+        {t(pending ? "loading.openingThread" : "dir.openThread")}
       </a>
     </Button>
   )

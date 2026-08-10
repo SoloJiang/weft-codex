@@ -11,6 +11,15 @@ const zh = {
   "sidebar.needsAttention": "需要处理",
   "sidebar.noIssues": "还没有 issue",
   "sidebar.taskProgress": "已完成 {done}/{total} 个任务",
+  "sidebar.primary": "主会话",
+  "sidebar.active": "当前",
+  "sidebar.mainChat": "主会话",
+  "sidebar.forkChat": "分支会话",
+  "sidebar.leadStarting": "Lead 正在启动…",
+  "sidebar.noTasks": "暂无任务",
+  "sidebar.openIssueLead": "打开 {title} 的 Lead 主会话",
+  "sidebar.expandIssue": "展开 {title}",
+  "sidebar.collapseIssue": "收起 {title}",
   "workspace.label": "工作区",
   "workspace.none": "尚无工作区",
   "workspace.namePlaceholder": "工作区名称",
@@ -21,6 +30,16 @@ const zh = {
   "status.working": "进行中",
   "status.review": "待审",
   "status.done": "已完成",
+
+  "kanban.searchLabel": "搜索任务或 issue",
+  "kanban.searchPlaceholder": "搜索任务或 issue",
+  "kanban.issueFilterLabel": "按 issue 筛选",
+  "kanban.allIssues": "全部 issue",
+  "kanban.noMatchingTasks": "没有符合搜索或筛选条件的任务。",
+  "kanban.boardLabel": "按状态排列的任务",
+  "kanban.openIssue": "打开 issue {title}",
+  "kanban.taskCount": "{count} 个任务",
+  "kanban.moreActions": "更多任务操作",
 
   "issue.create": "新建 issue",
   "issue.titleLabel": "Issue 标题",
@@ -126,6 +145,7 @@ const zh = {
   "loading.analyzingRepo": "正在分析…",
   "loading.analyzingWorkspace": "正在分析…",
   "loading.analyzingRelations": "正在分析…",
+  "loading.openingThread": "正在打开…",
 
   "success.workspaceCreated": "工作区已创建。",
   "success.messageSent": "消息已发送。",
@@ -150,6 +170,7 @@ const zh = {
 
   "err.prefix": "错误：",
   "err.taskStart": "Worker 启动失败，请检查仓库和 Codex 状态后重试。",
+  "err.threadOpen": "该对话暂未出现在 Codex 中，请稍后重试。",
   "err.network": "无法连接到服务。",
   "err.unknown": "操作未完成，请重试。",
 } satisfies Record<keyof typeof en, string>

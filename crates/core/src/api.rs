@@ -41,6 +41,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/issues/{id}/spawn-lead", post(spawn_lead))
         .route("/api/issues/{id}/message", post(message_lead))
         .route("/api/issues/{id}/bus", get(bus_log))
+        .route("/api/threads/resolve", post(resolve_thread))
         .route("/api/directions/{id}/spawn", post(spawn_direction))
         .route("/api/directions/{id}/message", post(message_direction))
         .route("/api/directions/{id}/complete", post(complete_direction))
@@ -344,14 +345,60 @@ async fn kanban(State(state): State<ApiState>, Query(q): Query<KanbanQuery>) -> 
         .await
     {
         Ok(pairs) => {
-            let board: Vec<Value> = pairs
-                .iter()
-                .map(|(issue, directions)| json!({ "issue": issue, "directions": directions }))
-                .collect();
+            let mut board = Vec::with_capacity(pairs.len());
+            for (issue, directions) in pairs {
+                let threads = match state.store.list_thread_bindings(issue.id).await {
+                    Ok(rows) => rows,
+                    Err(error) => return fail(error),
+                };
+                board.push(json!({
+                    "issue": issue,
+                    "directions": directions,
+                    "threads": threads
+                }));
+            }
             ok(json!(board))
         }
         Err(e) => fail(e),
     }
+}
+
+#[derive(Deserialize)]
+struct ResolveThread {
+    thread_id: String,
+}
+
+fn valid_thread_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
+}
+
+/// Map the active native Codex thread to a Weft location. Unknown ordinary
+/// Codex chats are a normal null result; explicit native forks are persisted
+/// only when their ancestry reaches a known Lead/Task primary.
+async fn resolve_thread(
+    State(state): State<ApiState>,
+    Json(body): Json<ResolveThread>,
+) -> Response {
+    if !valid_thread_id(&body.thread_id) {
+        return fail(anyhow::anyhow!("invalid thread id"));
+    }
+    let binding = match state.orch.resolve_thread_binding(&body.thread_id).await {
+        Ok(binding) => binding,
+        Err(error) => return fail(error),
+    };
+    let Some(binding) = binding else {
+        return ok(json!({ "binding": null, "workspaceId": null }));
+    };
+    let issue = match state.store.get_issue(binding.issue_id).await {
+        Ok(Some(issue)) => issue,
+        Ok(None) => return fail(anyhow::anyhow!("unknown issue {}", binding.issue_id)),
+        Err(error) => return fail(error),
+    };
+    ok(json!({ "binding": binding, "workspaceId": issue.workspace_id }))
 }
 
 async fn spawn_lead(State(state): State<ApiState>, Path(issue_id): Path<i64>) -> Response {

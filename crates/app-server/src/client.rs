@@ -114,6 +114,13 @@ pub fn thread_resume_params(thread_id: &str) -> Value {
     json!({ "threadId": thread_id })
 }
 
+/// thread/read: fetch persisted thread metadata without loading full turns.
+/// `includeTurns=false` is intentional for sidebar location resolution: fork
+/// ancestry and the display name live on the thread envelope itself.
+pub fn thread_read_params(thread_id: &str) -> Value {
+    json!({ "threadId": thread_id, "includeTurns": false })
+}
+
 /// thread/fork: fork the thread, omitting turns after `last_turn_id` from the
 /// fork — the official fork-at-point. None = full-history fork (the key is
 /// omitted, not null), which a rewind never wants: "back to before the first
@@ -251,6 +258,43 @@ pub fn classify(line: &str) -> Incoming {
 /// Extract `result.thread.id` from a thread/start (or resume) response.
 pub fn thread_id_of(result: &Value) -> Option<String> {
     result["thread"]["id"].as_str().map(String::from)
+}
+
+/// The small subset of Codex thread metadata needed to relate a native fork
+/// back to the logical Weft chat it came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadInfo {
+    pub id: String,
+    pub forked_from_id: Option<String>,
+    pub name: Option<String>,
+    pub preview: String,
+}
+
+pub fn thread_info_of(result: &Value) -> Option<ThreadInfo> {
+    let thread = result.get("thread")?;
+    let id = thread.get("id")?.as_str()?.to_string();
+    let forked_from_id = thread
+        .get("forkedFromId")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(String::from);
+    let name = thread
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(String::from);
+    let preview = thread
+        .get("preview")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    Some(ThreadInfo {
+        id,
+        forked_from_id,
+        name,
+        preview,
+    })
 }
 
 /// Extract `result.turn.id` from a turn/start response.
@@ -1105,6 +1149,13 @@ impl Client {
             .await
             .map(|_| ())
     }
+    pub async fn read_thread(&self, thread_id: &str) -> anyhow::Result<ThreadInfo> {
+        let result = self
+            .request("thread/read", thread_read_params(thread_id))
+            .await?;
+        thread_info_of(&result)
+            .ok_or_else(|| anyhow::anyhow!("thread/read: invalid thread metadata"))
+    }
     /// Fork `thread_id`, omitting turns after `last_turn_id` from the fork.
     /// Returns the NEW thread id. See [`thread_fork_params`] for the None case.
     pub async fn fork_thread(
@@ -1303,6 +1354,27 @@ mod tests {
         let r = json!({"thread": {"id": "t_fork_2", "turns": []}});
         assert_eq!(thread_id_of(&r).as_deref(), Some("t_fork_2"));
         assert!(thread_id_of(&json!({"thread": {}})).is_none());
+    }
+
+    #[test]
+    fn thread_read_requests_metadata_only_and_parses_fork_origin() {
+        let params = thread_read_params("t_fork_2");
+        assert_eq!(params["threadId"], "t_fork_2");
+        assert_eq!(params["includeTurns"], false);
+
+        let info = thread_info_of(&json!({
+            "thread": {
+                "id": "t_fork_2",
+                "forkedFromId": "t_primary",
+                "name": "Alternative plan",
+                "preview": "Try the API-first route"
+            }
+        }))
+        .expect("thread metadata");
+        assert_eq!(info.id, "t_fork_2");
+        assert_eq!(info.forked_from_id.as_deref(), Some("t_primary"));
+        assert_eq!(info.name.as_deref(), Some("Alternative plan"));
+        assert_eq!(info.preview, "Try the API-first route");
     }
 
     #[test]

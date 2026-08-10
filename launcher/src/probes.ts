@@ -41,6 +41,38 @@ const SELECTORS = {
   "sidebar.threadRoute": "[data-app-action-sidebar-thread-id]",
 } as const
 
+/**
+ * Shared, dependency-free source used by both the compatibility probe and the
+ * document-start renderer agent. Codex can keep an inert route transition in
+ * the DOM alongside the active route, so a bare `querySelector("main")` is not
+ * a safe mount anchor.
+ */
+export const VISIBLE_MAIN_HELPERS_SOURCE = `
+    function mainVisibleArea(element) {
+      const rect = element.getBoundingClientRect();
+      const viewportWidth = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+      const viewportHeight = Math.max(document.documentElement.clientHeight, window.innerHeight || 0);
+      const width = Math.max(0, Math.min(rect.right, viewportWidth) - Math.max(rect.left, 0));
+      const height = Math.max(0, Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0));
+      return width * height;
+    }
+
+    function usableMainCandidate(element) {
+      if (!(element instanceof HTMLElement)) return false;
+      if (element.closest('[inert], [aria-hidden="true"], [hidden]')) return false;
+      const style = getComputedStyle(element);
+      if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return false;
+      if (style.pointerEvents === "none") return false;
+      return mainVisibleArea(element) > 0;
+    }
+
+    function visibleMainRoute() {
+      const candidates = [...document.querySelectorAll("main")].filter(usableMainCandidate);
+      candidates.sort((left, right) => mainVisibleArea(right) - mainVisibleArea(left));
+      return candidates[0] || null;
+    }
+`
+
 export const TOKEN_PROBES = {
   "theme.sidebarSurface": "--vscode-sideBar-background",
   "theme.mainSurface": "--color-token-main-surface-primary",
@@ -142,11 +174,13 @@ export function reportFromSnapshot(snapshot: RendererSnapshot): ProbeReport {
   return { tier: classifyCompatibility(probes), probes }
 }
 
-export async function probeRenderer(session: CdpSession): Promise<ProbeReport> {
-  const expression = `(() => {
+export function buildProbeExpression(): string {
+  return `(() => {
+    ${VISIBLE_MAIN_HELPERS_SOURCE}
     const selectors = ${JSON.stringify(SELECTORS)};
     const tokens = ${JSON.stringify(ALLOWED_CODEX_TOKENS)};
     const rootStyle = getComputedStyle(document.documentElement);
+    const mainRoute = visibleMainRoute();
     const sidebar = document.querySelector(selectors["sidebar.scroll"]);
     const navigation = sidebar?.closest("nav");
     const modeButtons = navigation
@@ -157,13 +191,20 @@ export async function probeRenderer(session: CdpSession): Promise<ProbeReport> {
       getComputedStyle(element).getPropertyValue("-webkit-app-region") === "drag"
     );
     return {
-      selectors: Object.fromEntries(Object.entries(selectors).map(([id, selector]) => [id, Boolean(document.querySelector(selector))])),
+      selectors: Object.fromEntries(Object.entries(selectors).map(([id, selector]) => [
+        id,
+        id === "renderer.main" ? Boolean(mainRoute) : Boolean(document.querySelector(selector)),
+      ])),
       tokens: Object.fromEntries(tokens.map((token) => [token, rootStyle.getPropertyValue(token)])),
       modeSwitcher: modeButtons.length === 1,
       titlebarDragRegion,
       locale: document.documentElement.lang || navigator.language || "",
     };
   })()`
+}
+
+export async function probeRenderer(session: CdpSession): Promise<ProbeReport> {
+  const expression = buildProbeExpression()
   const response = await session.send<RuntimeEvaluateResult>("Runtime.evaluate", {
     expression,
     returnByValue: true,

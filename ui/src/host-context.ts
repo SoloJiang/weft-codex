@@ -47,6 +47,7 @@ export interface HostContextV1 {
   locale: string
   tokens: Record<string, string>
   mode: "work" | "codex" | "weft"
+  view?: "workspace" | "thread"
   projectId?: string
   threadId?: string
   sidebarCollapsed: boolean
@@ -60,13 +61,20 @@ export type HostAction =
   | { action: "thread.open"; threadId: string }
   | { action: "repositories.pick" }
 
-interface PendingHostAction {
+interface PendingRepositoryAction {
   resolve(paths: string[]): void
   reject(error: Error): void
   timeout: number
 }
 
-const pendingHostActions = new Map<string, PendingHostAction>()
+interface PendingThreadAction {
+  resolve(): void
+  reject(error: Error): void
+  timeout: number
+}
+
+const pendingRepositoryActions = new Map<string, PendingRepositoryAction>()
+const pendingThreadActions = new Map<string, PendingThreadAction>()
 let hostResultListenerInstalled = false
 
 interface HostContextEnvelope {
@@ -84,6 +92,7 @@ function isHostContext(value: unknown): value is HostContextV1 {
   if (!candidate.tokens || typeof candidate.tokens !== "object" || Array.isArray(candidate.tokens)) return false
   if (!Object.values(candidate.tokens).every((token) => typeof token === "string")) return false
   if (candidate.mode !== "work" && candidate.mode !== "codex" && candidate.mode !== "weft") return false
+  if (candidate.view !== undefined && candidate.view !== "workspace" && candidate.view !== "thread") return false
   if (candidate.projectId !== undefined && typeof candidate.projectId !== "string") return false
   if (candidate.threadId !== undefined && typeof candidate.threadId !== "string") return false
   if (candidate.security !== undefined) {
@@ -163,9 +172,20 @@ function ensureHostResultListener() {
     const message = event.data as Record<string, unknown>
     if (message.source !== "weft-codex-host" || message.type !== "weft:host-action-result") return
     if (typeof message.requestId !== "string") return
-    const pending = pendingHostActions.get(message.requestId)
+    const pendingThread = pendingThreadActions.get(message.requestId)
+    if (pendingThread) {
+      pendingThreadActions.delete(message.requestId)
+      window.clearTimeout(pendingThread.timeout)
+      if (message.ok === true) pendingThread.resolve()
+      else {
+        const detail = typeof message.error === "string" ? message.error : "Host action failed"
+        pendingThread.reject(new Error(detail))
+      }
+      return
+    }
+    const pending = pendingRepositoryActions.get(message.requestId)
     if (!pending) return
-    pendingHostActions.delete(message.requestId)
+    pendingRepositoryActions.delete(message.requestId)
     window.clearTimeout(pending.timeout)
     if (message.ok !== true) {
       const detail = typeof message.error === "string" ? message.error : "Host action failed"
@@ -195,16 +215,40 @@ export function pickRepositoryPaths(): Promise<string[]> | null {
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`
   return new Promise<string[]>((resolve, reject) => {
     const timeout = window.setTimeout(() => {
-      pendingHostActions.delete(requestId)
+      pendingRepositoryActions.delete(requestId)
       reject(new Error("Repository picker timed out"))
     }, 120_000)
-    pendingHostActions.set(requestId, { resolve, reject, timeout })
+    pendingRepositoryActions.set(requestId, { resolve, reject, timeout })
     window.parent.postMessage({
       source: "weft-codex-ui",
       type: "weft:host-action",
       version: 1,
       requestId,
       action: "repositories.pick",
+    }, hostOrigin)
+  })
+}
+
+export function requestThreadOpen(threadId: string): Promise<void> | null {
+  const hostOrigin = expectedHostOrigin()
+  if (!hostOrigin || window.parent === window) return null
+  ensureHostResultListener()
+  const requestId = typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  return new Promise<void>((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      pendingThreadActions.delete(requestId)
+      reject(new Error("Thread open timed out"))
+    }, 10_000)
+    pendingThreadActions.set(requestId, { resolve, reject, timeout })
+    window.parent.postMessage({
+      source: "weft-codex-ui",
+      type: "weft:host-action",
+      version: 1,
+      requestId,
+      action: "thread.open",
+      threadId,
     }, hostOrigin)
   })
 }

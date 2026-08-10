@@ -77,6 +77,24 @@ export interface Direction {
 export interface BoardEntry {
   issue: Issue
   directions: Direction[]
+  threads: ThreadBinding[]
+}
+
+export interface ThreadBinding {
+  thread_id: string
+  issue_id: number
+  direction_id: number | null
+  parent_thread_id: string
+  root_thread_id: string
+  title: string
+  is_primary: number
+  created_at: string
+  updated_at: string
+}
+
+export interface ThreadLocationResponse {
+  binding: ThreadBinding | null
+  workspaceId: number | null
 }
 
 export interface RepoProfile {

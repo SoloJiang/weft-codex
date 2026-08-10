@@ -55,6 +55,21 @@ CREATE TABLE IF NOT EXISTS direction (
     attention_reason TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS thread_binding (
+    thread_id TEXT PRIMARY KEY,
+    issue_id INTEGER NOT NULL,
+    direction_id INTEGER,
+    parent_thread_id TEXT NOT NULL DEFAULT '',
+    root_thread_id TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    is_primary INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_thread_binding_issue
+    ON thread_binding(issue_id, direction_id, is_primary);
+CREATE INDEX IF NOT EXISTS idx_thread_binding_parent
+    ON thread_binding(parent_thread_id);
 CREATE TABLE IF NOT EXISTS worktree (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     direction_id INTEGER NOT NULL,
@@ -175,6 +190,49 @@ async fn ensure_column(
     Ok(false)
 }
 
+async fn upsert_primary_direction_binding(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    direction: &DirectionRow,
+    thread_id: &str,
+    now: &str,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        "UPDATE thread_binding SET is_primary = 0, updated_at = ?
+         WHERE issue_id = ? AND direction_id = ?",
+    )
+    .bind(now)
+    .bind(direction.issue_id)
+    .bind(direction.id)
+    .execute(&mut **tx)
+    .await
+    .context("clear previous worker primary")?;
+    sqlx::query(
+        "INSERT INTO thread_binding
+         (thread_id, issue_id, direction_id, parent_thread_id,
+          root_thread_id, title, is_primary, created_at, updated_at)
+         VALUES (?, ?, ?, '', ?, ?, 1, ?, ?)
+         ON CONFLICT(thread_id) DO UPDATE SET
+           issue_id = excluded.issue_id,
+           direction_id = excluded.direction_id,
+           parent_thread_id = '',
+           root_thread_id = excluded.root_thread_id,
+           title = excluded.title,
+           is_primary = 1,
+           updated_at = excluded.updated_at",
+    )
+    .bind(thread_id)
+    .bind(direction.issue_id)
+    .bind(direction.id)
+    .bind(thread_id)
+    .bind(&direction.name)
+    .bind(now)
+    .bind(now)
+    .execute(&mut **tx)
+    .await
+    .context("upsert worker thread binding")?;
+    Ok(())
+}
+
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct WorkspaceRow {
     pub id: i64,
@@ -224,6 +282,22 @@ pub struct DirectionRow {
     pub attention: i64,
     pub attention_reason: String,
     pub created_at: String,
+}
+
+/// A native Codex thread bound to one logical Weft conversation. The
+/// canonical lead/worker thread is `is_primary=1`; Codex forks copy the same
+/// issue/direction owner while preserving their immediate parent.
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow, PartialEq, Eq)]
+pub struct ThreadBindingRow {
+    pub thread_id: String,
+    pub issue_id: i64,
+    pub direction_id: Option<i64>,
+    pub parent_thread_id: String,
+    pub root_thread_id: String,
+    pub title: String,
+    pub is_primary: i64,
+    pub created_at: String,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
@@ -315,6 +389,31 @@ impl Store {
                 .await
                 .context("settle legacy bus messages")?;
         }
+        // Databases created before native fork tracking already have their
+        // canonical thread ids on issue/direction. Materialize those roots so
+        // a later Codex fork can inherit ownership without a data migration.
+        sqlx::query(
+            "INSERT OR IGNORE INTO thread_binding
+             (thread_id, issue_id, direction_id, parent_thread_id,
+              root_thread_id, title, is_primary, created_at, updated_at)
+             SELECT lead_codex_thread_id, id, NULL, '', lead_codex_thread_id,
+                    title, 1, created_at, created_at
+             FROM issue WHERE lead_codex_thread_id != ''",
+        )
+        .execute(&pool)
+        .await
+        .context("backfill lead thread bindings")?;
+        sqlx::query(
+            "INSERT OR IGNORE INTO thread_binding
+             (thread_id, issue_id, direction_id, parent_thread_id,
+              root_thread_id, title, is_primary, created_at, updated_at)
+             SELECT codex_thread_id, issue_id, id, '', codex_thread_id,
+                    name, 1, created_at, created_at
+             FROM direction WHERE codex_thread_id != ''",
+        )
+        .execute(&pool)
+        .await
+        .context("backfill worker thread bindings")?;
         Ok(Self { pool })
     }
 
@@ -565,13 +664,127 @@ impl Store {
     }
 
     pub async fn set_lead_thread(&self, issue_id: i64, thread_id: &str) -> anyhow::Result<()> {
+        let issue = self
+            .get_issue(issue_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("unknown issue {issue_id}"))?;
+        let now = now_unix();
+        let mut tx = self.pool.begin().await.context("set_lead_thread begin")?;
         sqlx::query("UPDATE issue SET lead_codex_thread_id = ? WHERE id = ?")
             .bind(thread_id)
             .bind(issue_id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .context("set_lead_thread")?;
+        sqlx::query(
+            "UPDATE thread_binding SET is_primary = 0, updated_at = ?
+             WHERE issue_id = ? AND direction_id IS NULL",
+        )
+        .bind(&now)
+        .bind(issue_id)
+        .execute(&mut *tx)
+        .await
+        .context("clear previous lead primary")?;
+        sqlx::query(
+            "INSERT INTO thread_binding
+             (thread_id, issue_id, direction_id, parent_thread_id,
+              root_thread_id, title, is_primary, created_at, updated_at)
+             VALUES (?, ?, NULL, '', ?, ?, 1, ?, ?)
+             ON CONFLICT(thread_id) DO UPDATE SET
+               issue_id = excluded.issue_id,
+               direction_id = NULL,
+               parent_thread_id = '',
+               root_thread_id = excluded.root_thread_id,
+               title = excluded.title,
+               is_primary = 1,
+               updated_at = excluded.updated_at",
+        )
+        .bind(thread_id)
+        .bind(issue_id)
+        .bind(thread_id)
+        .bind(issue.title)
+        .bind(&now)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await
+        .context("upsert lead thread binding")?;
+        tx.commit().await.context("set_lead_thread commit")?;
         Ok(())
+    }
+
+    pub async fn get_thread_binding(
+        &self,
+        thread_id: &str,
+    ) -> anyhow::Result<Option<ThreadBindingRow>> {
+        sqlx::query_as::<_, ThreadBindingRow>(
+            "SELECT thread_id, issue_id, direction_id, parent_thread_id,
+                    root_thread_id, title, is_primary, created_at, updated_at
+             FROM thread_binding WHERE thread_id = ?",
+        )
+        .bind(thread_id)
+        .fetch_optional(&self.pool)
+        .await
+        .context("get_thread_binding")
+    }
+
+    pub async fn list_thread_bindings(
+        &self,
+        issue_id: i64,
+    ) -> anyhow::Result<Vec<ThreadBindingRow>> {
+        sqlx::query_as::<_, ThreadBindingRow>(
+            "SELECT thread_id, issue_id, direction_id, parent_thread_id,
+                    root_thread_id, title, is_primary, created_at, updated_at
+             FROM thread_binding WHERE issue_id = ?
+             ORDER BY CASE WHEN direction_id IS NULL THEN 0 ELSE 1 END,
+                      direction_id, is_primary DESC, created_at, thread_id",
+        )
+        .bind(issue_id)
+        .fetch_all(&self.pool)
+        .await
+        .context("list_thread_bindings")
+    }
+
+    /// Bind a native Codex fork to the same logical chat as its known parent.
+    /// The canonical issue/direction columns are intentionally untouched:
+    /// forks are selectable branches, not automatic primary replacements.
+    pub async fn bind_thread_fork(
+        &self,
+        thread_id: &str,
+        parent_thread_id: &str,
+        title: &str,
+    ) -> anyhow::Result<ThreadBindingRow> {
+        if thread_id == parent_thread_id {
+            anyhow::bail!("invalid thread fork: child equals parent");
+        }
+        let parent = self
+            .get_thread_binding(parent_thread_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("unknown parent thread {parent_thread_id}"))?;
+        let title = title.trim();
+        let now = now_unix();
+        sqlx::query(
+            "INSERT INTO thread_binding
+             (thread_id, issue_id, direction_id, parent_thread_id,
+              root_thread_id, title, is_primary, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)
+             ON CONFLICT(thread_id) DO UPDATE SET
+               title = CASE WHEN excluded.title != '' THEN excluded.title ELSE thread_binding.title END,
+               updated_at = excluded.updated_at",
+        )
+        .bind(thread_id)
+        .bind(parent.issue_id)
+        .bind(parent.direction_id)
+        .bind(parent_thread_id)
+        .bind(&parent.root_thread_id)
+        .bind(title)
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.pool)
+        .await
+        .context("bind_thread_fork")?;
+        self.get_thread_binding(thread_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("unknown thread {thread_id} after binding"))
     }
 
     // ── directions ────────────────────────────────────────────────────────
@@ -686,12 +899,24 @@ impl Store {
     }
 
     pub async fn set_direction_thread(&self, id: i64, thread_id: &str) -> anyhow::Result<()> {
+        let direction = self
+            .get_direction(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("unknown direction {id}"))?;
+        let now = now_unix();
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .context("set_direction_thread begin")?;
         sqlx::query("UPDATE direction SET codex_thread_id = ? WHERE id = ?")
             .bind(thread_id)
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .context("set_direction_thread")?;
+        upsert_primary_direction_binding(&mut tx, &direction, thread_id, &now).await?;
+        tx.commit().await.context("set_direction_thread commit")?;
         Ok(())
     }
 
@@ -704,6 +929,16 @@ impl Store {
         thread_id: &str,
         status: &str,
     ) -> anyhow::Result<()> {
+        let direction = self
+            .get_direction(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("unknown direction {id}"))?;
+        let now = now_unix();
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .context("activate_direction_thread begin")?;
         sqlx::query(
             "UPDATE direction SET codex_thread_id = ?, status = ?,
              attention = 0, attention_reason = '' WHERE id = ?",
@@ -711,9 +946,13 @@ impl Store {
         .bind(thread_id)
         .bind(status)
         .bind(id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .context("activate_direction_thread")?;
+        upsert_primary_direction_binding(&mut tx, &direction, thread_id, &now).await?;
+        tx.commit()
+            .await
+            .context("activate_direction_thread commit")?;
         Ok(())
     }
 
@@ -1368,5 +1607,98 @@ mod tests {
         .await
         .expect("worktree count");
         assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn thread_bindings_keep_native_forks_under_their_logical_chat() {
+        let (store, _dir) = fixture().await;
+        let ws = store.create_workspace("W", "w").await.expect("workspace");
+        let repo = store
+            .add_repo(ws, "api", "/tmp/api", "main")
+            .await
+            .expect("repo");
+        let issue = store
+            .create_issue(ws, "Issue", "issue")
+            .await
+            .expect("issue");
+        let direction = store
+            .add_direction(issue, "Task", "task", repo, "impl-only", "main", "", "spec")
+            .await
+            .expect("direction");
+
+        store
+            .set_lead_thread(issue, "lead-primary")
+            .await
+            .expect("lead");
+        store
+            .set_direction_thread(direction, "worker-primary")
+            .await
+            .expect("worker");
+        let lead_fork = store
+            .bind_thread_fork("lead-fork-1", "lead-primary", "Alternative plan")
+            .await
+            .expect("lead fork");
+        let nested_fork = store
+            .bind_thread_fork("lead-fork-2", "lead-fork-1", "")
+            .await
+            .expect("nested fork");
+
+        assert_eq!(lead_fork.issue_id, issue);
+        assert_eq!(lead_fork.direction_id, None);
+        assert_eq!(lead_fork.parent_thread_id, "lead-primary");
+        assert_eq!(lead_fork.root_thread_id, "lead-primary");
+        assert_eq!(lead_fork.is_primary, 0);
+        assert_eq!(nested_fork.root_thread_id, "lead-primary");
+
+        let bindings = store.list_thread_bindings(issue).await.expect("bindings");
+        assert_eq!(bindings.len(), 4);
+        assert_eq!(bindings[0].thread_id, "lead-primary");
+        assert_eq!(bindings[0].is_primary, 1);
+        assert_eq!(bindings[3].thread_id, "worker-primary");
+        assert!(store
+            .bind_thread_fork("orphan", "unknown", "")
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn canonical_thread_columns_backfill_binding_rows_on_reopen() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let path = dir.path().join("t.db");
+        let store = Store::open(&path).await.expect("open");
+        let ws = store.create_workspace("W", "w").await.expect("workspace");
+        let repo = store
+            .add_repo(ws, "api", "/tmp/api", "main")
+            .await
+            .expect("repo");
+        let issue = store
+            .create_issue(ws, "Issue", "issue")
+            .await
+            .expect("issue");
+        let direction = store
+            .add_direction(issue, "Task", "task", repo, "impl-only", "main", "", "spec")
+            .await
+            .expect("direction");
+        store
+            .set_lead_thread(issue, "lead-old")
+            .await
+            .expect("lead");
+        store
+            .set_direction_thread(direction, "worker-old")
+            .await
+            .expect("worker");
+        sqlx::query("DELETE FROM thread_binding")
+            .execute(&store.pool)
+            .await
+            .expect("simulate old database");
+        drop(store);
+
+        let reopened = Store::open(&path).await.expect("reopen");
+        let bindings = reopened
+            .list_thread_bindings(issue)
+            .await
+            .expect("bindings");
+        assert_eq!(bindings.len(), 2);
+        assert!(bindings.iter().all(|binding| binding.is_primary == 1));
     }
 }

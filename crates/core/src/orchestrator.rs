@@ -27,7 +27,7 @@
 //! dropped the start (busy with a foreign turn), the phantom active-turn
 //! record is cleared, and the message parks for a later wake.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
@@ -39,7 +39,7 @@ use weft_app_server::client::{Client, ThreadMsg};
 use weft_app_server::proto::ChatEvent;
 
 use crate::bus::{BusRegistry, Msg};
-use crate::store::Store;
+use crate::store::{Store, ThreadBindingRow};
 use crate::{brief, events, runtime, worktree};
 
 /// Stable attention reason stored when automatic worker dispatch fails. The UI
@@ -208,6 +208,75 @@ impl Orchestrator {
             Some(d) if d.issue_id == issue_id => Ok(non_empty(d.codex_thread_id)),
             _ => Ok(None),
         }
+    }
+
+    /// Resolve a native Codex thread back to its logical Lead/Task owner.
+    /// Known primary and fork rows are a pure store lookup. An unknown active
+    /// thread is inspected through metadata-only `thread/read`; only an
+    /// explicit `forkedFromId` chain reaching a known binding is adopted.
+    /// This prevents unrelated native Codex chats from being pulled into a
+    /// Weft issue merely because they share a cwd or source label.
+    pub async fn resolve_thread_binding(
+        &self,
+        thread_id: &str,
+    ) -> anyhow::Result<Option<ThreadBindingRow>> {
+        if let Some(binding) = self.store.get_thread_binding(thread_id).await? {
+            return Ok(Some(binding));
+        }
+        if !runtime::agents_allowed() {
+            return Ok(None);
+        }
+
+        const MAX_FORK_DEPTH: usize = 32;
+        let client = codex::client().await?;
+        let mut cursor = thread_id.to_string();
+        let mut pending = Vec::new();
+        let mut seen = HashSet::new();
+        let ancestor = loop {
+            if !seen.insert(cursor.clone()) {
+                anyhow::bail!("invalid Codex fork cycle at {cursor}");
+            }
+            if let Some(binding) = self.store.get_thread_binding(&cursor).await? {
+                break Some(binding);
+            }
+            if pending.len() >= MAX_FORK_DEPTH {
+                anyhow::bail!("invalid Codex fork chain exceeds {MAX_FORK_DEPTH} threads");
+            }
+            let info = match client.read_thread(&cursor).await {
+                Ok(info) => info,
+                Err(_) => break None,
+            };
+            if info.id != cursor {
+                anyhow::bail!("invalid Codex thread metadata for {cursor}");
+            }
+            let Some(parent_id) = info.forked_from_id.clone() else {
+                break None;
+            };
+            pending.push(info);
+            cursor = parent_id;
+        };
+
+        let Some(mut binding) = ancestor else {
+            return Ok(None);
+        };
+        for info in pending.iter().rev() {
+            let title = info.name.as_deref().unwrap_or(info.preview.as_str());
+            binding = self
+                .store
+                .bind_thread_fork(&info.id, &binding.thread_id, title)
+                .await?;
+        }
+        if !pending.is_empty() {
+            events::emit(
+                "thread.binding.updated",
+                json!({
+                    "threadId": thread_id,
+                    "issueId": binding.issue_id,
+                    "directionId": binding.direction_id
+                }),
+            );
+        }
+        Ok(Some(binding))
     }
 
     // ── spawning ──────────────────────────────────────────────────────────
@@ -943,6 +1012,26 @@ mod tests {
         let ws = orch.store.create_workspace("W", "w").await.expect("ws");
         let issue = orch.store.create_issue(ws, "one", "one").await.expect("i");
         assert_eq!(orch.thread_for(issue, "lead").await.expect("resolve"), None);
+    }
+
+    #[tokio::test]
+    async fn resolve_known_thread_binding_does_not_require_app_server() {
+        let (orch, _dir) = fixture().await;
+        let ws = orch.store.create_workspace("W", "w").await.expect("ws");
+        let issue = orch.store.create_issue(ws, "one", "one").await.expect("i");
+        orch.store
+            .set_lead_thread(issue, "lead-primary")
+            .await
+            .expect("lead");
+
+        let binding = orch
+            .resolve_thread_binding("lead-primary")
+            .await
+            .expect("resolve")
+            .expect("binding");
+        assert_eq!(binding.issue_id, issue);
+        assert_eq!(binding.direction_id, None);
+        assert_eq!(binding.is_primary, 1);
     }
 
     #[tokio::test]

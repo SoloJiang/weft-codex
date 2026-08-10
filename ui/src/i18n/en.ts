@@ -9,6 +9,15 @@ const en = {
   "sidebar.needsAttention": "Needs attention",
   "sidebar.noIssues": "No issues yet",
   "sidebar.taskProgress": "{done} of {total} tasks done",
+  "sidebar.primary": "Primary",
+  "sidebar.active": "Active",
+  "sidebar.mainChat": "Main chat",
+  "sidebar.forkChat": "Fork",
+  "sidebar.leadStarting": "Lead is starting…",
+  "sidebar.noTasks": "No tasks yet",
+  "sidebar.openIssueLead": "Open the primary lead chat for {title}",
+  "sidebar.expandIssue": "Expand {title}",
+  "sidebar.collapseIssue": "Collapse {title}",
   "workspace.label": "Workspace",
   "workspace.none": "No workspace yet",
   "workspace.namePlaceholder": "Workspace name",
@@ -19,6 +28,16 @@ const en = {
   "status.working": "Working",
   "status.review": "Review",
   "status.done": "Done",
+
+  "kanban.searchLabel": "Search tasks or issues",
+  "kanban.searchPlaceholder": "Search tasks or issues",
+  "kanban.issueFilterLabel": "Filter by issue",
+  "kanban.allIssues": "All issues",
+  "kanban.noMatchingTasks": "No tasks match this search or filter.",
+  "kanban.boardLabel": "Tasks by status",
+  "kanban.openIssue": "Open issue {title}",
+  "kanban.taskCount": "{count} tasks",
+  "kanban.moreActions": "More task actions",
 
   "issue.create": "Create issue",
   "issue.titleLabel": "Issue title",
@@ -124,6 +143,7 @@ const en = {
   "loading.analyzingRepo": "Analyzing…",
   "loading.analyzingWorkspace": "Analyzing…",
   "loading.analyzingRelations": "Analyzing…",
+  "loading.openingThread": "Opening…",
 
   "success.workspaceCreated": "Workspace created.",
   "success.messageSent": "Message sent.",
@@ -148,6 +168,7 @@ const en = {
 
   "err.prefix": "Error: ",
   "err.taskStart": "The worker could not start. Check the repository and Codex status, then retry.",
+  "err.threadOpen": "This chat is not available in Codex yet. Try again in a moment.",
   "err.network": "The service could not be reached.",
   "err.unknown": "Something went wrong.",
 } as const

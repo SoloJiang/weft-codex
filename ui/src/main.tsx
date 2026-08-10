@@ -11,9 +11,9 @@ const surface = readUiSurface()
 document.documentElement.dataset.uiSurface = surface
 
 function Root() {
-  const { lang } = useHostContext()
+  const { lang, context } = useHostContext()
   let content = <App />
-  if (surface === "sidebar") content = <SidebarApp />
+  if (surface === "sidebar") content = <SidebarApp hostContext={context} />
   if (surface === "workspace") content = <App embedded />
   return (
     <I18nProvider lang={lang}>

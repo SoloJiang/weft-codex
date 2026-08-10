@@ -1,4 +1,4 @@
-import { ALLOWED_CODEX_TOKENS } from "./probes.js"
+import { ALLOWED_CODEX_TOKENS, VISIBLE_MAIN_HELPERS_SOURCE } from "./probes.js"
 
 export type HostMode = "work" | "codex" | "weft"
 
@@ -65,6 +65,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
     const STYLE_ID = "weft-codex-host-style";
     const MODE_ITEM_ATTR = "data-weft-codex-mode-item";
     const NATIVE_CHECK_ATTR = "data-weft-codex-native-mode-check";
+    const THREAD_OPEN_RETRY_DELAYS = [0, 80, 160, 320, 640, 1000, 1800];
     const childOrigin = new URL(config.webBaseUrl).origin;
     const previous = window[GLOBAL_KEY];
     if (previous && typeof previous.dispose === "function") previous.dispose();
@@ -277,8 +278,10 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       return true;
     }
 
+    ${VISIBLE_MAIN_HELPERS_SOURCE}
+
     function ensureWorkspaceRoot() {
-      const mainRoute = document.querySelector("main");
+      const mainRoute = visibleMainRoute();
       if (!(mainRoute instanceof HTMLElement)) return false;
       let root = state.workspaceRoot;
       if (!(root instanceof HTMLElement)) {
@@ -539,6 +542,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         locale: root.lang || navigator.language || "en",
         tokens,
         mode: state.mode,
+        view: state.view,
         sidebarCollapsed,
         security: { cspBypass: state.cspBypass },
       };
@@ -599,16 +603,25 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       return typeof value === "string" && /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(value);
     }
 
-    function openNativeThread(threadId) {
+    function nativeThreadRow(threadId) {
       const rows = [...document.querySelectorAll("[data-app-action-sidebar-thread-id]")];
-      const row = rows.find((candidate) => {
+      return rows.find((candidate) => {
         const value = candidate.getAttribute("data-app-action-sidebar-thread-id") || "";
         return value === threadId || value.endsWith(":" + threadId);
       });
-      if (!(row instanceof HTMLElement)) return false;
-      row.click();
-      setView("thread");
-      return true;
+    }
+
+    async function openNativeThread(threadId) {
+      for (const delay of THREAD_OPEN_RETRY_DELAYS) {
+        if (delay) await new Promise((resolve) => window.setTimeout(resolve, delay));
+        if (state.disposed) return false;
+        const row = nativeThreadRow(threadId);
+        if (!(row instanceof HTMLElement)) continue;
+        row.click();
+        setView("thread");
+        return true;
+      }
+      return false;
     }
 
     function onFrameMessage(event) {
@@ -629,10 +642,18 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         actionResult(frame, message.requestId, true);
         return;
       }
-      if (message.action === "thread.open" && validThreadId(message.threadId)) {
-        const opened = openNativeThread(message.threadId);
-        actionResult(frame, message.requestId, opened, opened ? undefined : "thread-not-in-native-sidebar");
-        if (!opened) notifyHost("thread.open.missing", { threadId: message.threadId });
+      if (message.action === "thread.open") {
+        if (!validThreadId(message.threadId)) {
+          actionResult(frame, message.requestId, false, "invalid-thread-id");
+          return;
+        }
+        void openNativeThread(message.threadId).then((opened) => {
+          if (state.disposed) return;
+          actionResult(frame, message.requestId, opened, opened ? undefined : "thread-not-in-native-sidebar");
+          if (!opened) notifyHost("thread.open.missing", { threadId: message.threadId });
+        }).catch(() => {
+          if (!state.disposed) actionResult(frame, message.requestId, false, "thread-open-failed");
+        });
         return;
       }
       if (message.action === "repositories.pick") {
@@ -700,7 +721,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       });
       state.mutationObserver.observe(document.documentElement, {
         attributes: true,
-        attributeFilter: ["class", "lang", "style"],
+        attributeFilter: ["class", "lang", "style", "inert", "aria-hidden", "hidden"],
         childList: true,
         subtree: true,
       });

@@ -67,6 +67,11 @@ Codex Desktop（官方，不修改安装包）
 - `direction`：+ `codex_thread_id`（string, nullable）。status 推导来源由
   引擎事件改为 app-server 线程事件 + 明确的验收动作，五态不变
   （queued | planning | working | review | done）。
+- `thread_binding`：每个原生 Codex thread 一行，记录 `issue_id`、可空的
+  `direction_id`、`parent_thread_id`、`root_thread_id`、展示标题与
+  `is_primary`。`issue.lead_codex_thread_id` / `direction.codex_thread_id`
+  仍是 canonical Primary 指针；fork 只新增 binding，绝不替换 Primary。
+  旧 canonical 指针在打开数据库时幂等回填到该表。
 - `session` 实体废止（被 Codex 线程取代）；历史数据随客户端一起退役。
 - 新流程保留 durable bus 记录；聊天历史由 Codex 原生线程持有，不再新增
   `lead_message` transcript store。
@@ -255,7 +260,10 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
     仓库、issue 列表和 attention 摘要；不放 Weft 品牌、语言/主题开关、聊天、
     长表单或 `direction` 术语。像 Weft 一样提供一级“新建 issue”动作，通过
     bridge 在主工作区打开“标题 + 类型”弹窗；创建后自动启动 Lead 并进入原生
-    Codex 对话，不要求先添加仓库；
+    Codex 对话，不要求先添加仓库。Issue 主行点击同时展开会话树并打开其
+    Primary Lead；右侧 chevron 只负责展开/收起，不改变当前线程。会话树按
+    Lead / Tasks 分组，fork 归入其逻辑 Lead 或 Task 下；打开任何原生线程时，
+    sidebar 自动切到对应 workspace、展开 issue 并精确高亮该线程；
   - `workspace`：Codex 主区域，只渲染 Kanban / 仓库 / issue detail，移除重复
     topbar 和重复的新建 issue 表单。Issue 详情不提供手工新建任务，任务由 lead
     chat 调用 `task_create` 产生并自动调度；lead / worker 沟通仍进入原生线程。
@@ -332,13 +340,25 @@ ChatGPT / Codex，Weft 作为第三个 `menuitem` 注入；进入 Weft 前先经
 Codex 底座，退出 ChatGPT/Codex 后宿主 label/ARIA 正确恢复。Weft item 只显示一个
 选中图标，英文副标题不截断。
 
-当前 build 6119 的 `frame-src` 明确阻止 loopback iframe；`Page.setBypassCSP` 对已
+Codex 路由过渡会同时保留一个不可见、`inert` 的旧 `main` 与一个可见主区域；
+workspace adapter 不使用 `querySelector("main")`，而是只选择在 viewport 内、
+可见、可交互且不位于 `inert` / `aria-hidden` 祖先下的最大语义 `main`。路由的
+`inert` / `aria-hidden` / `hidden` 状态变化会触发重新挂载；capability probe
+使用同一套判定，避免“探针通过但 UI 被挂进隐藏页面”的假阳性。
+
+build 6119 与当前复验的 build 6321 均由 `frame-src` 阻止 loopback iframe；
+`Page.setBypassCSP` 对已
 提交文档不追溯生效，必须先启用再 reload。Host 已按“首次握手失败 → 专用实例启用
-bypass → 安装 document-start script → reload → 双 frame handshake”执行，UI 在
-sidebar 显示兼容状态；退出时禁用 bypass 并 reload 恢复 CSP。真实 Lead deep-link
+bypass → 安装 document-start script → reload → 双 frame handshake”执行；兼容
+细节只进入 launcher 日志 / `doctor`，不作为常驻产品 UI。退出时禁用 bypass 并
+reload 恢复 CSP。真实 Lead deep-link
 不再依赖 renderer 内无效的 `location.assign(codex://...)`，而是按
 `data-app-action-sidebar-thread-id` 命中原生行：实测从 Kanban 打开同一 Lead Thread，
-主区由 Codex 原生渲染，再点 sidebar Kanban 返回 workspace。原生多目录 picker
+主区由 Codex 原生渲染，再点 sidebar Kanban 返回 workspace。刚创建的线程可能晚于
+Weft UI 数秒出现在原生列表，因此 Host 在返回失败前按固定、有限退避等待语义行；
+UI 等待 action result，期间显示“正在打开”，最终失败则显示可重试错误，不再
+静默吞掉点击。OS `codex://` 只保留 standalone anchor 的降级语义，不作为专用
+profile Host 的 fallback，避免 deep link 被另一个 Codex 实例接走。原生多目录 picker
 通过受控 Host action + macOS folder dialog 接入，iframe 不获得文件系统权限。
 
 官方 plugin 仍可作为 skills / MCP / 分发层，但当前公开 manifest 没有任意
@@ -357,6 +377,7 @@ interface HostContextV1 {
   locale: string;
   tokens: Record<AllowedCodexToken, string>;
   mode: "work" | "codex" | "weft";
+  view?: "workspace" | "thread";
   projectId?: string;
   threadId?: string;
   sidebarCollapsed: boolean;
@@ -373,16 +394,23 @@ interface HostContextV1 {
   UI 写入自己的根节点。宿主主题或圆角变化后重新发布快照。
 - `locale` 由宿主明确传递，iframe 不使用自己的 `navigator.language` 猜测宿主
   语言；独立浏览器才回退到系统语言。
+- `view` 明确区分 Weft workspace overlay 与 Codex 原生 thread surface。
+  `threadId` 只有在 `view === "thread"` 时参与 sidebar 选中态；返回 Kanban / 仓库
+  后即使原生 DOM 仍暂时保留 active thread，也不能残留错误高亮。
 - 所有 frame → host 请求使用固定 origin、版本、action allowlist 与 payload
   schema；禁止 `postMessage("*")` 执行高权限动作。
 - 注入使用独立 profile、loopback-only CDP、document-start 脚本与 ready
   handshake；renderer 被导航或替换后重新探测、重新挂载，不能重复注册入口。
 - 若当前发行版 CSP 阻止本地 iframe，只允许 launcher 对专用实例启用 CSP
-  bypass；UI 必须展示该安全状态。CDP 端口无应用层认证，launcher 存活期间
-  仅允许可信本机代码，退出时关闭端口与子进程。
+  bypass；该诊断状态只在 CLI / `doctor` 中可见，不占用 sidebar。CDP 端口无
+  应用层认证，launcher 存活期间仅允许可信本机代码，退出时关闭端口与子进程。
 - capability probes 至少覆盖：主 renderer、页面 mount、侧边栏入口、原生
   thread route、模式切换器、主题/locale、titlebar drag region。Tier 2 任一
   subtractive probe 失败即回 Tier 1；基础挂载失败则 safe mode。
+- 对当前 native thread 的反向定位先查 `thread_binding`；若是刚由 Codex fork
+  出来的未知 thread，则用元数据级 `thread/read` 读取明确的 `forkedFromId`，
+  有界向上追溯到已知祖先后写回整条 binding 链。无已知祖先的普通 Codex thread
+  保持 unbound，不猜测归属。UI 通过 `POST /api/threads/resolve` 完成该解析。
 - 原生线程跳转优先使用稳定 route/deep link；composer prefill 只用于创建普通
   人类线程，不替代 weftd 通过 app-server 创建的 lead/worker 线程。
 - 该定制不会改变 Codex Computer Use 的自操作安全边界。当前发行版在尝试读取
@@ -450,8 +478,9 @@ Desktop 相关（1、3）仍需运行时闭环；app-server 相关（2、4、5�
 1. `open -a ChatGPT --args --remote-debugging-port=...` + CDP attach 稳定，
    注入脚本活过页面导航与会话切换；探针需同时覆盖 Tier 2 所需的侧边栏
    结构与顶层模式切换器锚点（见 7.5）。**PASS（2026-08-09）**：已读取
-   当前安装 `ChatGPT.app`（bundle id `com.openai.codex`，版本 `26.727.51351`，
-   build `6119`），发行 bundle 存在 `data-app-action-sidebar-scroll|section|
+   当前安装 `ChatGPT.app`（bundle id `com.openai.codex`；初验版本 `26.727.51351` /
+   build `6119`，2026-08-10 复验版本 `26.803.41515` / build `6321`），发行 bundle
+   存在 `data-app-action-sidebar-scroll|section|
    section-heading|project-row|thread-row` 等语义属性；`launcher/` 已实现安装检测、
    CDP target 选择、renderer hydration probe 与 `safe-mode | additive | weft-mode`
    分类测试；专用 profile 真机完成 Weft mode 菜单注入、document-start reload、

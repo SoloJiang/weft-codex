@@ -44,6 +44,7 @@ const EVENT_NAMES = [
   "bus.parked",
   "bus.undelivered",
   "thread.human-active",
+  "thread.binding.updated",
 ]
 
 function errorText(error: unknown, network: string, unknown: string): string {
@@ -232,8 +233,12 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
   const launchLead = React.useCallback(async (issueId: number) => {
     const started = await api<{ codexThreadId: string }>(`/api/issues/${issueId}/spawn-lead`, jsonRequest("POST"))
     await refreshCurrent()
-    window.setTimeout(() => openCodexThread(started.codexThreadId), 0)
-  }, [refreshCurrent])
+    window.setTimeout(() => {
+      void openCodexThread(started.codexThreadId).catch(() => {
+        notifyError(new Error(t("err.threadOpen")))
+      })
+    }, 0)
+  }, [notifyError, refreshCurrent, t])
 
   const createIssue = async (title: string, kind: IssueKind) => {
     if (!workspaceId) throw new Error(t("err.unknown"))
