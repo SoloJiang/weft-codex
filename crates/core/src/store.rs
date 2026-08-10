@@ -70,6 +70,23 @@ CREATE INDEX IF NOT EXISTS idx_thread_binding_issue
     ON thread_binding(issue_id, direction_id, is_primary);
 CREATE INDEX IF NOT EXISTS idx_thread_binding_parent
     ON thread_binding(parent_thread_id);
+CREATE TABLE IF NOT EXISTS issue_artifact (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    issue_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL DEFAULT '',
+    format TEXT NOT NULL DEFAULT 'markdown',
+    content TEXT NOT NULL DEFAULT '',
+    revision INTEGER NOT NULL DEFAULT 1,
+    source TEXT NOT NULL DEFAULT 'agent',
+    source_thread_id TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'draft',
+    stale_reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_issue_artifact_issue
+    ON issue_artifact(issue_id, kind, status);
 CREATE TABLE IF NOT EXISTS worktree (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     direction_id INTEGER NOT NULL,
@@ -120,6 +137,173 @@ CREATE INDEX IF NOT EXISTS idx_relation_ws ON repo_relation(workspace_id);
 #[derive(Clone)]
 pub struct Store {
     pub pool: SqlitePool,
+}
+
+/// Largest artifact payload we will store. Artifacts are documents a person
+/// reads and an agent revises, not blobs — a runaway generation should surface
+/// at the write, not when a viewer refuses to render it.
+pub const ARTIFACT_CONTENT_LIMIT: usize = 1 << 20;
+
+const ARTIFACT_KINDS: [&str; 4] = ["test_cases", "requirements", "plan", "change_set_summary"];
+const ARTIFACT_FORMATS: [&str; 3] = ["markdown_tree", "markdown", "json"];
+const ARTIFACT_SOURCES: [&str; 3] = ["agent", "user", "system"];
+
+/// Artifact lifecycle. Two transitions are one-way, and each is enforced where
+/// it can be decided:
+///
+/// - **`superseded` is terminal.** A replaced artifact must never come back, or
+///   a late write could resurrect a plan that already moved on. This depends on
+///   the stored row, so it rides in the guarded UPDATE's `WHERE`.
+/// - **Nothing re-enters `draft`.** It is the creation state only. This depends
+///   solely on the target, so it is rejected before touching the database.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArtifactStatus {
+    Draft,
+    Ready,
+    Stale,
+    Superseded,
+}
+
+impl ArtifactStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::Ready => "ready",
+            Self::Stale => "stale",
+            Self::Superseded => "superseded",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "draft" => Some(Self::Draft),
+            "ready" => Some(Self::Ready),
+            "stale" => Some(Self::Stale),
+            "superseded" => Some(Self::Superseded),
+            _ => None,
+        }
+    }
+}
+
+/// Why an artifact write was refused.
+///
+/// Deliberately a type rather than a message: callers (and later the HTTP and
+/// MCP layers) must branch on the reason without matching strings, and a
+/// revision conflict has to carry both revisions so the caller can decide
+/// between reloading and merging.
+#[derive(Debug)]
+pub enum ArtifactError {
+    NotFound {
+        id: i64,
+    },
+    RevisionConflict {
+        id: i64,
+        expected: i64,
+        actual: i64,
+    },
+    ContentTooLarge {
+        limit: usize,
+        actual: usize,
+    },
+    UnsupportedValue {
+        field: &'static str,
+        value: String,
+    },
+    IllegalTransition {
+        from: ArtifactStatus,
+        to: ArtifactStatus,
+    },
+    Database(anyhow::Error),
+}
+
+impl std::fmt::Display for ArtifactError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound { id } => write!(f, "artifact {id} does not exist"),
+            Self::RevisionConflict {
+                id,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "artifact {id} moved on: expected revision {expected}, found {actual}"
+            ),
+            Self::ContentTooLarge { limit, actual } => {
+                write!(f, "artifact content is {actual} bytes, limit is {limit}")
+            }
+            Self::UnsupportedValue { field, value } => {
+                write!(f, "unsupported artifact {field}: {value}")
+            }
+            Self::IllegalTransition { from, to } => write!(
+                f,
+                "artifact cannot move from {} to {}",
+                from.as_str(),
+                to.as_str()
+            ),
+            Self::Database(error) => write!(f, "artifact store failure: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for ArtifactError {}
+
+impl From<sqlx::Error> for ArtifactError {
+    fn from(error: sqlx::Error) -> Self {
+        Self::Database(error.into())
+    }
+}
+
+/// What a caller supplies to create an artifact. Revision, status and
+/// timestamps are the store's to assign, so they are absent here.
+pub struct NewArtifact<'a> {
+    pub issue_id: i64,
+    pub kind: &'a str,
+    pub title: &'a str,
+    pub format: &'a str,
+    pub content: &'a str,
+    pub source: &'a str,
+    pub source_thread_id: &'a str,
+}
+
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct ArtifactRow {
+    pub id: i64,
+    pub issue_id: i64,
+    pub kind: String,
+    pub title: String,
+    pub format: String,
+    pub content: String,
+    pub revision: i64,
+    pub source: String,
+    pub source_thread_id: String,
+    pub status: String,
+    pub stale_reason: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+fn check_allowed(
+    field: &'static str,
+    value: &str,
+    allowed: &[&str],
+) -> Result<(), ArtifactError> {
+    if allowed.contains(&value) {
+        return Ok(());
+    }
+    Err(ArtifactError::UnsupportedValue {
+        field,
+        value: value.to_string(),
+    })
+}
+
+fn check_content(content: &str) -> Result<(), ArtifactError> {
+    if content.len() <= ARTIFACT_CONTENT_LIMIT {
+        return Ok(());
+    }
+    Err(ArtifactError::ContentTooLarge {
+        limit: ARTIFACT_CONTENT_LIMIT,
+        actual: content.len(),
+    })
 }
 
 pub fn now_unix() -> String {
@@ -350,7 +534,13 @@ impl Store {
         let options = SqliteConnectOptions::from_str(&url)
             .with_context(|| format!("parse store url {url}"))?
             .create_if_missing(true)
-            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+            .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+            // WAL still serialises writers. Without a busy timeout the loser of
+            // a write race fails immediately with SQLITE_BUSY ("database is
+            // locked") instead of waiting its turn — which surfaces to callers
+            // as an opaque database error where the real answer is usually a
+            // clean optimistic-lock conflict a moment later.
+            .busy_timeout(std::time::Duration::from_secs(5));
         let pool = SqlitePoolOptions::new()
             .max_connections(4)
             .connect_with(options)
@@ -785,6 +975,192 @@ impl Store {
         self.get_thread_binding(thread_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("unknown thread {thread_id} after binding"))
+    }
+
+    // ── issue artifacts ───────────────────────────────────────────────────
+    //
+    // Artifacts belong to an Issue, never to a Thread: every fork of a Lead
+    // must see the same logical document. Concurrency is therefore real — two
+    // forks can revise the same artifact at once — so every mutation is an
+    // optimistic write guarded by `expected_revision`, and the guard lives in
+    // the UPDATE's WHERE clause rather than in a read-then-write gap.
+
+    pub async fn create_artifact(
+        &self,
+        input: NewArtifact<'_>,
+    ) -> Result<ArtifactRow, ArtifactError> {
+        check_allowed("kind", input.kind, &ARTIFACT_KINDS)?;
+        check_allowed("format", input.format, &ARTIFACT_FORMATS)?;
+        check_allowed("source", input.source, &ARTIFACT_SOURCES)?;
+        check_content(input.content)?;
+
+        let now = now_unix();
+        let id = sqlx::query(
+            "INSERT INTO issue_artifact
+             (issue_id, kind, title, format, content, revision, source,
+              source_thread_id, status, stale_reason, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, 1, ?, ?, 'draft', '', ?, ?)",
+        )
+        .bind(input.issue_id)
+        .bind(input.kind)
+        .bind(input.title.trim())
+        .bind(input.format)
+        .bind(input.content)
+        .bind(input.source)
+        .bind(input.source_thread_id)
+        .bind(&now)
+        .bind(&now)
+        .execute(&self.pool)
+        .await?
+        .last_insert_rowid();
+
+        self.get_artifact(id)
+            .await?
+            .ok_or(ArtifactError::NotFound { id })
+    }
+
+    pub async fn get_artifact(&self, id: i64) -> Result<Option<ArtifactRow>, ArtifactError> {
+        let row = sqlx::query_as::<_, ArtifactRow>("SELECT * FROM issue_artifact WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row)
+    }
+
+    pub async fn list_artifacts(&self, issue_id: i64) -> Result<Vec<ArtifactRow>, ArtifactError> {
+        let rows = sqlx::query_as::<_, ArtifactRow>(
+            "SELECT * FROM issue_artifact WHERE issue_id = ? ORDER BY kind, id",
+        )
+        .bind(issue_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    /// Replace an artifact's content, bumping the revision.
+    ///
+    /// `expected_revision` is the caller's claim about what it edited. If the
+    /// row moved on in between, nothing is written and the current revision
+    /// comes back in the error — a stale fork can never clobber a newer one.
+    pub async fn update_artifact_content(
+        &self,
+        id: i64,
+        expected_revision: i64,
+        content: &str,
+        title: &str,
+        source: &str,
+        source_thread_id: &str,
+    ) -> Result<ArtifactRow, ArtifactError> {
+        check_allowed("source", source, &ARTIFACT_SOURCES)?;
+        check_content(content)?;
+
+        let now = now_unix();
+        let changed = sqlx::query(
+            "UPDATE issue_artifact
+             SET content = ?, title = ?, source = ?, source_thread_id = ?,
+                 revision = revision + 1, stale_reason = '', updated_at = ?
+             WHERE id = ? AND revision = ? AND status != 'superseded'",
+        )
+        .bind(content)
+        .bind(title.trim())
+        .bind(source)
+        .bind(source_thread_id)
+        .bind(&now)
+        .bind(id)
+        .bind(expected_revision)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+
+        if changed == 1 {
+            return self
+                .get_artifact(id)
+                .await?
+                .ok_or(ArtifactError::NotFound { id });
+        }
+        Err(self.explain_refusal(id, expected_revision, None).await)
+    }
+
+    /// Move an artifact between lifecycle states under the same optimistic
+    /// guard. `stale_reason` is kept only for `stale`, so a row can never claim
+    /// to be ready while still carrying the reason it was invalidated.
+    pub async fn set_artifact_status(
+        &self,
+        id: i64,
+        expected_revision: i64,
+        status: ArtifactStatus,
+        stale_reason: &str,
+    ) -> Result<ArtifactRow, ArtifactError> {
+        // "Nothing may re-enter draft" is a property of the target alone, so it
+        // is decided here. "Superseded is terminal" depends on the stored row,
+        // so it rides along in the UPDATE's WHERE clause instead of a prior
+        // read — see explain_refusal for why that matters.
+        if status == ArtifactStatus::Draft {
+            return Err(ArtifactError::IllegalTransition {
+                from: ArtifactStatus::Draft,
+                to: status,
+            });
+        }
+
+        let reason = if status == ArtifactStatus::Stale {
+            stale_reason.trim()
+        } else {
+            ""
+        };
+        let now = now_unix();
+        let changed = sqlx::query(
+            "UPDATE issue_artifact
+             SET status = ?, stale_reason = ?, revision = revision + 1, updated_at = ?
+             WHERE id = ? AND revision = ? AND status != 'superseded'",
+        )
+        .bind(status.as_str())
+        .bind(reason)
+        .bind(&now)
+        .bind(id)
+        .bind(expected_revision)
+        .execute(&self.pool)
+        .await?
+        .rows_affected();
+
+        if changed == 1 {
+            return self
+                .get_artifact(id)
+                .await?
+                .ok_or(ArtifactError::NotFound { id });
+        }
+        Err(self.explain_refusal(id, expected_revision, Some(status)).await)
+    }
+
+    /// Work out why a guarded UPDATE changed nothing.
+    ///
+    /// This runs *after* the write attempt on purpose. Reading first and then
+    /// updating takes a shared lock and tries to upgrade it, and two writers
+    /// doing that deadlock on SQLite — it returns `SQLITE_BUSY` immediately and
+    /// no busy timeout can help, because waiting cannot resolve it. Writing
+    /// first keeps the guard atomic; this read is only for the error message
+    /// and is allowed to be a moment stale.
+    async fn explain_refusal(
+        &self,
+        id: i64,
+        expected: i64,
+        target: Option<ArtifactStatus>,
+    ) -> ArtifactError {
+        let current = match self.get_artifact(id).await {
+            Ok(Some(row)) => row,
+            Ok(None) => return ArtifactError::NotFound { id },
+            Err(error) => return error,
+        };
+        if current.status == ArtifactStatus::Superseded.as_str() {
+            return ArtifactError::IllegalTransition {
+                from: ArtifactStatus::Superseded,
+                to: target.unwrap_or(ArtifactStatus::Superseded),
+            };
+        }
+        ArtifactError::RevisionConflict {
+            id,
+            expected,
+            actual: current.revision,
+        }
     }
 
     // ── directions ────────────────────────────────────────────────────────
@@ -1666,6 +2042,299 @@ mod tests {
             .await
             .expect("get")
             .is_none());
+    }
+
+    async fn artifact_fixture() -> (Store, i64, tempfile::TempDir) {
+        let (store, dir) = fixture().await;
+        let ws = store.create_workspace("W", "w").await.expect("ws");
+        let issue = store.create_issue(ws, "one", "one").await.expect("i");
+        (store, issue, dir)
+    }
+
+    fn new_artifact(issue_id: i64, content: &str) -> NewArtifact<'_> {
+        NewArtifact {
+            issue_id,
+            kind: "test_cases",
+            title: "Checkout",
+            format: "markdown_tree",
+            content,
+            source: "agent",
+            source_thread_id: "lead-1",
+        }
+    }
+
+    #[tokio::test]
+    async fn a_new_artifact_starts_at_revision_one_and_draft() {
+        let (store, issue, _dir) = artifact_fixture().await;
+        let row = store
+            .create_artifact(new_artifact(issue, "- case one"))
+            .await
+            .expect("create");
+        assert_eq!(row.revision, 1);
+        assert_eq!(row.status, "draft");
+        assert_eq!(row.issue_id, issue);
+        assert_eq!(store.list_artifacts(issue).await.expect("list").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_update_carrying_the_current_revision_bumps_it() {
+        let (store, issue, _dir) = artifact_fixture().await;
+        let row = store
+            .create_artifact(new_artifact(issue, "v1"))
+            .await
+            .expect("create");
+        let updated = store
+            .update_artifact_content(row.id, row.revision, "v2", "Checkout", "user", "")
+            .await
+            .expect("update");
+        assert_eq!(updated.revision, 2);
+        assert_eq!(updated.content, "v2");
+        assert_eq!(updated.source, "user");
+    }
+
+    #[tokio::test]
+    async fn a_stale_revision_cannot_clobber_a_newer_one() {
+        let (store, issue, _dir) = artifact_fixture().await;
+        let row = store
+            .create_artifact(new_artifact(issue, "v1"))
+            .await
+            .expect("create");
+        store
+            .update_artifact_content(row.id, 1, "v2", "Checkout", "agent", "")
+            .await
+            .expect("first writer wins");
+
+        // A fork that still believes it holds revision 1.
+        let error = store
+            .update_artifact_content(row.id, 1, "from a stale fork", "Checkout", "agent", "")
+            .await
+            .expect_err("stale write must be refused");
+        match error {
+            ArtifactError::RevisionConflict {
+                expected, actual, ..
+            } => {
+                assert_eq!(expected, 1);
+                assert_eq!(actual, 2, "the error must carry the revision that won");
+            }
+            other => panic!("expected a revision conflict, got {other:?}"),
+        }
+
+        let current = store.get_artifact(row.id).await.expect("get").expect("row");
+        assert_eq!(current.content, "v2", "the refused write must leave no trace");
+        assert_eq!(current.revision, 2);
+    }
+
+    #[tokio::test]
+    async fn concurrent_writers_produce_exactly_one_winner() {
+        let (store, issue, _dir) = artifact_fixture().await;
+        let row = store
+            .create_artifact(new_artifact(issue, "v1"))
+            .await
+            .expect("create");
+
+        // Every fork of a Lead sees the same artifact, so this race is real.
+        let mut tasks = Vec::new();
+        for n in 0..8 {
+            let store = store.clone();
+            tasks.push(tokio::spawn(async move {
+                store
+                    .update_artifact_content(row.id, 1, &format!("writer {n}"), "T", "agent", "")
+                    .await
+            }));
+        }
+        let mut winners = 0;
+        let mut conflicts = 0;
+        for task in tasks {
+            match task.await.expect("join") {
+                Ok(updated) => {
+                    winners += 1;
+                    assert_eq!(updated.revision, 2);
+                }
+                Err(ArtifactError::RevisionConflict { .. }) => conflicts += 1,
+                Err(other) => panic!("unexpected failure: {other:?}"),
+            }
+        }
+        assert_eq!(winners, 1, "exactly one writer may win");
+        assert_eq!(conflicts, 7);
+
+        let current = store.get_artifact(row.id).await.expect("get").expect("row");
+        assert_eq!(current.revision, 2, "no partial or double increment");
+        assert!(current.content.starts_with("writer "));
+    }
+
+    #[tokio::test]
+    async fn controlled_values_are_rejected_before_anything_is_written() {
+        let (store, issue, _dir) = artifact_fixture().await;
+        for (field, artifact) in [
+            (
+                "kind",
+                NewArtifact {
+                    kind: "freeform",
+                    ..new_artifact(issue, "x")
+                },
+            ),
+            (
+                "format",
+                NewArtifact {
+                    format: "yaml",
+                    ..new_artifact(issue, "x")
+                },
+            ),
+            (
+                "source",
+                NewArtifact {
+                    source: "robot",
+                    ..new_artifact(issue, "x")
+                },
+            ),
+        ] {
+            match store.create_artifact(artifact).await {
+                Err(ArtifactError::UnsupportedValue { field: got, .. }) => assert_eq!(got, field),
+                other => panic!("expected {field} to be rejected, got {other:?}"),
+            }
+        }
+        assert!(store.list_artifacts(issue).await.expect("list").is_empty());
+    }
+
+    #[tokio::test]
+    async fn oversized_content_is_refused_on_create_and_on_update() {
+        let (store, issue, _dir) = artifact_fixture().await;
+        let huge = "x".repeat(ARTIFACT_CONTENT_LIMIT + 1);
+        match store.create_artifact(new_artifact(issue, &huge)).await {
+            Err(ArtifactError::ContentTooLarge { limit, actual }) => {
+                assert_eq!(limit, ARTIFACT_CONTENT_LIMIT);
+                assert_eq!(actual, huge.len());
+            }
+            other => panic!("expected the create to be refused, got {other:?}"),
+        }
+        assert!(store.list_artifacts(issue).await.expect("list").is_empty());
+
+        let row = store
+            .create_artifact(new_artifact(issue, "small"))
+            .await
+            .expect("create");
+        assert!(store
+            .update_artifact_content(row.id, 1, &huge, "T", "agent", "")
+            .await
+            .is_err());
+        let current = store.get_artifact(row.id).await.expect("get").expect("row");
+        assert_eq!(current.content, "small");
+        assert_eq!(current.revision, 1);
+    }
+
+    #[tokio::test]
+    async fn superseded_is_terminal_and_draft_cannot_be_re_entered() {
+        let (store, issue, _dir) = artifact_fixture().await;
+        let row = store
+            .create_artifact(new_artifact(issue, "v1"))
+            .await
+            .expect("create");
+
+        let ready = store
+            .set_artifact_status(row.id, 1, ArtifactStatus::Ready, "")
+            .await
+            .expect("draft -> ready");
+        assert_eq!(ready.status, "ready");
+        assert_eq!(ready.revision, 2, "a status change is a revision too");
+
+        // Going back to draft is not a thing: draft is the creation state.
+        match store
+            .set_artifact_status(row.id, 2, ArtifactStatus::Draft, "")
+            .await
+        {
+            Err(ArtifactError::IllegalTransition { to, .. }) => {
+                assert_eq!(to, ArtifactStatus::Draft)
+            }
+            other => panic!("expected draft to be unreachable, got {other:?}"),
+        }
+
+        let superseded = store
+            .set_artifact_status(row.id, 2, ArtifactStatus::Superseded, "")
+            .await
+            .expect("ready -> superseded");
+        assert_eq!(superseded.status, "superseded");
+
+        // Terminal: neither a status change nor a content edit may revive it.
+        assert!(matches!(
+            store
+                .set_artifact_status(row.id, 3, ArtifactStatus::Ready, "")
+                .await,
+            Err(ArtifactError::IllegalTransition { .. })
+        ));
+        assert!(matches!(
+            store
+                .update_artifact_content(row.id, 3, "resurrected", "T", "agent", "")
+                .await,
+            Err(ArtifactError::IllegalTransition { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_stale_reason_is_kept_only_while_stale() {
+        let (store, issue, _dir) = artifact_fixture().await;
+        let row = store
+            .create_artifact(new_artifact(issue, "v1"))
+            .await
+            .expect("create");
+        let stale = store
+            .set_artifact_status(row.id, 1, ArtifactStatus::Stale, "plan moved on")
+            .await
+            .expect("stale");
+        assert_eq!(stale.stale_reason, "plan moved on");
+
+        // Recovering must not leave the invalidation reason behind, or a ready
+        // artifact would still read as invalidated.
+        let ready = store
+            .set_artifact_status(row.id, 2, ArtifactStatus::Ready, "")
+            .await
+            .expect("stale -> ready");
+        assert_eq!(ready.stale_reason, "");
+
+        let revised = store
+            .set_artifact_status(row.id, 3, ArtifactStatus::Stale, "again")
+            .await
+            .expect("ready -> stale");
+        assert_eq!(revised.stale_reason, "again");
+        let edited = store
+            .update_artifact_content(row.id, 4, "v2", "T", "agent", "")
+            .await
+            .expect("edit clears staleness");
+        assert_eq!(edited.stale_reason, "");
+    }
+
+    #[tokio::test]
+    async fn artifacts_survive_reopen_and_a_pre_existing_database() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let path = dir.path().join("t.db");
+        let issue = {
+            let store = Store::open(&path).await.expect("open");
+            let ws = store.create_workspace("W", "w").await.expect("ws");
+            let issue = store.create_issue(ws, "one", "one").await.expect("i");
+            store
+                .create_artifact(new_artifact(issue, "durable"))
+                .await
+                .expect("create");
+            issue
+        };
+
+        let reopened = Store::open(&path).await.expect("reopen");
+        let rows = reopened.list_artifacts(issue).await.expect("list");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].content, "durable");
+
+        // A database created before this table existed must gain it without
+        // losing anything else.
+        sqlx::query("DROP TABLE issue_artifact")
+            .execute(&reopened.pool)
+            .await
+            .expect("drop");
+        drop(reopened);
+        let upgraded = Store::open(&path).await.expect("upgrade");
+        assert!(upgraded.list_artifacts(issue).await.expect("list").is_empty());
+        assert!(
+            upgraded.get_issue(issue).await.expect("issue").is_some(),
+            "the rest of the database must survive the upgrade"
+        );
     }
 
     #[tokio::test]
