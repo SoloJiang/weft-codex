@@ -15,7 +15,7 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Textarea } from "@/components/ui/textarea"
 import { hasHostBridge, pickRepositoryPaths } from "@/host-context"
 import { useI18n } from "@/i18n"
-import type { DialogState, IssueKind, MessageIntent, RepoImportResponse } from "@/types"
+import type { DialogState, IssueKind, RepoImportResponse } from "@/types"
 import { ISSUE_KINDS } from "@/types"
 import { Field } from "./shared"
 
@@ -25,7 +25,6 @@ interface DialogLayerProps {
   onCreateWorkspace: (name: string) => Promise<void>
   onCreateIssue: (title: string, kind: IssueKind) => Promise<void>
   onImportRepositories: (paths: string[]) => Promise<RepoImportResponse>
-  onSendMessage: (target: "lead" | "task", id: number, text: string, intent: MessageIntent) => Promise<void>
 }
 
 interface FormDialogProps {
@@ -315,54 +314,6 @@ function RepositoryDialog({
   )
 }
 
-function MessageDialog({
-  target,
-  id,
-  intent,
-  onClose,
-  onSend,
-}: {
-  target: "lead" | "task"
-  id: number
-  intent: MessageIntent
-  onClose: () => void
-  onSend: (target: "lead" | "task", id: number, text: string, intent: MessageIntent) => Promise<void>
-}) {
-  const { t } = useI18n()
-  const [text, setText] = React.useState("")
-  const [error, setError] = React.useState("")
-  const continuing = intent === "continue"
-  return (
-    <FormDialog
-      title={t(continuing ? "modal.continueTaskTitle" : "modal.messageTitle")}
-      submitLabel={t(continuing ? "modal.continueTask" : "modal.sendMessage")}
-      pendingLabel={t("loading.sendingMessage")}
-      submitDisabled={!text.trim()}
-      onClose={onClose}
-      onSubmit={async () => {
-        if (!text.trim()) {
-          setError(t("validation.message"))
-          return false
-        }
-        await onSend(target, id, text.trim(), intent)
-      }}
-    >
-      <div className="form-stack">
-        <Field label={t(continuing ? "field.nextInstruction" : "field.message")} htmlFor="message-text" error={error}>
-          <Textarea
-            id="message-text"
-            autoFocus
-            maxLength={20000}
-            value={text}
-            aria-invalid={Boolean(error)}
-            onChange={(event) => { setText(event.target.value); setError("") }}
-          />
-        </Field>
-      </div>
-    </FormDialog>
-  )
-}
-
 export function DialogLayer(props: DialogLayerProps) {
   const { state } = props
   if (!state) return null
@@ -374,9 +325,6 @@ export function DialogLayer(props: DialogLayerProps) {
   }
   if (state.type === "repositories") {
     return <RepositoryDialog onClose={props.onClose} onImport={props.onImportRepositories} />
-  }
-  if (state.type === "message") {
-    return <MessageDialog target={state.target} id={state.id} intent={state.intent} onClose={props.onClose} onSend={props.onSendMessage} />
   }
   return null
 }

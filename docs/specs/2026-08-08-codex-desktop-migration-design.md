@@ -224,8 +224,9 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
   两条注入消息后读取实际 commit 复核并输出跨仓汇总。真实分支与 commit 分别为
   `weft/cross-repo-marker/api-add-marker-file` / `e4107d6`、
   `weft/cross-repo-marker/web-add-marker-file` / `3abbb8e`。
-- 状态实测：自动启动后 `working`，turn 完成后 `review`；“继续处理”创建新 turn
-  并回到 `working → review`；两个“验收完成”最终均为 `done`。
+- 状态实测：自动启动后 `working`，turn 完成后 `review`；用户在原生 Worker
+  对话发送新消息时自动回到 `working`，新 turn 完成后再次进入 `review`；
+  “验收完成”最终进入 `done`，已完成任务也可由原生对话的新回合重新打开。
 - daemon 重启会先对持久线程执行 `thread/resume` 再重建 watcher；重启后向 Lead
   发送 `reattached-ok` 已进入同一原生线程并完成。Bus 增加 `delivered_at` 结算：
   未结算行在启动时恢复到 live inbox，listener ready 后重投；人为制造的 pending
@@ -245,28 +246,40 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
 - Workspace home：workspace 切换、repo 注册与状态。
 - Kanban：direction 卡片按 status 分列；卡片默认只显示 repo / branch 与
   attention 信号，mandate 保留为内部编排字段。状态由编排事件推进，不支持通用
-  拖拽、人工启动或任意改状态；用户在待审时执行“验收完成”，也可通过“继续处理”
-  发送补充要求并让任务回到工作中。自动启动失败时提供唯一的“重试启动”恢复动作。
+  拖拽、人工启动或任意改状态。卡片主体直接打开对应 Worker 原生会话，不再显示
+  独立的“打开对话”或“继续处理”按钮；用户在会话中发送补充要求后任务自动回到
+  工作中。待审任务保留“验收完成”，自动启动失败时提供唯一的“重试启动”恢复动作。
 - Issue detail：lead 卡片 + direction 卡片列表，各自跳转 Desktop 原生线程；
   bus 活动时间线（**已完成 2026-08-09**：看板标题点击进入独立详情视图，
   时间线聊天式渲染 + `bus.message` SSE 实时刷新）。
 - Repo map：仓库依赖图与 components 展开视图（RepoMapView / RepoGraph 平移）。
 - 全部 i18n 字符串沿用 en/zh 双文件约束。
-- **Surface 拆分（2026-08-09 已实现并实测）**：同一份 React 构建按 URL
-  参数形成三种外壳，不复制业务组件：
+- **Surface 拆分（2026-08-10 修订）**：同一份 React 构建按 URL
+  参数形成四种外壳，不复制业务组件：
   - `standalone`：浏览器降级面，保留 workspace selector、Kanban / 仓库入口
     topbar；weftd / SSE 健康状态不作为常驻产品元素，真实失败在具体操作处提示；
   - `sidebar`：Codex sidebar 内的全局导航，只放 workspace selector、Kanban、
     仓库、issue 列表和 attention 摘要；不放 Weft 品牌、语言/主题开关、聊天、
     长表单或 `direction` 术语。像 Weft 一样提供一级“新建 issue”动作，通过
     bridge 在主工作区打开“标题 + 类型”弹窗；创建后自动启动 Lead 并进入原生
-    Codex 对话，不要求先添加仓库。Issue 主行点击同时展开会话树并打开其
-    Primary Lead；右侧 chevron 只负责展开/收起，不改变当前线程。会话树按
-    Lead / Tasks 分组，fork 归入其逻辑 Lead 或 Task 下；打开任何原生线程时，
-    sidebar 自动切到对应 workspace、展开 issue 并精确高亮该线程；
+    Codex 对话，不要求先添加仓库。Issue 主行点击直接打开其 Primary Lead，
+    不展开或插入任何 sidebar 内容；Issue 行末的单一会话入口请求 renderer host
+    在 sidebar 右侧挂载临时浮层。Issue 标题始终保持单行，溢出时沿用 Codex
+    Session title 的原生 marquee 节奏：hover 350ms 后按 `2em/s` 位移、同曲线
+    缓动、离开后立即复位，并保留左右渐隐。浮层按 Lead /
+    Tasks 分组，fork 归入其逻辑 Lead 或 Task 下；最大高度为 420px，并受
+    `100vh - 32px` 约束，标题区固定、会话区独立滚动，视口底部空间不足时向上
+    避让。浮层出现时使用 160ms 的轻量淡入、上移与缩放过渡；系统开启
+    `prefers-reduced-motion` 时禁用该动效。打开任何原生线程时，sidebar 自动
+    切到对应 workspace、精确高亮所属 issue；浮层在选择会话、切换
+    workspace/导航、滚动 sidebar、按 Escape 或点击外部后关闭；
   - `workspace`：Codex 主区域，只渲染 Kanban / 仓库 / issue detail，移除重复
     topbar 和重复的新建 issue 表单。Issue 详情不提供手工新建任务，任务由 lead
     chat 调用 `task_create` 产生并自动调度；lead / worker 沟通仍进入原生线程。
+  - `issue-panel`：只渲染临时 Issue 会话卡片，由 renderer host 通过独立 iframe
+    挂在顶层 fixed root，避免 sidebar iframe 的裁剪边界；沿用相同 Host Context
+    token/locale 与原生线程跳转 bridge，不遮罩、不挤压 workspace，也不持久化为
+    一层导航状态。
 - sidebar 与 workspace URL 携带同一个随机 `bridge_id`，通过同源
   `BroadcastChannel` 做 ready/request 握手，同步 workspace、route 与白名单
   command；没有 `bridge_id` 时不开通道，避免两个独立浏览器窗口串状态。
@@ -274,7 +287,8 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
 - 组合实测覆盖：268px sidebar + 主工作区、Kanban → 仓库 → issue 路由联动、
   workspace surface 无重复 topbar、每个入口恰好一个 SVG、native select 恰好
   一个箭头（右侧 8px、垂直偏差 0）、横向 overflow 为 0，以及 Host Context
-  驱动的中/英、明/暗主题实时切换。
+  驱动的中/英、明/暗主题实时切换。Issue 列表保持纯单行标题；临时会话卡片是
+  独立顶层 surface，不允许退化回列表内 accordion。
 - **主题同步（2026-08-09 修订）**：Codex 本身的主题可配置（dark/light、
   corner-radius scale），所以 web app 不硬编码主题，而是引用宿主 semantic
   token；但 CSS custom property **不会跨 iframe 自动继承**。同文档挂载时可

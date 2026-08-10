@@ -16,8 +16,9 @@ const en = {
   "sidebar.leadStarting": "Lead is starting…",
   "sidebar.noTasks": "No tasks yet",
   "sidebar.openIssueLead": "Open the primary lead chat for {title}",
-  "sidebar.expandIssue": "Expand {title}",
-  "sidebar.collapseIssue": "Collapse {title}",
+  "sidebar.showConversations": "Show conversations for {title}",
+  "sidebar.closeConversations": "Close conversations",
+  "sidebar.conversationsFor": "Conversations for {title}",
   "workspace.label": "Workspace",
   "workspace.none": "No workspace yet",
   "workspace.namePlaceholder": "Workspace name",
@@ -35,7 +36,7 @@ const en = {
   "kanban.allIssues": "All issues",
   "kanban.noMatchingTasks": "No tasks match this search or filter.",
   "kanban.boardLabel": "Tasks by status",
-  "kanban.openIssue": "Open issue {title}",
+  "kanban.viewIssue": "View issue details",
   "kanban.taskCount": "{count} tasks",
   "kanban.moreActions": "More task actions",
 
@@ -57,15 +58,13 @@ const en = {
   "detail.notFoundTitle": "Issue not found",
   "detail.notFoundBody": "This issue may have been removed or belongs to another workspace.",
 
-  "dir.msg": "Message",
   "dir.openThread": "Open chat",
-  "dir.continue": "Continue",
+  "dir.openTaskChat": "Open task chat for {name}",
   "dir.complete": "Accept result",
   "dir.retryStart": "Retry start",
   "dir.startFailed": "Start failed",
   "dir.clearAttention": "Clear flag",
   "dir.attention": "Needs attention",
-  "dir.cardLabel": "Task: {name}",
 
   "repo.add": "Add repository",
   "repo.chooseFolders": "Choose folders",
@@ -99,8 +98,6 @@ const en = {
 
   "modal.cancel": "Cancel",
   "modal.close": "Close",
-  "modal.messageTitle": "Send message",
-  "modal.continueTaskTitle": "Continue task",
   "modal.workspaceTitle": "New workspace",
   "modal.issueTitle": "New issue",
   "modal.issueDescription": "An issue is one work line, split across repositories.",
@@ -109,12 +106,8 @@ const en = {
   "modal.addRepositories": "Add {count}",
   "modal.createWorkspace": "Create workspace",
   "modal.createIssue": "Create issue",
-  "modal.sendMessage": "Send",
-  "modal.continueTask": "Send and continue",
 
   "field.name": "Name",
-  "field.message": "Message",
-  "field.nextInstruction": "Next instruction",
 
   "kind.feature": "Feature",
   "kind.bugfix": "Bugfix",
@@ -126,13 +119,11 @@ const en = {
   "party.task": "Task",
 
   "validation.workspaceName": "Enter a workspace name.",
-  "validation.message": "Enter a message.",
   "validation.repoName": "Enter a repository name.",
   "validation.repoPath": "Enter the repository's absolute path.",
   "validation.repoPaths": "Enter at least one repository path.",
 
   "loading.creatingWorkspace": "Creating…",
-  "loading.sendingMessage": "Sending…",
   "loading.completingTask": "Accepting…",
   "loading.retryingTask": "Retrying…",
   "loading.startingLead": "Starting…",
@@ -146,8 +137,6 @@ const en = {
   "loading.openingThread": "Opening…",
 
   "success.workspaceCreated": "Workspace created.",
-  "success.messageSent": "Message sent.",
-  "success.continueSent": "Next instruction sent.",
   "success.taskCompleted": "Task accepted as complete.",
   "success.issueCreated": "Issue created.",
   "success.repoAdded": "Repository added.",

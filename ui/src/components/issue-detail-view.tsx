@@ -5,7 +5,7 @@ import { api } from "@/api"
 import { Button } from "@/components/ui/button"
 import { useI18n } from "@/i18n"
 import type { BoardEntry, BusMessage, Direction, Repo } from "@/types"
-import { EmptyState } from "./shared"
+import { EmptyState, ThreadCardLink } from "./shared"
 import { DirectionActions, directionMeta, IssueActions, type WorkActions } from "./kanban-view"
 
 function partyLabel(party: string, directions: Direction[], t: ReturnType<typeof useI18n>["t"]): string {
@@ -27,6 +27,13 @@ function TaskDetail({ direction, repos, actions }: { direction: Direction; repos
   return (
     <article className="task-detail">
       <header className="task-detail-head">
+        {direction.codex_thread_id ? (
+          <ThreadCardLink
+            threadId={direction.codex_thread_id}
+            label={t("dir.openTaskChat", { name: direction.name })}
+            onError={actions.onError}
+          />
+        ) : null}
         <div className="task-detail-identity">
           <h3>{direction.name}</h3>
           <p className="meta">{directionMeta(direction, repos)}</p>

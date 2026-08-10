@@ -60,6 +60,23 @@ export type HostAction =
   | { action: "workspace.show" }
   | { action: "thread.open"; threadId: string }
   | { action: "repositories.pick" }
+  | {
+      action: "issue-panel.toggle"
+      workspaceId: number
+      issueId: number
+      anchor: IssuePanelAnchor
+    }
+  | { action: "issue-panel.close" }
+  | { action: "issue-panel.resize"; height: number }
+
+export interface IssuePanelAnchor {
+  top: number
+  right: number
+  bottom: number
+  left: number
+  width: number
+  height: number
+}
 
 interface PendingRepositoryAction {
   resolve(paths: string[]): void
@@ -75,6 +92,7 @@ interface PendingThreadAction {
 
 const pendingRepositoryActions = new Map<string, PendingRepositoryAction>()
 const pendingThreadActions = new Map<string, PendingThreadAction>()
+const issuePanelStateListeners = new Set<(issueId: number | null) => void>()
 let hostResultListenerInstalled = false
 
 interface HostContextEnvelope {
@@ -170,7 +188,16 @@ function ensureHostResultListener() {
     if (!hostOrigin || event.source !== window.parent || event.origin !== hostOrigin) return
     if (!event.data || typeof event.data !== "object" || Array.isArray(event.data)) return
     const message = event.data as Record<string, unknown>
-    if (message.source !== "weft-codex-host" || message.type !== "weft:host-action-result") return
+    if (message.source !== "weft-codex-host") return
+    if (message.type === "weft:issue-panel-state") {
+      const issueId = message.issueId
+      if (issueId !== null && (typeof issueId !== "number" || !Number.isInteger(issueId) || issueId <= 0)) {
+        return
+      }
+      for (const listener of issuePanelStateListeners) listener(issueId as number | null)
+      return
+    }
+    if (message.type !== "weft:host-action-result") return
     if (typeof message.requestId !== "string") return
     const pendingThread = pendingThreadActions.get(message.requestId)
     if (pendingThread) {
@@ -204,6 +231,14 @@ function ensureHostResultListener() {
     }
     pending.resolve(paths)
   })
+}
+
+export function subscribeIssuePanelState(
+  listener: (issueId: number | null) => void,
+): () => void {
+  ensureHostResultListener()
+  issuePanelStateListeners.add(listener)
+  return () => issuePanelStateListeners.delete(listener)
 }
 
 export function pickRepositoryPaths(): Promise<string[]> | null {

@@ -1,5 +1,5 @@
 import * as React from "react"
-import { Check, Flag, MoreHorizontal, Play, RotateCcw, Search, Send } from "lucide-react"
+import { Check, Flag, ListTree, MoreHorizontal, Play, RotateCcw, Search } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -7,7 +7,7 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { useI18n } from "@/i18n"
 import type { BoardEntry, Direction, DirectionStatus, Issue, Repo } from "@/types"
 import { STATUSES } from "@/types"
-import { AsyncButton, EmptyState, ThreadLink } from "./shared"
+import { AsyncButton, EmptyState, ThreadCardLink, ThreadLink } from "./shared"
 
 export interface WorkActions {
   onError: (error: unknown) => void
@@ -15,7 +15,6 @@ export interface WorkActions {
   onRetryTask: (direction: Direction) => Promise<void>
   onCompleteTask: (direction: Direction) => Promise<void>
   onClearAttention: (direction: Direction) => Promise<void>
-  onContinueTask: (direction: Direction) => void
 }
 
 export function directionMeta(
@@ -42,38 +41,24 @@ export function DirectionActions({
   actions: WorkActions
 }) {
   const { t } = useI18n()
-  const canContinue = direction.status === "review" || direction.status === "done"
   const canRetryStart = !direction.codex_thread_id && Boolean(direction.attention)
-  let threadActions: React.ReactNode = null
-  if (canRetryStart) {
-    threadActions = (
-      <AsyncButton
-        variant="ghost"
-        label={t("dir.retryStart")}
-        pendingLabel={t("loading.retryingTask")}
-        onAction={() => actions.onRetryTask(direction)}
-        onError={actions.onError}
-      >
-        <RotateCcw aria-hidden="true" />
-      </AsyncButton>
-    )
-  } else if (direction.codex_thread_id) {
-    threadActions = (
-      <>
-        <ThreadLink threadId={direction.codex_thread_id} onError={actions.onError} />
-        {canContinue ? (
-          <Button variant="ghost" onClick={() => actions.onContinueTask(direction)}>
-            <Send aria-hidden="true" />
-            {t("dir.continue")}
-          </Button>
-        ) : null}
-      </>
-    )
-  }
+  const canComplete = direction.status === "review"
+  const canClearAttention = Boolean(direction.attention) && !canRetryStart
+  if (!canRetryStart && !canComplete && !canClearAttention) return null
   return (
     <div className="btns">
-      {threadActions}
-      {direction.status === "review" ? (
+      {canRetryStart ? (
+        <AsyncButton
+          variant="ghost"
+          label={t("dir.retryStart")}
+          pendingLabel={t("loading.retryingTask")}
+          onAction={() => actions.onRetryTask(direction)}
+          onError={actions.onError}
+        >
+          <RotateCcw aria-hidden="true" />
+        </AsyncButton>
+      ) : null}
+      {canComplete ? (
         <AsyncButton
           className="task-complete-action"
           label={t("dir.complete")}
@@ -84,7 +69,7 @@ export function DirectionActions({
           <Check aria-hidden="true" />
         </AsyncButton>
       ) : null}
-      {Boolean(direction.attention) && !canRetryStart ? (
+      {canClearAttention ? (
         <AsyncButton
           variant="ghost"
           label={t("dir.clearAttention")}
@@ -125,15 +110,21 @@ interface KanbanTask {
   entry: BoardEntry
 }
 
-function TaskCardActions({ direction, actions }: { direction: Direction; actions: WorkActions }) {
+function TaskCardActions({
+  direction,
+  actions,
+  onOpenIssue,
+}: {
+  direction: Direction
+  actions: WorkActions
+  onOpenIssue: () => void
+}) {
   const { t } = useI18n()
   const [menuOpen, setMenuOpen] = React.useState(false)
   const menuRef = React.useRef<HTMLDivElement>(null)
-  const canContinue = direction.status === "review" || direction.status === "done"
   const canComplete = direction.status === "review"
   const canRetryStart = !direction.codex_thread_id && Boolean(direction.attention)
   const canClearAttention = Boolean(direction.attention) && !canRetryStart
-  const hasMoreActions = canContinue || canComplete || canClearAttention
 
   React.useEffect(() => {
     if (!menuOpen) return
@@ -165,43 +156,37 @@ function TaskCardActions({ direction, actions }: { direction: Direction; actions
         <RotateCcw aria-hidden="true" />
       </AsyncButton>
     )
-  } else if (direction.codex_thread_id) {
-    primaryAction = <ThreadLink threadId={direction.codex_thread_id} onError={actions.onError} />
   }
-
-  if (!primaryAction && !hasMoreActions) return null
 
   return (
     <div className="kanban-card-actions">
       {primaryAction}
-      {hasMoreActions ? (
-        <div ref={menuRef} className="kanban-card-menu">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="kanban-card-menu-trigger"
-            aria-label={t("kanban.moreActions")}
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            title={t("kanban.moreActions")}
-            onClick={() => setMenuOpen((current) => !current)}
-          >
-            <MoreHorizontal aria-hidden="true" />
-          </Button>
-          {menuOpen ? <div className="kanban-card-menu-popover" role="menu">
-            {canContinue ? (
-              <Button
-                variant="ghost"
-                role="menuitem"
-                onClick={() => {
-                  setMenuOpen(false)
-                  actions.onContinueTask(direction)
-                }}
-              >
-                <Send aria-hidden="true" />
-                {t("dir.continue")}
-              </Button>
-            ) : null}
+      <div ref={menuRef} className="kanban-card-menu">
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="kanban-card-menu-trigger"
+          aria-label={t("kanban.moreActions")}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          title={t("kanban.moreActions")}
+          onClick={() => setMenuOpen((current) => !current)}
+        >
+          <MoreHorizontal aria-hidden="true" />
+        </Button>
+        {menuOpen ? (
+          <div className="kanban-card-menu-popover" role="menu">
+            <Button
+              variant="ghost"
+              role="menuitem"
+              onClick={() => {
+                setMenuOpen(false)
+                onOpenIssue()
+              }}
+            >
+              <ListTree aria-hidden="true" />
+              {t("kanban.viewIssue")}
+            </Button>
             {canComplete ? (
               <AsyncButton
                 variant="ghost"
@@ -232,9 +217,9 @@ function TaskCardActions({ direction, actions }: { direction: Direction; actions
                 <Flag aria-hidden="true" />
               </AsyncButton>
             ) : null}
-          </div> : null}
-        </div>
-      ) : null}
+          </div>
+        ) : null}
+      </div>
     </div>
   )
 }
@@ -256,17 +241,18 @@ function TaskCard({
   return (
     <article
       className={`kanban-card${direction.attention ? " attention" : ""}`}
-      aria-label={t("dir.cardLabel", { name: direction.name })}
     >
-      <button
-        type="button"
-        className="kanban-card-issue"
-        aria-label={t("kanban.openIssue", { title: entry.issue.title })}
-        onClick={() => onOpenIssue(entry.issue.id)}
-      >
+      {direction.codex_thread_id ? (
+        <ThreadCardLink
+          threadId={direction.codex_thread_id}
+          label={t("dir.openTaskChat", { name: direction.name })}
+          onError={actions.onError}
+        />
+      ) : null}
+      <div className="kanban-card-issue">
         <span className="kanban-card-issue-number">#{entry.issue.id}</span>
         <span className="kanban-card-issue-title">{entry.issue.title}</span>
-      </button>
+      </div>
       <h3 className="name">
         {direction.name}
         {direction.attention ? (
@@ -274,7 +260,11 @@ function TaskCard({
         ) : null}
       </h3>
       {meta ? <div className="sub">{meta}</div> : null}
-      <TaskCardActions direction={direction} actions={actions} />
+      <TaskCardActions
+        direction={direction}
+        actions={actions}
+        onOpenIssue={() => onOpenIssue(entry.issue.id)}
+      />
     </article>
   )
 }

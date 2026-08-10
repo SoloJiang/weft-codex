@@ -168,6 +168,22 @@ impl Orchestrator {
         g.insert(thread_id.to_string(), turn_id.to_string());
     }
 
+    /// A human started a turn from the native Codex chat. The conversation is
+    /// now the task's primary continuation surface, so reflect that work in
+    /// Kanban immediately without requiring a secondary continuation control.
+    async fn begin_foreign_turn(&self, target: WatchTarget, thread_id: &str, turn_id: &str) {
+        self.set_foreign_turn(thread_id, turn_id);
+        if let WatchTarget::Direction(id) = target {
+            if self.store.set_direction_status(id, "working").await.is_ok() {
+                events::emit(
+                    "direction.updated",
+                    json!({ "id": id, "status": "working" }),
+                );
+            }
+        }
+        events::emit("thread.human-active", json!({ "threadId": thread_id }));
+    }
+
     /// Returns true when a foreign turn WAS tracked — i.e. the caller just
     /// witnessed the human's turn ending and should flush what parked.
     fn clear_foreign_turn(&self, thread_id: &str) -> bool {
@@ -701,7 +717,7 @@ impl Orchestrator {
         Ok(count)
     }
 
-    // ── human input (the kanban UI's talk buttons) ────────────────────────
+    // ── human input (programmatic delivery into native Codex chats) ──────
 
     /// Inject a human message into a direction's thread. Audit-logged as
     /// from `human`; on delivery failure the message is parked on the bus
@@ -920,11 +936,7 @@ async fn watch(
                 // the cost is latency, never loss.
                 let ours = client.active_turn(&thread_id).await;
                 if ours.as_deref() != Some(turn_id.as_str()) {
-                    orch.set_foreign_turn(&thread_id, &turn_id);
-                    events::emit(
-                        "thread.human-active",
-                        json!({ "threadId": thread_id }),
-                    );
+                    orch.begin_foreign_turn(target, &thread_id, &turn_id).await;
                 }
             }
             ThreadMsg::QuotaExceeded => {
@@ -1156,6 +1168,28 @@ mod tests {
         assert_eq!(orch.foreign_turn("t1").as_deref(), Some("turn_x"));
         assert!(orch.clear_foreign_turn("t1"));
         assert!(orch.foreign_turn("t1").is_none());
+    }
+
+    #[tokio::test]
+    async fn native_task_turn_reopens_the_task_as_working() {
+        let (orch, _dir) = fixture().await;
+        let (_issue, direction) = seeded_direction(&orch).await;
+        orch.store
+            .set_direction_status(direction, "done")
+            .await
+            .expect("done");
+
+        orch.begin_foreign_turn(WatchTarget::Direction(direction), "t-dir", "turn-human")
+            .await;
+
+        let row = orch
+            .store
+            .get_direction(direction)
+            .await
+            .expect("get")
+            .expect("direction");
+        assert_eq!(row.status, "working");
+        assert_eq!(orch.foreign_turn("t-dir").as_deref(), Some("turn-human"));
     }
 
     #[tokio::test]

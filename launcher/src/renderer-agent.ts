@@ -4,6 +4,7 @@ export type HostMode = "work" | "codex" | "weft"
 
 const SIDEBAR_ROOT_ID = "weft-codex-sidebar-root"
 const WORKSPACE_ROOT_ID = "weft-codex-workspace-root"
+const ISSUE_PANEL_ROOT_ID = "weft-codex-issue-panel-root"
 const NATIVE_CHECK_ATTR = "data-weft-codex-native-mode-check"
 
 export interface RendererAgentConfig {
@@ -62,6 +63,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
     const allowedTokens = ${serializedTokens};
     const SIDEBAR_ROOT_ID = "weft-codex-sidebar-root";
     const WORKSPACE_ROOT_ID = "weft-codex-workspace-root";
+    const ISSUE_PANEL_ROOT_ID = "weft-codex-issue-panel-root";
     const STYLE_ID = "weft-codex-host-style";
     const MODE_ITEM_ATTR = "data-weft-codex-mode-item";
     const NATIVE_CHECK_ATTR = "data-weft-codex-native-mode-check";
@@ -77,8 +79,13 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       cspBypass: Boolean(config.cspBypass),
       sidebarRoot: null,
       workspaceRoot: null,
+      issuePanelRoot: null,
       sidebarFrame: null,
       workspaceFrame: null,
+      issuePanelFrame: null,
+      issuePanelIssueId: null,
+      issuePanelAnchor: null,
+      issuePanelHeight: 0,
       modeButton: null,
       savedModeButton: null,
       mutationObserver: null,
@@ -92,6 +99,8 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       started: false,
       messageListener: null,
       clickListener: null,
+      pointerListener: null,
+      keyListener: null,
       mediaListener: null,
     };
 
@@ -209,6 +218,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         state.mode = "weft";
         if (state.modeButton) applyWeftModeButton(state.modeButton);
       } else {
+        closeIssuePanel();
         state.mode = nextMode;
         state.nativeMode = nextMode;
         state.view = "workspace";
@@ -228,21 +238,27 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       publishContextSoon();
     }
 
-    function surfaceUrl(surface) {
+    function surfaceUrl(surface, params = {}) {
       const url = new URL(config.webBaseUrl);
       url.searchParams.set("surface", surface);
       url.searchParams.set("bridge_id", config.bridgeId);
       url.searchParams.set("host_origin", location.origin);
       url.searchParams.set("host_version", "1");
+      for (const [key, value] of Object.entries(params)) url.searchParams.set(key, String(value));
       if (state.cspBypass) url.searchParams.set("csp_bypass", "1");
       return url.href;
     }
 
-    function createFrame(surface) {
+    function createFrame(surface, params = {}) {
       const frame = document.createElement("iframe");
       frame.dataset.weftCodexSurface = surface;
-      frame.title = surface === "sidebar" ? "Workspace navigation" : "Workspace";
-      frame.src = surfaceUrl(surface);
+      const titles = {
+        sidebar: "Workspace navigation",
+        workspace: "Workspace",
+        "issue-panel": "Issue conversations",
+      };
+      frame.title = titles[surface] || "Weft";
+      frame.src = surfaceUrl(surface, params);
       frame.referrerPolicy = "no-referrer";
       frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
       frame.setAttribute("allow", "clipboard-read; clipboard-write");
@@ -308,6 +324,99 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       return true;
     }
 
+    function positiveInteger(value) {
+      return Number.isInteger(value) && value > 0;
+    }
+
+    function validIssuePanelAnchor(value) {
+      if (!value || typeof value !== "object") return false;
+      const keys = ["top", "right", "bottom", "left", "width", "height"];
+      return keys.every((key) => Number.isFinite(value[key])) && value.width > 0 && value.height > 0;
+    }
+
+    function ensureIssuePanelRoot() {
+      let root = state.issuePanelRoot;
+      if (!(root instanceof HTMLElement)) {
+        root = document.createElement("div");
+        root.id = ISSUE_PANEL_ROOT_ID;
+        root.dataset.weftCodexHostSurface = "issue-panel";
+        root.hidden = true;
+        state.issuePanelRoot = root;
+      }
+      const parent = document.body || document.documentElement;
+      if (root.parentElement !== parent) parent.append(root);
+      return root;
+    }
+
+    function postIssuePanelState() {
+      const frame = state.sidebarFrame;
+      if (!(frame instanceof HTMLIFrameElement) || !frame.contentWindow) return;
+      frame.contentWindow.postMessage({
+        source: "weft-codex-host",
+        type: "weft:issue-panel-state",
+        issueId: state.issuePanelIssueId,
+      }, childOrigin);
+    }
+
+    function closeIssuePanel() {
+      if (state.issuePanelFrame) state.issuePanelFrame.remove();
+      state.issuePanelFrame = null;
+      state.issuePanelIssueId = null;
+      state.issuePanelAnchor = null;
+      state.issuePanelHeight = 0;
+      if (state.issuePanelRoot) state.issuePanelRoot.hidden = true;
+      postIssuePanelState();
+    }
+
+    function positionIssuePanel(requestedHeight) {
+      const root = state.issuePanelRoot;
+      const sidebarFrame = state.sidebarFrame;
+      const anchor = state.issuePanelAnchor;
+      if (!(root instanceof HTMLElement) || !(sidebarFrame instanceof HTMLIFrameElement) || !anchor) return;
+      const viewportPadding = 16;
+      const gap = 6;
+      const frameRect = sidebarFrame.getBoundingClientRect();
+      const width = Math.min(352, Math.max(240, window.innerWidth - viewportPadding * 2));
+      let left = frameRect.right + gap;
+      if (left + width > window.innerWidth - viewportPadding) {
+        left = window.innerWidth - viewportPadding - width;
+      }
+      left = Math.max(viewportPadding, left);
+
+      const maxHeight = Math.max(160, Math.min(420, window.innerHeight - viewportPadding * 2));
+      const height = Math.max(120, Math.min(Number(requestedHeight) || maxHeight, maxHeight));
+      const anchorTop = frameRect.top + anchor.top;
+      let top = anchorTop - 8;
+      if (top + height > window.innerHeight - viewportPadding) {
+        top = frameRect.top + anchor.bottom - height + 8;
+      }
+      top = Math.max(viewportPadding, Math.min(top, window.innerHeight - viewportPadding - height));
+
+      root.style.left = Math.round(left) + "px";
+      root.style.top = Math.round(top) + "px";
+      root.style.width = Math.round(width) + "px";
+      root.style.height = Math.round(height) + "px";
+      root.style.maxHeight = Math.round(maxHeight) + "px";
+      state.issuePanelHeight = height;
+    }
+
+    function showIssuePanel(workspaceId, issueId, anchor) {
+      const root = ensureIssuePanelRoot();
+      if (state.issuePanelFrame) state.issuePanelFrame.remove();
+      const frame = createFrame("issue-panel", {
+        workspace_id: workspaceId,
+        issue_id: issueId,
+      });
+      root.replaceChildren(frame);
+      root.hidden = false;
+      state.issuePanelFrame = frame;
+      state.issuePanelIssueId = issueId;
+      state.issuePanelAnchor = anchor;
+      positionIssuePanel(420);
+      postIssuePanelState();
+      publishContextSoon();
+    }
+
     function installStyles() {
       if (document.getElementById(STYLE_ID)) return;
       const style = document.createElement("style");
@@ -320,7 +429,8 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
           width: 100%;
         }
         #${SIDEBAR_ROOT_ID} > iframe,
-        #${WORKSPACE_ROOT_ID} > iframe {
+        #${WORKSPACE_ROOT_ID} > iframe,
+        #${ISSUE_PANEL_ROOT_ID} > iframe {
           width: 100%;
           height: 100%;
           min-width: 0;
@@ -328,6 +438,19 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
           border: 0;
           background: transparent;
           color-scheme: inherit;
+        }
+        #${ISSUE_PANEL_ROOT_ID} {
+          position: fixed;
+          z-index: 80;
+          min-width: 0;
+          min-height: 0;
+          overflow: visible;
+          pointer-events: none;
+        }
+        #${ISSUE_PANEL_ROOT_ID}[hidden] { display: none !important; }
+        #${ISSUE_PANEL_ROOT_ID} > iframe {
+          display: block;
+          pointer-events: auto;
         }
         #${SIDEBAR_ROOT_ID} > iframe { display: none; }
         #${WORKSPACE_ROOT_ID} {
@@ -554,6 +677,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
     function frameForSource(source) {
       if (state.sidebarFrame && source === state.sidebarFrame.contentWindow) return state.sidebarFrame;
       if (state.workspaceFrame && source === state.workspaceFrame.contentWindow) return state.workspaceFrame;
+      if (state.issuePanelFrame && source === state.issuePanelFrame.contentWindow) return state.issuePanelFrame;
       return null;
     }
 
@@ -570,6 +694,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       if (state.disposed) return;
       postContext(state.sidebarFrame);
       postContext(state.workspaceFrame);
+      postContext(state.issuePanelFrame);
     }
 
     function publishContextSoon() {
@@ -638,7 +763,41 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       }
       if (message.type !== "weft:host-action" || typeof message.requestId !== "string") return;
       if (message.action === "workspace.show") {
+        closeIssuePanel();
         setView("workspace");
+        actionResult(frame, message.requestId, true);
+        return;
+      }
+      if (message.action === "issue-panel.toggle") {
+        if (
+          frame !== state.sidebarFrame ||
+          !positiveInteger(message.workspaceId) ||
+          !positiveInteger(message.issueId) ||
+          !validIssuePanelAnchor(message.anchor)
+        ) {
+          actionResult(frame, message.requestId, false, "invalid-issue-panel-request");
+          return;
+        }
+        if (state.issuePanelIssueId === message.issueId) {
+          actionResult(frame, message.requestId, true);
+          closeIssuePanel();
+          return;
+        }
+        showIssuePanel(message.workspaceId, message.issueId, message.anchor);
+        actionResult(frame, message.requestId, true);
+        return;
+      }
+      if (message.action === "issue-panel.close") {
+        actionResult(frame, message.requestId, true);
+        closeIssuePanel();
+        return;
+      }
+      if (message.action === "issue-panel.resize") {
+        if (frame !== state.issuePanelFrame || !Number.isFinite(message.height)) {
+          actionResult(frame, message.requestId, false, "invalid-issue-panel-size");
+          return;
+        }
+        positionIssuePanel(message.height);
         actionResult(frame, message.requestId, true);
         return;
       }
@@ -647,9 +806,11 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
           actionResult(frame, message.requestId, false, "invalid-thread-id");
           return;
         }
+        const openedFromIssuePanel = frame === state.issuePanelFrame;
         void openNativeThread(message.threadId).then((opened) => {
           if (state.disposed) return;
           actionResult(frame, message.requestId, opened, opened ? undefined : "thread-not-in-native-sidebar");
+          if (opened && openedFromIssuePanel) closeIssuePanel();
           if (!opened) notifyHost("thread.open.missing", { threadId: message.threadId });
         }).catch(() => {
           if (!state.disposed) actionResult(frame, message.requestId, false, "thread-open-failed");
@@ -679,11 +840,25 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       applyNativeModeButtonLabel(selectedLabel || (nextMode === "codex" ? "Codex" : "ChatGPT"));
     }
 
+    function onDocumentPointerDown(event) {
+      if (!state.issuePanelFrame || !state.issuePanelRoot) return;
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (state.issuePanelRoot.contains(target)) return;
+      if (target === state.sidebarFrame) return;
+      closeIssuePanel();
+    }
+
+    function onDocumentKeyDown(event) {
+      if (event.key === "Escape" && state.issuePanelFrame) closeIssuePanel();
+    }
+
     function mount() {
       if (state.disposed || !document.documentElement) return;
       installStyles();
       ensureSidebarRoot();
       ensureWorkspaceRoot();
+      if (state.issuePanelFrame) ensureIssuePanelRoot();
       const nextModeButton = modeButton();
       if (state.modeButton !== nextModeButton) {
         restoreModeButton();
@@ -713,8 +888,12 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       state.started = true;
       state.messageListener = onFrameMessage;
       state.clickListener = onDocumentClick;
+      state.pointerListener = onDocumentPointerDown;
+      state.keyListener = onDocumentKeyDown;
       window.addEventListener("message", state.messageListener);
       document.addEventListener("click", state.clickListener, true);
+      document.addEventListener("pointerdown", state.pointerListener, true);
+      document.addEventListener("keydown", state.keyListener, true);
       state.mutationObserver = new MutationObserver(() => {
         scheduleMount();
         publishContextSoon();
@@ -725,7 +904,10 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         childList: true,
         subtree: true,
       });
-      state.resizeObserver = new ResizeObserver(() => publishContextSoon());
+      state.resizeObserver = new ResizeObserver(() => {
+        publishContextSoon();
+        if (state.issuePanelFrame) positionIssuePanel(state.issuePanelHeight || 420);
+      });
       state.resizeObserver.observe(document.documentElement);
       state.mediaQuery = matchMedia("(prefers-color-scheme: dark)");
       state.mediaListener = () => publishContextSoon();
@@ -735,6 +917,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
     }
 
     function reloadFrames() {
+      closeIssuePanel();
       state.readyFrames.clear();
       if (state.sidebarFrame) state.sidebarFrame.src = surfaceUrl("sidebar");
       if (state.workspaceFrame) state.workspaceFrame.src = surfaceUrl("workspace");
@@ -772,10 +955,13 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       if (state.mediaQuery && state.mediaListener) state.mediaQuery.removeEventListener("change", state.mediaListener);
       if (state.messageListener) window.removeEventListener("message", state.messageListener);
       if (state.clickListener) document.removeEventListener("click", state.clickListener, true);
+      if (state.pointerListener) document.removeEventListener("pointerdown", state.pointerListener, true);
+      if (state.keyListener) document.removeEventListener("keydown", state.keyListener, true);
       state.pendingActions.clear();
       restoreModeButton();
       if (state.sidebarRoot) state.sidebarRoot.remove();
       if (state.workspaceRoot) state.workspaceRoot.remove();
+      if (state.issuePanelRoot) state.issuePanelRoot.remove();
       const style = document.getElementById(STYLE_ID);
       if (style) style.remove();
       const root = document.documentElement;

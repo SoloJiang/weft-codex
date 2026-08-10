@@ -4,7 +4,6 @@ export const ISSUE_KINDS = ["feature", "bugfix", "refactor", "spike"] as const
 export type DirectionStatus = (typeof STATUSES)[number]
 export type IssueKind = (typeof ISSUE_KINDS)[number]
 export type AppView = "kanban" | "repos" | "issue"
-export type MessageIntent = "message" | "continue"
 
 export interface Workspace {
   id: number
@@ -146,7 +145,6 @@ export type DialogState =
   | { type: "workspace" }
   | { type: "issue" }
   | { type: "repositories" }
-  | { type: "message"; target: "lead" | "task"; id: number; intent: MessageIntent }
   | null
 
 export type ToastKind = "info" | "success" | "error"

@@ -4,6 +4,8 @@ import tailwindcss from "@tailwindcss/vite"
 import react from "@vitejs/plugin-react"
 import { defineConfig, type Plugin } from "vite"
 
+const apiTarget = process.env.WEFTD_URL ?? "http://127.0.0.1:47810"
+
 const normalizeGeneratedWhitespace: Plugin = {
   name: "normalize-generated-whitespace",
   enforce: "post" as const,
@@ -31,7 +33,7 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": "http://127.0.0.1:47810",
+      "/api": apiTarget,
     },
   },
 })

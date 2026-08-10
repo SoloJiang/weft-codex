@@ -27,7 +27,12 @@ function isRoute(value: unknown): value is AppView {
 }
 
 function isSurface(value: unknown): value is UiSurface {
-  return value === "standalone" || value === "sidebar" || value === "workspace"
+  return (
+    value === "standalone" ||
+    value === "sidebar" ||
+    value === "workspace" ||
+    value === "issue-panel"
+  )
 }
 
 function hasValidRoute(candidate: Record<string, unknown>): boolean {

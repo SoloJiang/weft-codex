@@ -98,6 +98,41 @@ export function ThreadLink({
   )
 }
 
+export function ThreadCardLink({
+  threadId,
+  label,
+  className,
+  onError,
+}: {
+  threadId: string
+  label: string
+  className?: string
+  onError?: (error: unknown) => void
+}) {
+  const { t } = useI18n()
+  const [pending, setPending] = React.useState(false)
+  if (!threadId) return null
+  return (
+    <a
+      className={cn("thread-card-link", className)}
+      href={codexThreadHref(threadId)}
+      aria-label={label}
+      aria-busy={pending}
+      aria-disabled={pending}
+      title={label}
+      onClick={(event) => {
+        if (!hasHostBridge()) return
+        event.preventDefault()
+        if (pending) return
+        setPending(true)
+        void openCodexThread(threadId)
+          .catch(() => onError?.(new Error(t("err.threadOpen"))))
+          .finally(() => setPending(false))
+      }}
+    />
+  )
+}
+
 export function EmptyState({
   titleKey,
   bodyKey,

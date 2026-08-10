@@ -9,6 +9,7 @@ import { RepositoriesView } from "@/components/repositories-view"
 import { openCodexThread } from "@/components/shared"
 import { Button } from "@/components/ui/button"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
+import { requestHostAction } from "@/host-context"
 import { useI18n } from "@/i18n"
 import { readInitialRoute, readInitialWorkspaceId } from "@/surface"
 import { createSurfaceChannel, type SurfaceMessage } from "@/surface-channel"
@@ -19,7 +20,6 @@ import type {
   Direction,
   Issue,
   IssueKind,
-  MessageIntent,
   Repo,
   RepoImportResponse,
   RepoMap,
@@ -77,6 +77,13 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
     document.documentElement.lang = lang
     document.title = t("app.title")
   }, [lang, t])
+
+  React.useEffect(() => {
+    if (!embedded) return
+    const closeIssuePanel = () => requestHostAction({ action: "issue-panel.close" })
+    document.addEventListener("pointerdown", closeIssuePanel, true)
+    return () => document.removeEventListener("pointerdown", closeIssuePanel, true)
+  }, [embedded])
 
   const notify = React.useCallback((message: string, kind: ToastKind = "info") => {
     toastSequence.current += 1
@@ -258,13 +265,6 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
     })
   }
 
-  const sendMessage = async (target: "lead" | "task", id: number, text: string, intent: MessageIntent) => {
-    const path = target === "lead" ? `/api/issues/${id}/message` : `/api/directions/${id}/message`
-    await api(path, jsonRequest("POST", { text }))
-    await refreshCurrent()
-    notify(t(intent === "continue" ? "success.continueSent" : "success.messageSent"), "success")
-  }
-
   const completeTask = React.useCallback(async (direction: Direction) => {
     await api(`/api/directions/${direction.id}/complete`, jsonRequest("POST"))
     await refreshCurrent()
@@ -287,7 +287,6 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
       await api(`/api/directions/${direction.id}/attention/clear`, jsonRequest("POST"))
       await refreshCurrent()
     },
-    onContinueTask: (direction: Direction) => setDialog({ type: "message", target: "task", id: direction.id, intent: "continue" }),
   }), [notifyError, refreshCurrent, completeTask, launchLead, t])
 
   const importRepositories = async (paths: string[]): Promise<RepoImportResponse> => {
@@ -421,7 +420,6 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
         onCreateWorkspace={createWorkspace}
         onCreateIssue={createIssue}
         onImportRepositories={importRepositories}
-        onSendMessage={sendMessage}
       />
 
       <div className="notifications" aria-live="polite" aria-atomic="false">

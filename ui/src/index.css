@@ -167,6 +167,7 @@ textarea { font: inherit; }
 
 button:focus-visible,
 .thread-link:focus-visible,
+.thread-card-link:focus-visible,
 select:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
@@ -277,6 +278,17 @@ html[data-ui-surface="sidebar"] body {
   background: var(--vscode-sideBar-background, var(--bg));
 }
 
+html[data-ui-surface="issue-panel"],
+html[data-ui-surface="issue-panel"] body,
+html[data-ui-surface="issue-panel"] #root {
+  min-height: 0;
+  background: transparent;
+}
+
+html[data-ui-surface="issue-panel"] body {
+  overflow: hidden;
+}
+
 html[data-ui-surface="workspace"] body {
   background: var(--color-token-main-surface-primary, var(--panel));
 }
@@ -287,6 +299,7 @@ html[data-ui-surface="workspace"] .embedded-main {
 }
 
 .sidebar-surface {
+  position: relative;
   height: 100%;
   min-width: 0;
   display: flex;
@@ -398,24 +411,8 @@ html[data-ui-surface="workspace"] .embedded-main {
   background: var(--hover);
 }
 
-.sidebar-expanded-issue {
-  min-width: 0;
-  margin-top: 7px;
-  overflow: hidden;
-  border-block: 1px solid var(--border);
-}
-
-.sidebar-expanded-issue-header {
-  min-width: 0;
-  min-height: 34px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px;
-  align-items: center;
-  padding-left: 8px;
-}
-
 .sidebar-issue-main,
-.sidebar-issue-toggle,
+.sidebar-issue-panel-button,
 .sidebar-thread-row,
 .sidebar-attention-row {
   width: 100%;
@@ -435,7 +432,7 @@ html[data-ui-surface="workspace"] .embedded-main {
   padding: 4px 1px 4px 8px;
 }
 
-.sidebar-issue-toggle {
+.sidebar-issue-panel-button {
   display: grid;
   place-items: center;
   align-self: center;
@@ -444,13 +441,18 @@ html[data-ui-surface="workspace"] .embedded-main {
   color: var(--dim);
 }
 
-.sidebar-issue-toggle svg {
+.sidebar-issue-panel-button svg {
   width: 13px;
   height: 13px;
 }
 
+.sidebar-issue-panel-button[data-active="true"] {
+  color: var(--link);
+}
+
 .sidebar-conversation-tree {
-  padding: 2px 5px 6px;
+  min-width: 0;
+  padding: 2px 6px 7px;
 }
 
 .sidebar-chat-group {
@@ -516,7 +518,7 @@ html[data-ui-surface="workspace"] .embedded-main {
 .sidebar-thread-row:hover,
 .sidebar-thread-row[data-active="true"],
 .sidebar-issue-main:hover,
-.sidebar-issue-toggle:hover {
+.sidebar-issue-panel-button:hover {
   background: var(--hover);
 }
 
@@ -609,26 +611,93 @@ html[data-ui-surface="workspace"] .embedded-main {
 .sidebar-row-title { font-size: 12px; line-height: 1.45; }
 .sidebar-row-meta { color: var(--dim); font-size: 10px; line-height: 1.35; }
 
-.sidebar-issue-title-viewport {
+.sidebar-issue-title-marquee {
+  --marquee-speed-em-per-second: 2;
+  --sidebar-marquee-gap: 1.15em;
+  --sidebar-marquee-left-fade: 0.571429em;
+  --sidebar-marquee-right-fade: 1.14286em;
   min-width: 0;
   width: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
+  display: block;
   white-space: nowrap;
 }
 
-.sidebar-issue-title-viewport::-webkit-scrollbar { display: none; }
-
-.sidebar-issue-title-viewport[data-overflow="true"] {
-  -webkit-mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 30px), transparent 100%);
-  mask-image: linear-gradient(to right, #000 0, #000 calc(100% - 30px), transparent 100%);
+.sidebar-issue-title-clip {
+  width: calc(100% + var(--sidebar-marquee-left-fade));
+  min-width: 0;
+  margin-inline-start: calc(-1 * var(--sidebar-marquee-left-fade));
+  display: block;
+  overflow: hidden;
 }
 
-.sidebar-issue-title-viewport .sidebar-row-title {
-  width: max-content;
+.sidebar-issue-title-track {
+  gap: var(--sidebar-marquee-gap);
+  min-width: max-content;
+  padding-inline-start: var(--sidebar-marquee-left-fade);
+  display: inline-flex;
+}
+
+.sidebar-issue-title-marquee .sidebar-row-title {
+  min-width: max-content;
+  display: inline-block;
   overflow: visible;
   text-overflow: clip;
+}
+
+.sidebar-issue-title-marquee[data-overflow="true"] .sidebar-issue-title-clip {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--sidebar-marquee-left-fade),
+    #000 calc(100% - var(--sidebar-marquee-right-fade)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 var(--sidebar-marquee-left-fade),
+    #000 calc(100% - var(--sidebar-marquee-right-fade)),
+    transparent
+  );
+  -webkit-mask-size: 100% 100%;
+  mask-size: 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+.sidebar-issue-row:hover
+  .sidebar-issue-title-marquee[data-overflow="true"]
+  .sidebar-issue-title-track {
+  animation: sidebarIssueTitleScroll
+    var(--sidebar-marquee-duration)
+    var(--sidebar-marquee-scroll-timing)
+    1
+    forwards;
+  will-change: transform;
+}
+
+.sidebar-issue-row:hover
+  .sidebar-issue-title-marquee[data-overflow="true"]
+  .sidebar-issue-title-clip {
+  animation: sidebarIssueTitleFadeRight
+    var(--sidebar-marquee-duration)
+    linear
+    forwards;
+}
+
+@keyframes sidebarIssueTitleScroll {
+  to { transform: translateX(calc(-1 * var(--sidebar-marquee-scroll-distance))); }
+}
+
+@keyframes sidebarIssueTitleFadeRight {
+  75% {
+    -webkit-mask-size: 100% 100%;
+    mask-size: 100% 100%;
+  }
+  to {
+    -webkit-mask-size: calc(100% + var(--sidebar-marquee-right-fade)) 100%;
+    mask-size: calc(100% + var(--sidebar-marquee-right-fade)) 100%;
+  }
 }
 
 .sidebar-empty {
@@ -636,6 +705,132 @@ html[data-ui-surface="workspace"] .embedded-main {
   padding: 7px 8px;
   color: var(--dim);
   font-size: 12px;
+}
+
+.sidebar-local-issue-panel {
+  position: absolute;
+  z-index: 30;
+  inset-inline: 8px;
+  max-height: min(420px, calc(100dvh - 32px));
+  transform-origin: top left;
+  animation: issueConversationPanelEnter 160ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.issue-panel-frame {
+  position: relative;
+  width: 100%;
+  padding: 8px;
+  transform-origin: top left;
+  animation: issueConversationPanelEnter 160ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes issueConversationPanelEnter {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.issue-conversation-card {
+  width: 100%;
+  max-height: min(420px, calc(100dvh - 16px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  outline: none;
+  background: var(--color-token-dropdown-background, var(--panel));
+  box-shadow:
+    0 16px 38px rgba(0, 0, 0, 0.16),
+    0 3px 10px rgba(0, 0, 0, 0.09);
+}
+
+.issue-conversation-card-header {
+  min-width: 0;
+  min-height: 50px;
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: start;
+  gap: var(--space-2);
+  padding: 11px 10px 9px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.issue-conversation-card-header h2 {
+  min-width: 0;
+  margin: 0;
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.issue-conversation-close {
+  width: 28px;
+  height: 28px;
+  margin-top: -4px;
+  color: var(--dim);
+}
+
+.issue-conversation-close svg {
+  width: 14px;
+  height: 14px;
+}
+
+.issue-conversation-scroll {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.issue-panel-state {
+  margin: 8px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--color-token-dropdown-background, var(--panel));
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.14);
+  color: var(--dim);
+  font-size: 12px;
+}
+
+.issue-panel-frame > .issue-panel-state { margin: 0; }
+
+.issue-panel-error {
+  position: absolute;
+  inset-inline: 16px;
+  bottom: 14px;
+  margin: 0;
+  overflow: hidden;
+  color: var(--danger);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-issue-row:hover
+    .sidebar-issue-title-marquee[data-overflow="true"]
+    .sidebar-issue-title-track,
+  .sidebar-issue-row:hover
+    .sidebar-issue-title-marquee[data-overflow="true"]
+    .sidebar-issue-title-clip,
+  .sidebar-local-issue-panel,
+  .issue-panel-frame {
+    animation: none;
+  }
 }
 
 .sidebar-footer {
@@ -886,9 +1081,30 @@ main {
   border-radius: var(--r-md);
   background: var(--panel);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  transition: border-color 100ms ease-out, background-color 100ms ease-out;
 }
 
 .kanban-card.attention { border-color: var(--warn); }
+
+.thread-card-link {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  cursor: pointer;
+}
+
+.thread-card-link:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.kanban-card:has(> .thread-card-link:hover) {
+  border-color: var(--border-strong);
+  background: var(--color-token-list-hover-background, var(--hover));
+}
+
+.kanban-card.attention:has(> .thread-card-link:hover) { border-color: var(--warn); }
 
 .kanban-card-issue {
   width: 100%;
@@ -899,14 +1115,8 @@ main {
   align-items: start;
   gap: 7px;
   padding: 0;
-  border: 0;
-  background: transparent;
   color: var(--dim);
-  cursor: pointer;
-  text-align: left;
 }
-
-.kanban-card-issue:hover .kanban-card-issue-title { color: var(--link); }
 
 .kanban-card-issue-number {
   min-width: 27px;
@@ -963,6 +1173,8 @@ main {
 
 .kanban-card-actions > button,
 .kanban-card-actions > .thread-link {
+  position: relative;
+  z-index: 2;
   height: 27px;
   min-height: 27px;
   padding: 0 7px;
@@ -977,6 +1189,7 @@ main {
 
 .kanban-card-menu {
   position: relative;
+  z-index: 2;
   margin-left: auto;
 }
 
@@ -1119,6 +1332,7 @@ main {
 .task-detail + .task-detail { border-top: 1px solid var(--border); }
 
 .task-detail-head {
+  position: relative;
   min-width: 0;
   display: flex;
   align-items: flex-start;
@@ -1128,7 +1342,14 @@ main {
 .task-detail-identity { flex: 1; }
 .task-detail h3 { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
 .task-detail .meta { margin: 2px 0 0; overflow-wrap: anywhere; }
-.task-detail .btns { flex-wrap: wrap; justify-content: flex-end; }
+.task-detail .btns {
+  position: relative;
+  z-index: 2;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.task-detail-head:has(> .thread-card-link:hover) h3 { color: var(--link); }
 
 .status-chip,
 .runstate {

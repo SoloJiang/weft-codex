@@ -1,9 +1,6 @@
 import * as React from "react"
 import {
   AlertTriangle,
-  ChevronDown,
-  ChevronRight,
-  CornerDownRight,
   FolderGit2,
   KanbanSquare,
   MessageCircle,
@@ -12,12 +9,14 @@ import {
 } from "lucide-react"
 
 import { api, jsonRequest } from "@/api"
+import { IssueConversationCard } from "@/components/issue-conversation-panel"
 import { openCodexThread } from "@/components/shared"
 import { Button } from "@/components/ui/button"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import type { HostContextV1 } from "@/host-context"
-import { requestHostAction } from "@/host-context"
+import { requestHostAction, subscribeIssuePanelState } from "@/host-context"
 import { useI18n } from "@/i18n"
+import { primaryBranch } from "@/lib/thread-bindings"
 import { createSurfaceChannel, type SurfaceMessage } from "@/surface-channel"
 import { readInitialRoute, readInitialWorkspaceId, type SurfaceRoute } from "@/surface"
 import type {
@@ -48,13 +47,55 @@ type SidebarLocation =
   | { kind: "bound-thread"; threadId: string; binding: ThreadBinding }
   | { kind: "unbound-thread"; threadId: string }
 
-interface ThreadRowProps {
-  label: string
-  threadId: string
-  active: boolean
-  primary?: boolean
-  nested?: boolean
-  onOpen: (threadId: string) => void
+interface LocalIssuePanel {
+  entry: BoardEntry
+  top: number
+}
+
+type MarqueeStyle = React.CSSProperties & {
+  "--sidebar-marquee-duration": string
+  "--sidebar-marquee-scroll-distance": string
+  "--sidebar-marquee-scroll-timing": string
+}
+
+const NATIVE_MARQUEE_HOLD_SECONDS = 0.35
+const NATIVE_MARQUEE_SPEED_EM_PER_SECOND = 2
+const NATIVE_MARQUEE_STEPS = 128
+const NATIVE_MARQUEE_CURVE = { x1: 0.49, y1: 0.6, x2: 0.7, y2: 1 }
+
+function marqueePoint(progress: number, elapsed: number, total: number): string {
+  return `${progress.toFixed(4)} ${((elapsed / total) * 100).toFixed(4)}%`
+}
+
+function nativeMarqueeStyle(distance: number, speedPxPerSecond: number): MarqueeStyle {
+  const movementSeconds = distance / speedPxPerSecond
+  const totalSeconds = NATIVE_MARQUEE_HOLD_SECONDS + movementSeconds
+  const points = [marqueePoint(0, 0, totalSeconds)]
+
+  for (let index = 0; index <= NATIVE_MARQUEE_STEPS; index += 1) {
+    const time = index / NATIVE_MARQUEE_STEPS
+    const inverse = 1 - time
+    const first = 3 * inverse ** 2 * time
+    const second = 3 * inverse * time ** 2
+    const last = time ** 3
+    const progress = first * NATIVE_MARQUEE_CURVE.y1
+      + second * NATIVE_MARQUEE_CURVE.y2
+      + last
+    const curveTime = first * NATIVE_MARQUEE_CURVE.x1
+      + second * NATIVE_MARQUEE_CURVE.x2
+      + last
+    points.push(marqueePoint(
+      progress,
+      NATIVE_MARQUEE_HOLD_SECONDS + movementSeconds * curveTime,
+      totalSeconds,
+    ))
+  }
+
+  return {
+    "--sidebar-marquee-duration": `${totalSeconds.toFixed(3)}s`,
+    "--sidebar-marquee-scroll-distance": `${distance}px`,
+    "--sidebar-marquee-scroll-timing": `linear(${points.join(", ")})`,
+  }
 }
 
 function errorText(error: unknown, network: string, unknown: string): string {
@@ -98,178 +139,65 @@ function deriveLocation(
   return { kind: "unbound-thread", threadId }
 }
 
-function branchesFor(entry: BoardEntry, directionId: number | null): ThreadBinding[] {
-  return entry.threads.filter((binding) => binding.direction_id === directionId)
-}
-
-function primaryBranch(entry: BoardEntry, directionId: number | null): ThreadBinding | undefined {
-  return branchesFor(entry, directionId).find((binding) => binding.is_primary === 1)
-}
-
-function branchTitle(binding: ThreadBinding, forkIndex: number, fallback: string): string {
-  if (binding.is_primary === 1) return fallback
-  const title = binding.title.trim()
-  if (title) return title
-  return `${fallback} ${forkIndex}`
-}
-
 function ScrollingIssueTitle({ title }: { title: string }) {
   const viewportRef = React.useRef<HTMLSpanElement>(null)
+  const contentRef = React.useRef<HTMLSpanElement>(null)
+  const [style, setStyle] = React.useState<MarqueeStyle | null>(null)
 
   React.useLayoutEffect(() => {
     const viewport = viewportRef.current
-    if (!viewport) return
+    const content = contentRef.current
+    if (!viewport || !content) return
 
     const updateOverflow = () => {
-      viewport.dataset.overflow = viewport.scrollWidth > viewport.clientWidth + 1 ? "true" : "false"
+      const viewportWidth = viewport.getBoundingClientRect().width
+      const contentWidth = Math.max(content.getBoundingClientRect().width, content.scrollWidth)
+      const distance = contentWidth - viewportWidth
+      if (viewportWidth <= 0 || distance <= 1) {
+        setStyle(null)
+        return
+      }
+
+      const computed = getComputedStyle(content)
+      const fontSize = Number.parseFloat(computed.fontSize) || 13
+      const configuredSpeed = Number.parseFloat(
+        computed.getPropertyValue("--marquee-speed-em-per-second"),
+      )
+      const speedEmPerSecond = Number.isFinite(configuredSpeed) && configuredSpeed > 0
+        ? configuredSpeed
+        : NATIVE_MARQUEE_SPEED_EM_PER_SECOND
+      const next = nativeMarqueeStyle(distance, fontSize * speedEmPerSecond)
+      setStyle((current) => {
+        if (
+          current?.["--sidebar-marquee-duration"] === next["--sidebar-marquee-duration"]
+          && current["--sidebar-marquee-scroll-distance"]
+            === next["--sidebar-marquee-scroll-distance"]
+        ) return current
+        return next
+      })
     }
     updateOverflow()
 
     const observer = new ResizeObserver(updateOverflow)
     observer.observe(viewport)
+    observer.observe(content)
     return () => observer.disconnect()
   }, [title])
-
-  const scrollTo = (position: "start" | "end") => {
-    const viewport = viewportRef.current
-    if (!viewport || viewport.dataset.overflow !== "true") return
-    const left = position === "end" ? viewport.scrollWidth - viewport.clientWidth : 0
-    const behavior = window.matchMedia("(prefers-reduced-motion: reduce)").matches
-      ? "auto"
-      : "smooth"
-    viewport.scrollTo({ left, behavior })
-  }
 
   return (
     <span
       ref={viewportRef}
-      className="sidebar-issue-title-viewport"
-      onMouseEnter={() => scrollTo("end")}
-      onMouseLeave={() => scrollTo("start")}
+      className="sidebar-issue-title-marquee"
+      data-overflow={style ? "true" : "false"}
+      style={style ?? undefined}
+      title={title}
     >
-      <span className="sidebar-row-title">{title}</span>
+      <span className="sidebar-issue-title-clip">
+        <span className="sidebar-issue-title-track">
+          <span ref={contentRef} className="sidebar-row-title">{title}</span>
+        </span>
+      </span>
     </span>
-  )
-}
-
-function ThreadRow({
-  label,
-  threadId,
-  active,
-  primary = false,
-  nested = false,
-  onOpen,
-}: ThreadRowProps) {
-  const { t } = useI18n()
-  return (
-    <button
-      type="button"
-      className="sidebar-thread-row"
-      data-active={active ? "true" : "false"}
-      data-nested={nested ? "true" : "false"}
-      aria-current={active ? "page" : undefined}
-      onClick={() => onOpen(threadId)}
-    >
-      {nested ? <CornerDownRight aria-hidden="true" /> : <MessageCircle aria-hidden="true" />}
-      <span className="sidebar-thread-title" title={label}>{label}</span>
-      {primary ? <span className="sidebar-primary-chip">{t("sidebar.primary")}</span> : null}
-    </button>
-  )
-}
-
-function IssueConversationTree({
-  entry,
-  activeThreadId,
-  onOpenThread,
-}: {
-  entry: BoardEntry
-  activeThreadId: string | null
-  onOpenThread: (threadId: string) => void
-}) {
-  const { t } = useI18n()
-  const leadBranches = branchesFor(entry, null)
-  const leadPrimary = leadBranches.find((binding) => binding.is_primary === 1)
-  const leadForks = leadBranches.filter((binding) => binding.is_primary !== 1)
-
-  return (
-    <div className="sidebar-conversation-tree">
-      <section className="sidebar-chat-group" aria-label={t("party.lead")}>
-        <div className="sidebar-chat-group-heading">
-          <MessageCircle aria-hidden="true" />
-          <span>{t("party.lead")}</span>
-        </div>
-        <div className="sidebar-chat-group-rows">
-          {leadPrimary ? (
-            <ThreadRow
-              label={t("sidebar.mainChat")}
-              threadId={leadPrimary.thread_id}
-              active={activeThreadId === leadPrimary.thread_id}
-              primary
-              nested
-              onOpen={onOpenThread}
-            />
-          ) : (
-            <span className="sidebar-chat-pending">{t("sidebar.leadStarting")}</span>
-          )}
-          {leadForks.map((binding, index) => (
-            <ThreadRow
-              key={binding.thread_id}
-              label={branchTitle(binding, index + 1, t("sidebar.forkChat"))}
-              threadId={binding.thread_id}
-              active={activeThreadId === binding.thread_id}
-              nested
-              onOpen={onOpenThread}
-            />
-          ))}
-        </div>
-      </section>
-
-      <section className="sidebar-chat-group" aria-label={t("detail.directions")}>
-        <div className="sidebar-chat-group-heading">
-          <span>{t("detail.directions")}</span>
-          <span className="sidebar-chat-group-count">{entry.directions.length}</span>
-        </div>
-        {entry.directions.length ? (
-          <div className="sidebar-chat-group-rows">
-            {entry.directions.map((direction) => {
-              const taskBranches = branchesFor(entry, direction.id)
-              const taskPrimary = taskBranches.find((binding) => binding.is_primary === 1)
-              const taskForks = taskBranches.filter((binding) => binding.is_primary !== 1)
-              if (!taskPrimary) {
-                return (
-                  <div key={direction.id} className="sidebar-thread-row sidebar-thread-unavailable">
-                    <MessageCircle aria-hidden="true" />
-                    <span className="sidebar-thread-title" title={direction.name}>{direction.name}</span>
-                  </div>
-                )
-              }
-              return (
-                <div key={direction.id} className="sidebar-task-chat">
-                  <ThreadRow
-                    label={direction.name}
-                    threadId={taskPrimary.thread_id}
-                    active={activeThreadId === taskPrimary.thread_id}
-                    onOpen={onOpenThread}
-                  />
-                  {taskForks.map((binding, index) => (
-                    <ThreadRow
-                      key={binding.thread_id}
-                      label={branchTitle(binding, index + 1, t("sidebar.forkChat"))}
-                      threadId={binding.thread_id}
-                      active={activeThreadId === binding.thread_id}
-                      nested
-                      onOpen={onOpenThread}
-                    />
-                  ))}
-                </div>
-              )
-            })}
-          </div>
-        ) : (
-          <p className="sidebar-chat-pending">{t("sidebar.noTasks")}</p>
-        )}
-      </section>
-    </div>
   )
 }
 
@@ -279,12 +207,14 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
   const [workspaceId, setWorkspaceId] = React.useState<number | null>(readInitialWorkspaceId)
   const [board, setBoard] = React.useState<BoardEntry[]>([])
   const [route, setRoute] = React.useState<SurfaceRoute>(readInitialRoute)
-  const [expandedIssueId, setExpandedIssueId] = React.useState<number | null>(null)
+  const [panelIssueId, setPanelIssueId] = React.useState<number | null>(null)
+  const [localPanel, setLocalPanel] = React.useState<LocalIssuePanel | null>(null)
   const [resolvedThreads, setResolvedThreads] = React.useState<Map<string, ResolvedThread>>(
     () => new Map(),
   )
   const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState("")
+  const sidebarRef = React.useRef<HTMLElement>(null)
   const loadSequence = React.useRef(0)
   const resolveSequence = React.useRef(0)
   const stateRef = React.useRef({ workspaceId, route })
@@ -422,7 +352,6 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
           })
           return next
         })
-        setExpandedIssueId(response.binding.issue_id)
         if (response.workspaceId !== stateRef.current.workspaceId) {
           setWorkspaceId(response.workspaceId)
           setRoute({ view: "kanban", issueId: null })
@@ -444,34 +373,53 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
     activeIssueId = location.route.issueId
   }
 
+  React.useEffect(() => subscribeIssuePanelState(setPanelIssueId), [])
+
   React.useEffect(() => {
-    if (activeIssueId) setExpandedIssueId(activeIssueId)
-  }, [activeIssueId])
+    if (!localPanel) return
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target
+      if (!(target instanceof Element)) return
+      if (target.closest(".sidebar-local-issue-panel")) return
+      if (target.closest(".sidebar-issue-panel-button")) return
+      setLocalPanel(null)
+      setPanelIssueId(null)
+    }
+    document.addEventListener("pointerdown", onPointerDown, true)
+    return () => document.removeEventListener("pointerdown", onPointerDown, true)
+  }, [localPanel])
+
+  const closeIssuePanel = React.useCallback(() => {
+    setPanelIssueId(null)
+    setLocalPanel(null)
+    requestHostAction({ action: "issue-panel.close" })
+  }, [])
 
   const navigate = React.useCallback((next: SurfaceRoute) => {
+    closeIssuePanel()
     requestHostAction({ action: "workspace.show" })
     setRoute(next)
     channel?.post({ type: "navigate", view: next.view, issueId: next.issueId })
-  }, [channel])
+  }, [channel, closeIssuePanel])
 
   const selectWorkspace = React.useCallback((id: number) => {
+    closeIssuePanel()
     requestHostAction({ action: "workspace.show" })
     setWorkspaceId(id)
     setRoute({ view: "kanban", issueId: null })
-    setExpandedIssueId(null)
     channel?.post({ type: "workspace.select", workspaceId: id })
     channel?.post({ type: "navigate", view: "kanban", issueId: null })
-  }, [channel])
+  }, [channel, closeIssuePanel])
 
   const openThread = React.useCallback((threadId: string) => {
+    closeIssuePanel()
     setError("")
     void openCodexThread(threadId).catch(() => {
       setError(t("err.prefix") + t("err.threadOpen"))
     })
-  }, [t])
+  }, [closeIssuePanel, t])
 
   const openIssue = React.useCallback((entry: BoardEntry) => {
-    setExpandedIssueId(entry.issue.id)
     const primary = primaryBranch(entry, null)
     const threadId = primary?.thread_id || entry.issue.lead_codex_thread_id
     if (threadId) {
@@ -480,6 +428,45 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
     }
     navigate({ view: "issue", issueId: entry.issue.id })
   }, [navigate, openThread])
+
+  const toggleIssuePanel = React.useCallback((
+    entry: BoardEntry,
+    button: HTMLButtonElement,
+  ) => {
+    const rect = button.getBoundingClientRect()
+    const anchor = {
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      left: rect.left,
+      width: rect.width,
+      height: rect.height,
+    }
+    const handled = requestHostAction({
+      action: "issue-panel.toggle",
+      workspaceId: entry.issue.workspace_id,
+      issueId: entry.issue.id,
+      anchor,
+    })
+    if (handled) {
+      setLocalPanel(null)
+      setPanelIssueId((current) => current === entry.issue.id ? null : entry.issue.id)
+      return
+    }
+
+    const asideRect = sidebarRef.current?.getBoundingClientRect()
+    if (!asideRect) return
+    if (localPanel?.entry.issue.id === entry.issue.id) {
+      setLocalPanel(null)
+      setPanelIssueId(null)
+      return
+    }
+    const maxHeight = Math.min(420, window.innerHeight - 32)
+    const maxTop = Math.max(8, asideRect.height - maxHeight - 8)
+    const top = Math.min(Math.max(8, rect.top - asideRect.top - 8), maxTop)
+    setLocalPanel({ entry, top })
+    setPanelIssueId(entry.issue.id)
+  }, [localPanel])
 
   const attentionItems = board.flatMap((entry) => entry.directions
     .filter((task) => Boolean(task.attention))
@@ -492,13 +479,13 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
     issueList = <p className="sidebar-empty">{t("sidebar.noIssues")}</p>
   } else {
     issueList = board.map((entry) => {
-      const expanded = expandedIssueId === entry.issue.id
+      const panelOpen = panelIssueId === entry.issue.id
       const selected = activeIssueId === entry.issue.id
       return (
         <div
           key={entry.issue.id}
           className="sidebar-issue-row"
-          data-active={selected || expanded ? "true" : "false"}
+          data-active={selected || panelOpen ? "true" : "false"}
         >
           <button
             type="button"
@@ -510,24 +497,22 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
           </button>
           <button
             type="button"
-            className="sidebar-issue-toggle"
-            aria-label={t(expanded ? "sidebar.collapseIssue" : "sidebar.expandIssue", { title: entry.issue.title })}
-            aria-expanded={expanded}
-            onClick={() => setExpandedIssueId((current) => current === entry.issue.id ? null : entry.issue.id)}
+            className="sidebar-issue-panel-button"
+            aria-label={t("sidebar.showConversations", { title: entry.issue.title })}
+            aria-haspopup="dialog"
+            aria-expanded={panelOpen}
+            data-active={panelOpen ? "true" : "false"}
+            onClick={(event) => toggleIssuePanel(entry, event.currentTarget)}
           >
-            {expanded ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
+            <MessageCircle aria-hidden="true" />
           </button>
         </div>
       )
     })
   }
 
-  const expandedEntry = expandedIssueId
-    ? board.find((entry) => entry.issue.id === expandedIssueId)
-    : undefined
-
   return (
-    <aside className="sidebar-surface" aria-label={t("sidebar.title")}>
+    <aside ref={sidebarRef} className="sidebar-surface" aria-label={t("sidebar.title")}>
       <div className="sidebar-workspace-row">
         <label className="sr-only" htmlFor="sidebar-workspace-select">{t("workspace.label")}</label>
         <NativeSelect
@@ -550,6 +535,7 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
           title={t("ws.add")}
           disabled={!channel}
           onClick={() => {
+            closeIssuePanel()
             requestHostAction({ action: "workspace.show" })
             channel?.post({ type: "command", command: "workspace.create" })
           }}
@@ -564,6 +550,7 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
           className="sidebar-create-button"
           disabled={!channel}
           onClick={() => {
+            closeIssuePanel()
             requestHostAction({ action: "workspace.show" })
             channel?.post({
               type: "command",
@@ -599,33 +586,17 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
         </Button>
       </nav>
 
-      <div className="sidebar-scroll">
+      <div
+        className="sidebar-scroll"
+        onScroll={() => {
+          if (panelIssueId !== null) closeIssuePanel()
+        }}
+      >
         <section className="sidebar-section" aria-labelledby="sidebar-issues-heading">
           <div className="sidebar-section-heading">
             <h2 id="sidebar-issues-heading">{t("sidebar.issues")}</h2>
           </div>
           <div className="sidebar-list">{issueList}</div>
-          {expandedEntry ? (
-            <section className="sidebar-expanded-issue" aria-label={expandedEntry.issue.title}>
-              <div className="sidebar-expanded-issue-header">
-                <ScrollingIssueTitle title={expandedEntry.issue.title} />
-                <button
-                  type="button"
-                  className="sidebar-issue-toggle"
-                  aria-label={t("sidebar.collapseIssue", { title: expandedEntry.issue.title })}
-                  aria-expanded={true}
-                  onClick={() => setExpandedIssueId(null)}
-                >
-                  <ChevronDown aria-hidden="true" />
-                </button>
-              </div>
-              <IssueConversationTree
-                entry={expandedEntry}
-                activeThreadId={activeThreadId}
-                onOpenThread={openThread}
-              />
-            </section>
-          ) : null}
         </section>
 
         {attentionItems.length ? (
@@ -641,7 +612,6 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
                   type="button"
                   className="sidebar-attention-row"
                   onClick={() => {
-                    setExpandedIssueId(issue.id)
                     const entry = board.find((candidate) => candidate.issue.id === issue.id)
                     const thread = entry ? primaryBranch(entry, task.id) : undefined
                     if (thread) openThread(thread.thread_id)
@@ -659,6 +629,18 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
           </section>
         ) : null}
       </div>
+
+      {localPanel ? (
+        <div className="sidebar-local-issue-panel" style={{ top: localPanel.top }}>
+          <IssueConversationCard
+            entry={localPanel.entry}
+            activeThreadId={activeThreadId}
+            onOpenThread={openThread}
+            onClose={closeIssuePanel}
+            autoFocus
+          />
+        </div>
+      ) : null}
 
       {error ? (
         <footer className="sidebar-footer">

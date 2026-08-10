@@ -18,8 +18,9 @@ const zh = {
   "sidebar.leadStarting": "Lead 正在启动…",
   "sidebar.noTasks": "暂无任务",
   "sidebar.openIssueLead": "打开 {title} 的 Lead 主会话",
-  "sidebar.expandIssue": "展开 {title}",
-  "sidebar.collapseIssue": "收起 {title}",
+  "sidebar.showConversations": "查看 {title} 的会话",
+  "sidebar.closeConversations": "关闭会话面板",
+  "sidebar.conversationsFor": "{title} 的会话",
   "workspace.label": "工作区",
   "workspace.none": "尚无工作区",
   "workspace.namePlaceholder": "工作区名称",
@@ -37,7 +38,7 @@ const zh = {
   "kanban.allIssues": "全部 issue",
   "kanban.noMatchingTasks": "没有符合搜索或筛选条件的任务。",
   "kanban.boardLabel": "按状态排列的任务",
-  "kanban.openIssue": "打开 issue {title}",
+  "kanban.viewIssue": "查看 issue 详情",
   "kanban.taskCount": "{count} 个任务",
   "kanban.moreActions": "更多任务操作",
 
@@ -59,15 +60,13 @@ const zh = {
   "detail.notFoundTitle": "未找到 issue",
   "detail.notFoundBody": "该 issue 可能已被删除，或属于其他工作区。",
 
-  "dir.msg": "发消息",
   "dir.openThread": "打开对话",
-  "dir.continue": "继续处理",
+  "dir.openTaskChat": "打开任务“{name}”的对话",
   "dir.complete": "验收完成",
   "dir.retryStart": "重试启动",
   "dir.startFailed": "启动失败",
   "dir.clearAttention": "清除标记",
   "dir.attention": "需要处理",
-  "dir.cardLabel": "任务：{name}",
 
   "repo.add": "添加仓库",
   "repo.chooseFolders": "选择文件夹",
@@ -101,8 +100,6 @@ const zh = {
 
   "modal.cancel": "取消",
   "modal.close": "关闭",
-  "modal.messageTitle": "发送消息",
-  "modal.continueTaskTitle": "继续处理任务",
   "modal.workspaceTitle": "新建工作区",
   "modal.issueTitle": "新建 issue",
   "modal.issueDescription": "一个 issue 就是一条跨仓库推进的工作主线。",
@@ -111,12 +108,8 @@ const zh = {
   "modal.addRepositories": "添加 {count} 个",
   "modal.createWorkspace": "创建工作区",
   "modal.createIssue": "创建 issue",
-  "modal.sendMessage": "发送",
-  "modal.continueTask": "发送并继续",
 
   "field.name": "名称",
-  "field.message": "消息",
-  "field.nextInstruction": "补充要求",
 
   "kind.feature": "功能",
   "kind.bugfix": "缺陷",
@@ -128,13 +121,11 @@ const zh = {
   "party.task": "任务",
 
   "validation.workspaceName": "请输入工作区名称。",
-  "validation.message": "请输入消息。",
   "validation.repoName": "请输入仓库名称。",
   "validation.repoPath": "请输入仓库的绝对路径。",
   "validation.repoPaths": "请至少输入一个仓库路径。",
 
   "loading.creatingWorkspace": "正在创建…",
-  "loading.sendingMessage": "正在发送…",
   "loading.completingTask": "正在完成…",
   "loading.retryingTask": "正在重试…",
   "loading.startingLead": "正在启动…",
@@ -148,8 +139,6 @@ const zh = {
   "loading.openingThread": "正在打开…",
 
   "success.workspaceCreated": "工作区已创建。",
-  "success.messageSent": "消息已发送。",
-  "success.continueSent": "补充要求已发送。",
   "success.taskCompleted": "任务已验收完成。",
   "success.issueCreated": "Issue 已创建。",
   "success.repoAdded": "仓库已添加。",
