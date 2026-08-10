@@ -128,6 +128,31 @@ renderer agent 在运行时依赖、但 `SELECTORS` 完全没有覆盖的锚点�
 > 这张表是**一次性人工验证记录**，不是回归基线——它依赖真实交互，CI 的被动探针复现
 > 不了。要长期守住这些假设，需要 #6 用可交互的回归套件重放同一串操作。
 
+### 2.3 两档挂载的真实注入验证（build 6321）
+
+在**完整注入**的会话上实测两档（真 agent、真 iframe、真原生 sidebar）：
+
+| 观测项 | Tier 2 `weft-mode` | Tier 1 `additive` |
+|---|---|---|
+| 原生子节点可见 | 0 / 2 | **2 / 2** |
+| 可见会话行 | 0 | **24** |
+| Weft root 高度 | 747px | **30px** |
+| 入口按钮 | `none` | **`block`** |
+| sidebar iframe | `block` | **`none`** |
+| workspace overlay | `block` | `block` |
+
+Tier 1 下原生 sidebar 完整保留，Weft 收缩为入口行，而 workspace overlay 仍可用——
+即 §7.5 的「原生 UI 不动，仅注入 workspace 入口与视图」。
+
+**方法上有两个坑，记下来免得重蹈：**
+
+1. **不能用 stub 代替真 agent。** 早期验证只注入样式表加一个空 root，然后手改
+   `data-weft-codex-tier`。那样测到的只是 CSS 选择器能否解析，证明不了注入行为。
+2. **运行时改不了 tier。** 注入的 agent 会持续把该属性从 config 重新写回，手改立刻
+   被覆盖；DOM 层面破坏锚点也撑不到 attach，因为 React 会重新渲染并恢复属性。
+   要观测 Tier 1，只能用 `compatibilityTier: "additive"` 构造 agent 源码并注入
+   （agent 自带单实例守卫，会先 dispose 旧的）。
+
 ## 3. CSP / `frame-src` 行为矩阵
 
 单独建表：这是 Chromium / CDP 层行为，不是某个 `data-app-action-*` selector，混进
