@@ -2153,6 +2153,128 @@ mod tests {
             .expect("task")
     }
 
+    // ── N1 regression: artifacts under forking and restart ────────────────
+    //
+    // The N1 story is that an artifact belongs to the issue, not to a thread.
+    // These pin the three ways that could quietly stop being true.
+
+    #[tokio::test]
+    async fn two_forks_of_one_lead_see_the_same_artifact() {
+        let (store, issue, _dir) = artifact_fixture().await;
+        store.set_lead_thread(issue, "lead-primary").await.expect("lead");
+        store
+            .bind_thread_fork("lead-fork-a", "lead-primary", "Fork A")
+            .await
+            .expect("fork a");
+        store
+            .bind_thread_fork("lead-fork-b", "lead-primary", "Fork B")
+            .await
+            .expect("fork b");
+        let artifact = store
+            .create_artifact(new_artifact(issue, "- case one"))
+            .await
+            .expect("create");
+
+        // Whichever thread the human is looking at, resolving it lands on the
+        // same issue, and the issue has exactly one test_cases document.
+        for thread in ["lead-primary", "lead-fork-a", "lead-fork-b"] {
+            let binding = store
+                .get_thread_binding(thread)
+                .await
+                .expect("get")
+                .expect("bound");
+            assert_eq!(binding.issue_id, issue, "{thread} drifted to another issue");
+            let visible = store.list_artifacts(binding.issue_id).await.expect("list");
+            assert_eq!(visible.len(), 1, "{thread} sees a different document set");
+            assert_eq!(visible[0].id, artifact.id, "{thread} sees another artifact");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_stale_fork_cannot_overwrite_what_the_other_fork_wrote() {
+        let (store, issue, _dir) = artifact_fixture().await;
+        store.set_lead_thread(issue, "lead-primary").await.expect("lead");
+        store
+            .bind_thread_fork("lead-fork-a", "lead-primary", "A")
+            .await
+            .expect("fork a");
+        store
+            .bind_thread_fork("lead-fork-b", "lead-primary", "B")
+            .await
+            .expect("fork b");
+        let artifact = store
+            .create_artifact(new_artifact(issue, "- case one"))
+            .await
+            .expect("create");
+
+        // Both forks read revision 1, then both write.
+        let a = store
+            .update_artifact_content(artifact.id, 1, "written by A", "T", "agent", "lead-fork-a")
+            .await
+            .expect("A writes first");
+        assert_eq!(a.revision, 2);
+
+        let b = store
+            .update_artifact_content(artifact.id, 1, "written by B", "T", "agent", "lead-fork-b")
+            .await
+            .expect_err("B still believes it holds revision 1");
+        match b {
+            ArtifactError::RevisionConflict { actual, .. } => assert_eq!(actual, 2),
+            other => panic!("expected a revision conflict, got {other:?}"),
+        }
+
+        let current = store
+            .get_artifact(artifact.id)
+            .await
+            .expect("get")
+            .expect("row");
+        assert_eq!(current.content, "written by A");
+        assert_eq!(current.source_thread_id, "lead-fork-a");
+    }
+
+    #[tokio::test]
+    async fn artifacts_revisions_and_staleness_survive_a_restart() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let path = dir.path().join("t.db");
+        let (issue, artifact_id, task_id) = {
+            let store = Store::open(&path).await.expect("open");
+            let ws = store.create_workspace("W", "w").await.expect("ws");
+            let issue = store.create_issue(ws, "one", "one").await.expect("i");
+            let artifact = store
+                .create_artifact(new_artifact(issue, "- case one"))
+                .await
+                .expect("create");
+            let task = add_task(&store, issue, "planned").await;
+            store
+                .update_artifact_content(artifact.id, 1, "- case one\n- two", "T", "agent", "")
+                .await
+                .expect("revise");
+            store
+                .set_artifact_status(artifact.id, 2, ArtifactStatus::Stale, "plan moved on")
+                .await
+                .expect("stale");
+            (issue, artifact.id, task)
+        };
+
+        let reopened = Store::open(&path).await.expect("reopen");
+        let row = reopened
+            .get_artifact(artifact_id)
+            .await
+            .expect("get")
+            .expect("row");
+        assert_eq!(row.revision, 3);
+        assert_eq!(row.content, "- case one\n- two");
+        assert_eq!(row.status, "stale");
+        assert_eq!(row.stale_reason, "plan moved on");
+
+        // The derived staleness has to survive too — it is computed from two
+        // durable numbers, so a restart must not change the answer.
+        assert_eq!(
+            reopened.stale_artifact_basis(issue).await.expect("stale"),
+            vec![(task_id, 1, 3)]
+        );
+    }
+
     #[tokio::test]
     async fn a_task_records_the_artifact_revision_it_was_planned_from() {
         let (store, issue, _dir) = artifact_fixture().await;
