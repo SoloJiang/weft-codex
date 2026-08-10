@@ -1103,6 +1103,128 @@ main {
   flex: 0 0 auto;
 }
 
+/* ── artifacts ────────────────────────────────────────────────────── */
+
+.sidebar-artifacts {
+  min-width: 0;
+  padding: 4px 0 6px;
+  border-top: 1px solid var(--border);
+}
+
+.sidebar-artifacts-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 8px 4px;
+  color: var(--dim);
+  font-size: 10.5px;
+}
+
+.sidebar-artifacts-heading h3 {
+  margin: 0;
+  font-size: inherit;
+  font-weight: 600;
+}
+
+.sidebar-artifact-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 2px 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: var(--r-sm, 6px);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.sidebar-artifact-row:hover,
+.sidebar-artifact-row:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+
+.sidebar-artifact-row:focus-visible { box-shadow: inset 0 0 0 1px var(--focus); }
+
+.sidebar-artifact-row > svg { width: 13px; height: 13px; color: var(--dim); }
+
+.sidebar-artifact-name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Status rides in the text, never in colour alone. */
+.sidebar-artifact-meta {
+  grid-column: 2;
+  color: var(--dim);
+  font-size: 10.5px;
+}
+
+.sidebar-artifact-row[data-status="stale"] .sidebar-artifact-meta { color: var(--warn); }
+.sidebar-artifact-row[data-status="superseded"] .sidebar-artifact-name { text-decoration: line-through; }
+
+.artifact-view {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 16px 16px;
+}
+
+.artifact-header { display: flex; align-items: flex-start; gap: 10px; }
+.artifact-heading { min-width: 0; }
+.artifact-heading h2 { margin: 0; font-size: 15px; }
+.artifact-meta { margin: 2px 0 0; color: var(--dim); font-size: 11.5px; }
+
+.artifact-stale {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: var(--r-md, 8px);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  color: var(--warn);
+  font-size: 12px;
+}
+
+.artifact-conflict {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--warn);
+  border-radius: var(--r-md, 8px);
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+}
+
+.artifact-conflict p { margin: 0; font-size: 12px; }
+
+.artifact-content {
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md, 8px);
+  background: var(--color-token-input-background, transparent);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  resize: none;
+}
+
+.artifact-content:focus-visible { border-color: var(--focus); outline: none; }
+
+.artifact-actions { display: flex; justify-content: flex-end; }
+
 /* ── issue detail ─────────────────────────────────────────────────── */
 
 .detail-nav { margin-bottom: var(--space-3); }

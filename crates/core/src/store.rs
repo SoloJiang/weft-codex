@@ -267,6 +267,20 @@ pub struct NewArtifact<'a> {
     pub source_thread_id: &'a str,
 }
 
+/// What the board needs to show an artifact exists without shipping its body.
+#[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
+pub struct ArtifactSummary {
+    pub id: i64,
+    pub issue_id: i64,
+    pub kind: String,
+    pub title: String,
+    pub format: String,
+    pub revision: i64,
+    pub status: String,
+    pub stale_reason: String,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Clone, serde::Serialize, sqlx::FromRow)]
 pub struct ArtifactRow {
     pub id: i64,
@@ -1048,6 +1062,25 @@ impl Store {
             .fetch_optional(&self.pool)
             .await?;
         Ok(row)
+    }
+
+    /// Artifact metadata without the body.
+    ///
+    /// The board polls, and content is allowed up to a megabyte apiece — a
+    /// summary keeps that off every refresh. Callers that need the document
+    /// read one artifact by id.
+    pub async fn list_artifact_summaries(
+        &self,
+        issue_id: i64,
+    ) -> Result<Vec<ArtifactSummary>, ArtifactError> {
+        let rows = sqlx::query_as::<_, ArtifactSummary>(
+            "SELECT id, issue_id, kind, title, format, revision, status, stale_reason, updated_at
+             FROM issue_artifact WHERE issue_id = ? ORDER BY kind, id",
+        )
+        .bind(issue_id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
     }
 
     pub async fn list_artifacts(&self, issue_id: i64) -> Result<Vec<ArtifactRow>, ArtifactError> {

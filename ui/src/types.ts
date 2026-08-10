@@ -3,7 +3,7 @@ export const ISSUE_KINDS = ["feature", "bugfix", "refactor", "spike"] as const
 
 export type DirectionStatus = (typeof STATUSES)[number]
 export type IssueKind = (typeof ISSUE_KINDS)[number]
-export type AppView = "kanban" | "repos" | "issue"
+export type AppView = "kanban" | "repos" | "issue" | "artifact"
 export type MessageIntent = "message" | "continue"
 
 export interface Workspace {
@@ -78,6 +78,42 @@ export interface BoardEntry {
   issue: Issue
   directions: Direction[]
   threads: ThreadBinding[]
+  artifacts: ArtifactSummary[]
+}
+
+export type ArtifactStatus = "draft" | "ready" | "stale" | "superseded"
+
+/** What the board carries: enough to show an artifact exists, never its body. */
+export interface ArtifactSummary {
+  id: number
+  issue_id: number
+  kind: string
+  title: string
+  format: string
+  revision: number
+  status: ArtifactStatus
+  stale_reason: string
+  updated_at: string
+}
+
+export interface Artifact extends ArtifactSummary {
+  content: string
+  source: string
+  source_thread_id: string
+  created_at: string
+}
+
+/**
+ * The structured half of an artifact API failure. The `code` is the contract —
+ * never branch on `error`, which is prose meant for humans.
+ */
+export interface ArtifactErrorBody {
+  code: string
+  error: string
+  expectedRevision?: number
+  actualRevision?: number
+  limit?: number
+  actual?: number
 }
 
 export interface ThreadBinding {

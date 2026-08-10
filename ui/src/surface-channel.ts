@@ -8,8 +8,8 @@ export type SurfaceMessage =
   | { type: "state.request" }
   | { type: "workspace.select"; workspaceId: number }
   | { type: "workspace.changed"; workspaceId: number | null }
-  | { type: "navigate"; view: AppView; issueId: number | null }
-  | { type: "route.changed"; view: AppView; issueId: number | null }
+  | { type: "navigate"; view: AppView; issueId: number | null; artifactId?: number | null }
+  | { type: "route.changed"; view: AppView; issueId: number | null; artifactId?: number | null }
   | { type: "command"; command: SurfaceCommand }
 
 export interface SurfaceChannel {

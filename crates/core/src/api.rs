@@ -595,10 +595,17 @@ async fn kanban(State(state): State<ApiState>, Query(q): Query<KanbanQuery>) -> 
                     Ok(rows) => rows,
                     Err(error) => return fail(error),
                 };
+                // Summaries only: the board refreshes on every SSE nudge, and
+                // artifact bodies can be a megabyte each.
+                let artifacts = match state.store.list_artifact_summaries(issue.id).await {
+                    Ok(rows) => rows,
+                    Err(error) => return artifact_fail(error),
+                };
                 board.push(json!({
                     "issue": issue,
                     "directions": directions,
-                    "threads": threads
+                    "threads": threads,
+                    "artifacts": artifacts
                 }));
             }
             ok(json!(board))
