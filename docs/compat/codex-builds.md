@@ -312,6 +312,35 @@ weft-codex: Could not select one renderer target. Candidates: Codex (app://-/ind
 `theme.fontSans` / `theme.fontMono` 实测首位是 `Maple Mono NF CN`——用户本机字体设置
 的产物，不同机器不同。这两项只应断言"非空"，不得断言具体值。
 
+### 5.8 锚点分两类：结构依赖 vs 数据依赖
+
+2026-08-10 的重分级把 `sidebar.threadRow` / `threadRoute` / `threadActive` 升为
+`subtractive`，**这是错的**，当天即修正。
+
+这三个锚点挂在会话行上，而会话行是**用户数据**：一个全新 profile 渲染出的 sidebar
+完全健康，只是没有行可以承载这些属性。实测（移除全部 24 行模拟新 profile）：
+
+| 场景 | 修正前 | 修正后 |
+|---|---|---|
+| 有会话 | `weft-mode` | `weft-mode` |
+| 无会话（新 profile） | **`additive`** | `weft-mode` |
+| 有会话但属性被改名 | `additive` | `additive` |
+
+也就是说修正前**每一个新用户都会被永久钉在 Tier 1**。探针把"Codex 改了属性"和
+"这个用户还没开始聊天"当成了同一件事。
+
+修正方式是引入"不适用"：`threadRowCount === 0` 时这三条报 ok 并注明未验证，而不是
+报失败。代价是明确的——如果 Codex 改的正是行属性本身，无会话的 profile 察觉不到；
+但只要有一条会话就能察觉，且 §6 的演练直接覆盖改名场景。
+
+同批修正的还有 `renderer-host.ts` 的 hydration 重试：它原本只在 `safe-mode` 时重试，
+而 Codex 会先画出 sidebar 外壳再填会话列表（CSP reload 之后会再来一次），探针落在
+这个窗口就会把整个会话钉在 `additive` 且不再重试。现改为在低于 `weft-mode` 时持续
+重试到同一个 deadline。
+
+**给后来者的判据：给一个锚点定 `requiredFor` 之前，先问它的缺失是否可能由用户数据
+造成。会的话，它就不能无条件参与分级。**
+
 ## 6. 升级回归演练
 
 单测能断言分级表与本文件一致，但断言不了"我们分级的锚点在发行版里真的存在"，

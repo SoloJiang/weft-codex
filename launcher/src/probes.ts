@@ -43,6 +43,16 @@ interface RendererSnapshot {
    * even if Codex moves the titlebar out of `main`, where the runtime looks.
    */
   titlebarDragRegion: boolean
+  /**
+   * How many conversation rows the sidebar is currently showing.
+   *
+   * The thread anchors are *data*-dependent, not structure-dependent: a profile
+   * with no conversations renders a perfectly healthy sidebar that simply has no
+   * rows to carry them. Without this count we cannot tell "Codex renamed the
+   * attribute" from "this user has not started a chat yet", and a new profile
+   * would be pinned to the additive tier forever.
+   */
+  threadRowCount: number
   locale: string
 }
 
@@ -159,6 +169,34 @@ function selectorProbe(
   }
 }
 
+/**
+ * A probe for an anchor that only exists once the user has conversations.
+ *
+ * With no rows in the sidebar there is nothing to carry the attribute, so its
+ * absence proves nothing — reporting a failure there would degrade every fresh
+ * profile. We report "not applicable" instead, which keeps the tier intact and
+ * still says plainly that the anchor went unverified.
+ *
+ * The trade-off is explicit: if Codex renames the row attribute itself, a
+ * profile with no chats cannot tell. Any profile with at least one conversation
+ * still catches it, and `scripts/upgrade-drill.mjs` covers the rename directly.
+ */
+function threadAnchorProbe(
+  snapshot: RendererSnapshot,
+  id: keyof typeof SELECTORS,
+  requiredFor: CapabilityProbe["requiredFor"],
+): CapabilityProbe {
+  if (snapshot.threadRowCount === 0) {
+    return {
+      id,
+      ok: true,
+      detail: `Not applicable: the sidebar shows no conversations`,
+      requiredFor,
+    }
+  }
+  return selectorProbe(snapshot, id, requiredFor)
+}
+
 function tokenProbe(snapshot: RendererSnapshot, id: string, token: string): CapabilityProbe {
   const value = snapshot.tokens[token]?.trim() ?? ""
   return {
@@ -222,10 +260,15 @@ export function reportFromSnapshot(snapshot: RendererSnapshot): ProbeReport {
     //
     // `sidebar.threadActive` was previously not probed at all, even though
     // activeThreadId() reads it and it is the sole input to Issue resolution.
+    // Structural: the create-project affordance is sidebar chrome, present
+    // regardless of what the user has done.
     selectorProbe(snapshot, "sidebar.projectCreate", "subtractive"),
-    selectorProbe(snapshot, "sidebar.threadRow", "subtractive"),
-    selectorProbe(snapshot, "sidebar.threadRoute", "subtractive"),
-    selectorProbe(snapshot, "sidebar.threadActive", "subtractive"),
+    // Data-dependent: only assertable once conversations exist. See
+    // threadAnchorProbe — gating the tier on these unconditionally pinned every
+    // fresh profile to `additive`.
+    threadAnchorProbe(snapshot, "sidebar.threadRow", "subtractive"),
+    threadAnchorProbe(snapshot, "sidebar.threadRoute", "subtractive"),
+    threadAnchorProbe(snapshot, "sidebar.threadActive", "subtractive"),
     modeSwitcherProbe(snapshot),
     {
       id: "host.locale",
@@ -275,6 +318,7 @@ export function buildProbeExpression(): string {
       tokens: Object.fromEntries(tokens.map((token) => [token, rootStyle.getPropertyValue(token)])),
       modeSwitcher: modeButtons.length === 1,
       modeSwitcherId: modeButtons.length === 1 && Boolean(modeButtons[0].id),
+      threadRowCount: document.querySelectorAll(selectors["sidebar.threadRow"]).length,
       titlebarDragRegion,
       locale: document.documentElement.lang || navigator.language || "",
     };

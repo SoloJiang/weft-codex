@@ -41,6 +41,7 @@ function healthySnapshot(missing: string[] = []) {
     tokens: Object.fromEntries(TOKEN_VALUES.map((token) => [token, "#000"])),
     modeSwitcher: true,
     modeSwitcherId: true,
+    threadRowCount: 24,
     titlebarDragRegion: true,
     locale: "en-GB",
   }
@@ -109,6 +110,37 @@ for (const id of [
     assert.equal(failed?.requiredFor, "subtractive")
   })
 }
+
+// Regression: the thread anchors are data-dependent. A profile with no
+// conversations renders a healthy sidebar that simply has no rows to carry
+// them; treating that as a failure pinned every fresh profile to `additive`.
+test("a profile with no conversations still reaches Weft mode", () => {
+  const snapshot = healthySnapshot([
+    "sidebar.threadRow",
+    "sidebar.threadRoute",
+    "sidebar.threadActive",
+  ])
+  snapshot.threadRowCount = 0
+
+  const report = reportFromSnapshot(snapshot)
+  assert.equal(report.tier, "weft-mode")
+  for (const id of ["sidebar.threadRow", "sidebar.threadRoute", "sidebar.threadActive"]) {
+    const entry = report.probes.find((probe) => probe.id === id)
+    assert.equal(entry?.ok, true, `${id} must not fail when there is nothing to check`)
+    assert.match(entry?.detail ?? "", /Not applicable/)
+  }
+})
+
+test("once conversations exist a missing thread anchor still degrades", () => {
+  const snapshot = healthySnapshot(["sidebar.threadActive"])
+  snapshot.threadRowCount = 24
+  const report = reportFromSnapshot(snapshot)
+  assert.equal(report.tier, "additive")
+  assert.equal(
+    report.probes.find((probe) => probe.id === "sidebar.threadActive")?.ok,
+    false,
+  )
+})
 
 // N0-01: a trigger without an id used to report ok while ensureNativeCodexMode
 // still forced safe mode — probe and behaviour disagreed.
