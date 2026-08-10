@@ -23,7 +23,7 @@ function isPositiveInteger(value: unknown): value is number {
 }
 
 function isRoute(value: unknown): value is AppView {
-  return value === "kanban" || value === "repos" || value === "issue"
+  return value === "kanban" || value === "repos" || value === "issue" || value === "artifact"
 }
 
 function isSurface(value: unknown): value is UiSurface {
@@ -33,6 +33,13 @@ function isSurface(value: unknown): value is UiSurface {
 function hasValidRoute(candidate: Record<string, unknown>): boolean {
   if (!isRoute(candidate.view)) return false
   if (candidate.view === "issue") return isPositiveInteger(candidate.issueId)
+  if (candidate.view === "artifact") {
+    // The target is the artifact; the issue id rides along for context and may
+    // legitimately be absent. This guard rejects cross-frame messages, so the
+    // required field stays required.
+    if (!isPositiveInteger(candidate.artifactId)) return false
+    return candidate.issueId === null || isPositiveInteger(candidate.issueId)
+  }
   return candidate.issueId === null
 }
 
