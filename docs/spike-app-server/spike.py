@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage 0 spike (spec: docs/superpowers/specs/2026-08-08-codex-desktop-migration-design.md §9).
+"""Stage 0 spike (spec: docs/specs/2026-08-08-codex-desktop-migration-design.md §9).
 
 Desktop-free verification of codex app-server:
   S2  thread/start persists to the shared ~/.codex store (Desktop-visible universe)

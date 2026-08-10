@@ -7,6 +7,8 @@ export interface CapabilityProbe {
   ok: boolean
   detail: string
   requiredFor: "base" | "additive" | "subtractive" | "optional"
+  /** User-facing failure text; present only when `ok` is false. */
+  reason?: string
 }
 
 export interface ProbeReport {
@@ -26,6 +28,20 @@ interface RendererSnapshot {
   selectors: Record<string, boolean>
   tokens: Record<string, string>
   modeSwitcher: boolean
+  /**
+   * Whether the single scoped mode trigger carries a non-empty `id`.
+   * `associatedModeMenu()` pairs the trigger to its popup via
+   * `aria-labelledby === button.id`, and `ensureNativeCodexMode()` bails out
+   * without it — so a trigger without an id passes the presence check while
+   * Weft mode still falls back to safe mode. Measured non-empty on build 6321
+   * (`radix-_r_3_`).
+   */
+  modeSwitcherId: boolean
+  /**
+   * Drag regions found inside a *usable* `main`, matching the runtime scope in
+   * `ensureWorkspaceRoot`. A document-wide count over-reports: it stays green
+   * even if Codex moves the titlebar out of `main`, where the runtime looks.
+   */
   titlebarDragRegion: boolean
   locale: string
 }
@@ -39,6 +55,7 @@ const SELECTORS = {
   "sidebar.projectCreate": "[data-app-action-sidebar-project-create]",
   "sidebar.threadRow": "[data-app-action-sidebar-thread-row]",
   "sidebar.threadRoute": "[data-app-action-sidebar-thread-id]",
+  "sidebar.threadActive": "[data-app-action-sidebar-thread-active]",
 } as const
 
 /**
@@ -72,6 +89,26 @@ export const VISIBLE_MAIN_HELPERS_SOURCE = `
       return candidates[0] || null;
     }
 `
+
+/**
+ * User-facing failure text. Deliberately free of CSS selectors: these strings
+ * surface in the launcher log and `doctor`, where a raw attribute name tells a
+ * user nothing actionable. The selector still travels in `detail` for triage.
+ */
+const FAILURE_REASONS: Record<keyof typeof SELECTORS | "mode.switcher" | "host.locale" | "titlebar.dragRegion", string> = {
+  "renderer.root": "Codex 应用外壳未就绪",
+  "renderer.main": "找不到 Codex 主工作区，无法挂载 workspace",
+  "sidebar.scroll": "找不到 Codex 侧边栏，无法挂载 Weft 区块",
+  "sidebar.section": "Codex 侧边栏分区结构已变化",
+  "sidebar.heading": "Codex 侧边栏分区标题结构已变化",
+  "sidebar.projectCreate": "找不到 Codex 的新建项目入口",
+  "sidebar.threadRow": "找不到 Codex 的会话行，逐会话增强不可用",
+  "sidebar.threadRoute": "找不到 Codex 的会话标识，无法打开指定会话",
+  "sidebar.threadActive": "无法识别当前打开的会话，Issue 归属解析不可用",
+  "mode.switcher": "找不到 Codex 的模式切换入口，Weft 模式改用回退按钮",
+  "host.locale": "无法读取 Codex 的界面语言",
+  "titlebar.dragRegion": "未检测到原生标题栏拖拽区域",
+}
 
 export const TOKEN_PROBES = {
   "theme.sidebarSurface": "--vscode-sideBar-background",
@@ -112,11 +149,13 @@ function selectorProbe(
   requiredFor: CapabilityProbe["requiredFor"],
 ): CapabilityProbe {
   const ok = snapshot.selectors[id] === true
+  if (ok) return { id, ok, detail: SELECTORS[id], requiredFor }
   return {
     id,
     ok,
-    detail: ok ? SELECTORS[id] : `Missing ${SELECTORS[id]}`,
+    detail: `Missing ${SELECTORS[id]}`,
     requiredFor,
+    reason: FAILURE_REASONS[id],
   }
 }
 
@@ -128,6 +167,36 @@ function tokenProbe(snapshot: RendererSnapshot, id: string, token: string): Capa
     detail: value || `Missing ${token}`,
     requiredFor: "additive",
   }
+}
+
+/**
+ * The mode switcher needs two things, and reporting them as one boolean hid a
+ * real contradiction: a trigger without an `id` passed the presence check while
+ * `ensureNativeCodexMode` still forced safe mode. Both conditions gate the same
+ * capability, so they stay one probe — but `detail` names which half failed.
+ */
+function modeSwitcherProbe(snapshot: RendererSnapshot): CapabilityProbe {
+  const id = "mode.switcher"
+  const requiredFor = "subtractive" as const
+  if (!snapshot.modeSwitcher) {
+    return {
+      id,
+      ok: false,
+      detail: "Missing one semantic sidebar mode menu trigger",
+      requiredFor,
+      reason: FAILURE_REASONS["mode.switcher"],
+    }
+  }
+  if (!snapshot.modeSwitcherId) {
+    return {
+      id,
+      ok: false,
+      detail: "Sidebar mode menu trigger has no id; cannot pair it to its menu",
+      requiredFor,
+      reason: FAILURE_REASONS["mode.switcher"],
+    }
+  }
+  return { id, ok: true, detail: "Sidebar mode menu trigger", requiredFor }
 }
 
 export function classifyCompatibility(probes: CapabilityProbe[]): CompatibilityTier {
@@ -145,22 +214,25 @@ export function reportFromSnapshot(snapshot: RendererSnapshot): ProbeReport {
     selectorProbe(snapshot, "sidebar.section", "base"),
     selectorProbe(snapshot, "sidebar.heading", "additive"),
     ...Object.entries(TOKEN_PROBES).map(([id, token]) => tokenProbe(snapshot, id, token)),
-    selectorProbe(snapshot, "sidebar.projectCreate", "optional"),
-    selectorProbe(snapshot, "sidebar.threadRow", "optional"),
-    selectorProbe(snapshot, "sidebar.threadRoute", "optional"),
-    {
-      id: "mode.switcher",
-      ok: snapshot.modeSwitcher,
-      detail: snapshot.modeSwitcher
-        ? "Sidebar mode menu trigger"
-        : "Missing one semantic sidebar mode menu trigger",
-      requiredFor: "subtractive",
-    },
+    // Reclassified from "optional" on 2026-08-10 (N0-01). These back concrete
+    // features — thread deep-link, per-row enhancement, active-thread→Issue
+    // resolution — so their loss must degrade to the additive tier rather than
+    // pass silently. All four are verified present on build 6321; see
+    // docs/compat/codex-builds.md §2.
+    //
+    // `sidebar.threadActive` was previously not probed at all, even though
+    // activeThreadId() reads it and it is the sole input to Issue resolution.
+    selectorProbe(snapshot, "sidebar.projectCreate", "subtractive"),
+    selectorProbe(snapshot, "sidebar.threadRow", "subtractive"),
+    selectorProbe(snapshot, "sidebar.threadRoute", "subtractive"),
+    selectorProbe(snapshot, "sidebar.threadActive", "subtractive"),
+    modeSwitcherProbe(snapshot),
     {
       id: "host.locale",
       ok: Boolean(snapshot.locale.trim()),
       detail: snapshot.locale.trim() || "Document locale is empty",
       requiredFor: "additive",
+      ...(snapshot.locale.trim() ? {} : { reason: FAILURE_REASONS["host.locale"] }),
     },
     {
       id: "titlebar.dragRegion",
@@ -169,6 +241,7 @@ export function reportFromSnapshot(snapshot: RendererSnapshot): ProbeReport {
         ? "Native titlebar drag region preserved"
         : "No native titlebar drag region detected",
       requiredFor: "optional",
+      ...(snapshot.titlebarDragRegion ? {} : { reason: FAILURE_REASONS["titlebar.dragRegion"] }),
     },
   ]
   return { tier: classifyCompatibility(probes), probes }
@@ -187,9 +260,13 @@ export function buildProbeExpression(): string {
       ? [...navigation.querySelectorAll('button[aria-haspopup="menu"][aria-expanded][data-state]')]
           .filter((button) => !sidebar.contains(button))
       : [];
-    const titlebarDragRegion = [...document.querySelectorAll("header, header *")].some((element) =>
-      getComputedStyle(element).getPropertyValue("-webkit-app-region") === "drag"
-    );
+    // Scope the drag-region check to the same route ensureWorkspaceRoot mounts
+    // into. A document-wide count over-reports: it stays green even if Codex
+    // moves the titlebar out of the live main, which is where the runtime looks.
+    const titlebarDragRegion = Boolean(mainRoute) &&
+      [...mainRoute.querySelectorAll("header, header *")].some((element) =>
+        getComputedStyle(element).getPropertyValue("-webkit-app-region") === "drag"
+      );
     return {
       selectors: Object.fromEntries(Object.entries(selectors).map(([id, selector]) => [
         id,
@@ -197,6 +274,7 @@ export function buildProbeExpression(): string {
       ])),
       tokens: Object.fromEntries(tokens.map((token) => [token, rootStyle.getPropertyValue(token)])),
       modeSwitcher: modeButtons.length === 1,
+      modeSwitcherId: modeButtons.length === 1 && Boolean(modeButtons[0].id),
       titlebarDragRegion,
       locale: document.documentElement.lang || navigator.language || "",
     };
