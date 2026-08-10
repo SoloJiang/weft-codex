@@ -9,8 +9,14 @@ Flow: **draft outline → enrich from code → independent adversarial review �
 
 The artifact is the document's only home. It belongs to the issue, not to your
 thread, so every fork of the lead sees the same one — and the human edits it
-directly. Never duplicate the tree in prose: post the outline as chat while
-drafting, but once published, the artifact is the source of truth.
+directly.
+
+**Publish early and revise.** The moment you have a tree worth showing, write it
+as a `draft` artifact; do not hold it in chat until the end. A derivation pass
+is long and a turn can end mid-way, and a tree that only ever existed in prose
+leaves the human with nothing to open and nothing to edit. Summarise in chat by
+all means — but the document itself lives in the artifact from the first draft
+onward.
 
 ## Where the document lives
 
@@ -63,12 +69,22 @@ Use `format: "markdown_tree"` — weft renders it as an editable mindmap.
 5. **Enrich from existing code** when the issue touches existing behaviour: real
    entries, hidden entries, compatibility risks. Every finding must be
    translated into a user-observable case before it enters the tree.
-6. **Adversarial review — in a genuinely separate context.** See below.
-7. **Draft in conversation first.** Post the outline and the open questions as
-   plain chat. Any question that affects a behaviour judgement MUST be asked;
-   guessing is not an option.
-8. **Finalize.** Run both lints, then publish with `artifact_write` and set the
-   status to `ready`.
+6. **Publish the draft as soon as a tree exists — before the review.**
+   `artifact_write` it with status left at `draft`. Do not wait for the review
+   or for the human's answers.
+
+   This is not optional sequencing. A derivation pass is long, and a turn can
+   end at any point in it; if the tree lives only in chat until the end, an
+   interrupted turn leaves the human with nothing to look at and nothing to
+   edit. Publishing first also means the human can start editing while the
+   review runs. Everything after this point is a revision, not a first write.
+7. **Adversarial review — in a genuinely separate context.** See below. Fold
+   the findings in with `artifact_write` (`id` + `expected_revision`).
+8. **Clarify.** Post the open questions as chat. Any question that affects a
+   behaviour judgement MUST be asked; guessing is not an option. Fold the
+   answers in as another revision.
+9. **Finalize.** Run both lints, apply any last revision, then
+   `artifact_status(status: "ready")`.
 
 ## Step 6: the adversarial review must be independent
 
