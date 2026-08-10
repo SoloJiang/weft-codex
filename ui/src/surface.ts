@@ -5,6 +5,8 @@ export type UiSurface = "standalone" | "sidebar" | "workspace"
 export interface SurfaceRoute {
   view: AppView
   issueId: number | null
+  /** Only meaningful for the `artifact` view. */
+  artifactId?: number | null
 }
 
 function positiveInteger(value: string | null): number | null {
@@ -28,6 +30,10 @@ export function readInitialRoute(): SurfaceRoute {
   const params = new URLSearchParams(window.location.search)
   const view = params.get("view")
   if (view === "repos") return { view: "repos", issueId: null }
+  if (view === "artifact") {
+    const artifactId = positiveInteger(params.get("artifact_id"))
+    if (artifactId) return { view: "artifact", issueId: positiveInteger(params.get("issue_id")), artifactId }
+  }
   if (view === "issue") {
     const issueId = positiveInteger(params.get("issue_id"))
     if (issueId) return { view: "issue", issueId }

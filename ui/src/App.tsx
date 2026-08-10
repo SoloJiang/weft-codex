@@ -4,6 +4,7 @@ import { FolderGit2, KanbanSquare, Plus, SquarePen } from "lucide-react"
 import { api, jsonRequest, slugify } from "@/api"
 import { DialogLayer } from "@/components/dialogs"
 import { IssueDetailView } from "@/components/issue-detail-view"
+import { ArtifactView } from "@/components/artifact-view"
 import { KanbanView, type WorkActions } from "@/components/kanban-view"
 import { RepositoriesView } from "@/components/repositories-view"
 import { openCodexThread } from "@/components/shared"
@@ -63,6 +64,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
   const [repoMap, setRepoMap] = React.useState<RepoMap | null>(null)
   const [view, setView] = React.useState<AppView>(initialRoute.view)
   const [detailIssueId, setDetailIssueId] = React.useState<number | null>(initialRoute.issueId)
+  const [artifactId, setArtifactId] = React.useState<number | null>(initialRoute.artifactId ?? null)
   const [dialog, setDialog] = React.useState<DialogState>(null)
   const [loading, setLoading] = React.useState(true)
   const [revision, setRevision] = React.useState(0)
@@ -186,6 +188,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
       }
       if (message.type === "navigate") {
         setDetailIssueId(message.issueId)
+        setArtifactId(message.artifactId ?? null)
         setView(message.view)
         return
       }
@@ -310,6 +313,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
 
   const switchView = (next: "kanban" | "repos") => {
     setDetailIssueId(null)
+    setArtifactId(null)
     setView(next)
   }
 
@@ -325,6 +329,14 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
         onCreateWorkspace={() => setDialog({ type: "workspace" })}
         onOpenImport={() => setDialog({ type: "repositories" })}
         onAnalyzeRepository={analyzeRepository}
+        onError={notifyError}
+      />
+    )
+  } else if (view === "artifact" && artifactId) {
+    mainContent = (
+      <ArtifactView
+        artifactId={artifactId}
+        onBack={() => switchView("kanban")}
         onError={notifyError}
       />
     )

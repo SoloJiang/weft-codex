@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronRight,
   CornerDownRight,
+  FileText,
   FolderGit2,
   KanbanSquare,
   MessageCircle,
@@ -12,6 +13,7 @@ import {
 } from "lucide-react"
 
 import { api, jsonRequest } from "@/api"
+import { kindLabel, statusLabel } from "@/components/artifact-view"
 import { openCodexThread } from "@/components/shared"
 import { Button } from "@/components/ui/button"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
@@ -25,6 +27,7 @@ import type {
   ThreadBinding,
   ThreadLocationResponse,
   Workspace,
+  ArtifactSummary,
 } from "@/types"
 
 const SIDEBAR_EVENT_NAMES = [
@@ -273,6 +276,47 @@ function IssueConversationTree({
   )
 }
 
+/**
+ * Progressive disclosure: the sidebar says an artifact exists, what state it is
+ * in and which revision — the document itself opens in the workspace. Status is
+ * text, not a colour, because the product bar forbids colour-only state.
+ */
+function ArtifactSummaryList({
+  artifacts,
+  onOpen,
+}: {
+  artifacts: ArtifactSummary[]
+  onOpen: (artifact: ArtifactSummary) => void
+}) {
+  const { t } = useI18n()
+  if (!artifacts.length) return null
+  return (
+    <div className="sidebar-artifacts">
+      <div className="sidebar-artifacts-heading">
+        <h3>{t("sidebar.artifacts")}</h3>
+        <span>{artifacts.length}</span>
+      </div>
+      {artifacts.map((artifact) => (
+        <button
+          key={artifact.id}
+          type="button"
+          className="sidebar-artifact-row"
+          data-status={artifact.status}
+          onClick={() => onOpen(artifact)}
+        >
+          <FileText aria-hidden="true" />
+          <span className="sidebar-artifact-name">
+            {artifact.title || kindLabel(artifact.kind, t)}
+          </span>
+          <span className="sidebar-artifact-meta">
+            {statusLabel(artifact.status, t)} · {t("artifact.revision", { revision: artifact.revision })}
+          </span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export default function SidebarApp({ hostContext }: { hostContext: HostContextV1 | null }) {
   const { t, lang } = useI18n()
   const [workspaces, setWorkspaces] = React.useState<Workspace[]>([])
@@ -451,7 +495,7 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
   const navigate = React.useCallback((next: SurfaceRoute) => {
     requestHostAction({ action: "workspace.show" })
     setRoute(next)
-    channel?.post({ type: "navigate", view: next.view, issueId: next.issueId })
+    channel?.post({ type: "navigate", view: next.view, issueId: next.issueId, artifactId: next.artifactId ?? null })
   }, [channel])
 
   const selectWorkspace = React.useCallback((id: number) => {
@@ -469,6 +513,14 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
       setError(t("err.prefix") + t("err.threadOpen"))
     })
   }, [t])
+
+  /**
+   * Opening an artifact must NOT change the native thread: the human is reading
+   * a document, not switching conversations. Only the workspace surface moves.
+   */
+  const openArtifact = React.useCallback((artifact: ArtifactSummary) => {
+    navigate({ view: "artifact", issueId: artifact.issue_id, artifactId: artifact.id })
+  }, [navigate])
 
   const openIssue = React.useCallback((entry: BoardEntry) => {
     setExpandedIssueId(entry.issue.id)
@@ -623,6 +675,10 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
                 entry={expandedEntry}
                 activeThreadId={activeThreadId}
                 onOpenThread={openThread}
+              />
+              <ArtifactSummaryList
+                artifacts={expandedEntry.artifacts ?? []}
+                onOpen={openArtifact}
               />
             </section>
           ) : null}

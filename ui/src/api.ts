@@ -1,10 +1,20 @@
 export class ApiError extends Error {
   status: number
+  /**
+   * The parsed error payload, kept whole.
+   *
+   * Some endpoints answer with a typed `code` plus the fields that make the
+   * failure actionable (a revision conflict carries both revisions). Reducing
+   * that to a message would force callers back to string-matching, which is
+   * exactly what the typed errors exist to replace.
+   */
+  body: Record<string, unknown>
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, body: Record<string, unknown> = {}) {
     super(message)
     this.name = "ApiError"
     this.status = status
+    this.body = body
   }
 }
 
@@ -15,9 +25,10 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   }
 
   const response = await fetch(path, { ...options, headers })
-  const body = (await response.json().catch(() => ({}))) as { error?: string }
+  const body = (await response.json().catch(() => ({}))) as Record<string, unknown>
   if (!response.ok) {
-    throw new ApiError(body.error ?? `HTTP ${response.status}`, response.status)
+    const message = typeof body.error === "string" ? body.error : `HTTP ${response.status}`
+    throw new ApiError(message, response.status, body)
   }
   return body as T
 }
