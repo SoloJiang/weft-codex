@@ -1659,6 +1659,59 @@ mod tests {
             .bind_thread_fork("orphan", "unknown", "")
             .await
             .is_err());
+        // The failure must leave nothing behind — a half-written row would make
+        // an unrelated Codex chat look like it belongs to an issue.
+        assert!(store
+            .get_thread_binding("orphan")
+            .await
+            .expect("get")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn concurrent_fork_binds_converge_on_a_single_row() {
+        let (store, _dir) = fixture().await;
+        let ws = store.create_workspace("W", "w").await.expect("ws");
+        let issue = store.create_issue(ws, "one", "one").await.expect("i");
+        store.set_lead_thread(issue, "lead").await.expect("lead");
+
+        // The UI resolves on every native thread switch, so the same fork can be
+        // adopted by several in-flight requests at once.
+        let mut tasks = Vec::new();
+        for n in 0..8 {
+            let store = store.clone();
+            tasks.push(tokio::spawn(async move {
+                store.bind_thread_fork("fork", "lead", &format!("try {n}")).await
+            }));
+        }
+        for task in tasks {
+            task.await.expect("join").expect("bind");
+        }
+
+        let rows = store.list_thread_bindings(issue).await.expect("list");
+        let forks: Vec<_> = rows.iter().filter(|row| row.thread_id == "fork").collect();
+        assert_eq!(forks.len(), 1, "concurrent adoption must not duplicate rows");
+        assert_eq!(forks[0].is_primary, 0);
+        assert_eq!(forks[0].issue_id, issue);
+        assert_eq!(
+            rows.iter().filter(|row| row.is_primary == 1).count(),
+            1,
+            "exactly one primary must survive concurrent writes"
+        );
+    }
+
+    #[tokio::test]
+    async fn re_setting_a_lead_thread_moves_the_primary_flag_atomically() {
+        let (store, _dir) = fixture().await;
+        let ws = store.create_workspace("W", "w").await.expect("ws");
+        let issue = store.create_issue(ws, "one", "one").await.expect("i");
+        store.set_lead_thread(issue, "lead-a").await.expect("a");
+        store.set_lead_thread(issue, "lead-b").await.expect("b");
+
+        let rows = store.list_thread_bindings(issue).await.expect("list");
+        let primaries: Vec<_> = rows.iter().filter(|row| row.is_primary == 1).collect();
+        assert_eq!(primaries.len(), 1, "clear-then-set must not leave two primaries");
+        assert_eq!(primaries[0].thread_id, "lead-b");
     }
 
     #[tokio::test]

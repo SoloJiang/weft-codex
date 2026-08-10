@@ -35,7 +35,7 @@ use std::time::Duration;
 use serde_json::json;
 use tokio::sync::{mpsc::UnboundedReceiver, Mutex};
 use weft_app_server::client as codex;
-use weft_app_server::client::{Client, ThreadMsg};
+use weft_app_server::client::{Client, ThreadInfo, ThreadMsg};
 use weft_app_server::proto::ChatEvent;
 
 use crate::bus::{BusRegistry, Msg};
@@ -227,56 +227,12 @@ impl Orchestrator {
             return Ok(None);
         }
 
-        const MAX_FORK_DEPTH: usize = 32;
         let client = codex::client().await?;
-        let mut cursor = thread_id.to_string();
-        let mut pending = Vec::new();
-        let mut seen = HashSet::new();
-        let ancestor = loop {
-            if !seen.insert(cursor.clone()) {
-                anyhow::bail!("invalid Codex fork cycle at {cursor}");
-            }
-            if let Some(binding) = self.store.get_thread_binding(&cursor).await? {
-                break Some(binding);
-            }
-            if pending.len() >= MAX_FORK_DEPTH {
-                anyhow::bail!("invalid Codex fork chain exceeds {MAX_FORK_DEPTH} threads");
-            }
-            let info = match client.read_thread(&cursor).await {
-                Ok(info) => info,
-                Err(_) => break None,
-            };
-            if info.id != cursor {
-                anyhow::bail!("invalid Codex thread metadata for {cursor}");
-            }
-            let Some(parent_id) = info.forked_from_id.clone() else {
-                break None;
-            };
-            pending.push(info);
-            cursor = parent_id;
-        };
-
-        let Some(mut binding) = ancestor else {
-            return Ok(None);
-        };
-        for info in pending.iter().rev() {
-            let title = info.name.as_deref().unwrap_or(info.preview.as_str());
-            binding = self
-                .store
-                .bind_thread_fork(&info.id, &binding.thread_id, title)
-                .await?;
-        }
-        if !pending.is_empty() {
-            events::emit(
-                "thread.binding.updated",
-                json!({
-                    "threadId": thread_id,
-                    "issueId": binding.issue_id,
-                    "directionId": binding.direction_id
-                }),
-            );
-        }
-        Ok(Some(binding))
+        adopt_fork_chain(&self.store, thread_id, move |id| {
+            let client = client.clone();
+            async move { client.read_thread(&id).await }
+        })
+        .await
     }
 
     // ── spawning ──────────────────────────────────────────────────────────
@@ -944,6 +900,81 @@ async fn watch(
     }
 }
 
+/// Longest `forkedFromId` chain we will follow before giving up. A native fork
+/// chain this deep is not something Codex produces; treating it as corrupt
+/// metadata is safer than walking indefinitely.
+const MAX_FORK_DEPTH: usize = 32;
+
+/// Walk an unknown thread's `forkedFromId` chain until it reaches a thread we
+/// already know, then bind the whole chain to that owner.
+///
+/// Split out of [`Orchestrator::resolve_thread_binding`] and parameterised over
+/// the metadata read so the fail-closed guarantees — bounded depth, cycle
+/// detection, id mismatch — are reachable from tests. Inside the orchestrator
+/// the read goes to a live app-server, which `runtime::agents_allowed()` makes
+/// unreachable off the daemon.
+///
+/// Fails closed: a cycle, an over-long chain, or metadata whose id disagrees
+/// with the thread we asked for is an error, never a partially-adopted chain.
+/// An unreadable thread is reported as unbound rather than guessed at.
+async fn adopt_fork_chain<F, Fut>(
+    store: &Store,
+    thread_id: &str,
+    read_thread: F,
+) -> anyhow::Result<Option<ThreadBindingRow>>
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<ThreadInfo>>,
+{
+    let mut cursor = thread_id.to_string();
+    let mut pending = Vec::new();
+    let mut seen = HashSet::new();
+    let ancestor = loop {
+        if !seen.insert(cursor.clone()) {
+            anyhow::bail!("invalid Codex fork cycle at {cursor}");
+        }
+        if let Some(binding) = store.get_thread_binding(&cursor).await? {
+            break Some(binding);
+        }
+        if pending.len() >= MAX_FORK_DEPTH {
+            anyhow::bail!("invalid Codex fork chain exceeds {MAX_FORK_DEPTH} threads");
+        }
+        let info = match read_thread(cursor.clone()).await {
+            Ok(info) => info,
+            Err(_) => break None,
+        };
+        if info.id != cursor {
+            anyhow::bail!("invalid Codex thread metadata for {cursor}");
+        }
+        let Some(parent_id) = info.forked_from_id.clone() else {
+            break None;
+        };
+        pending.push(info);
+        cursor = parent_id;
+    };
+
+    let Some(mut binding) = ancestor else {
+        return Ok(None);
+    };
+    for info in pending.iter().rev() {
+        let title = info.name.as_deref().unwrap_or(info.preview.as_str());
+        binding = store
+            .bind_thread_fork(&info.id, &binding.thread_id, title)
+            .await?;
+    }
+    if !pending.is_empty() {
+        events::emit(
+            "thread.binding.updated",
+            json!({
+                "threadId": thread_id,
+                "issueId": binding.issue_id,
+                "directionId": binding.direction_id
+            }),
+        );
+    }
+    Ok(Some(binding))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1032,6 +1063,180 @@ mod tests {
         assert_eq!(binding.issue_id, issue);
         assert_eq!(binding.direction_id, None);
         assert_eq!(binding.is_primary, 1);
+    }
+
+    fn thread_info(id: &str, parent: Option<&str>, name: &str) -> ThreadInfo {
+        ThreadInfo {
+            id: id.to_string(),
+            forked_from_id: parent.map(str::to_string),
+            name: Some(name.to_string()),
+            preview: String::new(),
+        }
+    }
+
+    /// Stand-in for `Client::read_thread`. Off the live daemon
+    /// `runtime::agents_allowed()` is always false, so the real walk is
+    /// unreachable — every guarantee below is tested through this instead.
+    fn fake_reader(
+        threads: Vec<ThreadInfo>,
+    ) -> impl Fn(String) -> std::future::Ready<anyhow::Result<ThreadInfo>> {
+        let map: HashMap<String, ThreadInfo> = threads
+            .into_iter()
+            .map(|info| (info.id.clone(), info))
+            .collect();
+        move |id: String| {
+            std::future::ready(
+                map.get(&id)
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("unreadable thread {id}")),
+            )
+        }
+    }
+
+    async fn issue_with_lead(orch: &Orchestrator, thread: &str) -> i64 {
+        let ws = orch.store.create_workspace("W", "w").await.expect("ws");
+        let issue = orch.store.create_issue(ws, "one", "one").await.expect("i");
+        orch.store.set_lead_thread(issue, thread).await.expect("lead");
+        issue
+    }
+
+    #[tokio::test]
+    async fn a_nested_fork_chain_is_adopted_by_its_root_owner() {
+        let (orch, _dir) = fixture().await;
+        let issue = issue_with_lead(&orch, "lead-primary").await;
+        // grandchild -> child -> lead-primary
+        let reader = fake_reader(vec![
+            thread_info("grandchild", Some("child"), "Grandchild"),
+            thread_info("child", Some("lead-primary"), "Child"),
+        ]);
+
+        let binding = adopt_fork_chain(&orch.store, "grandchild", reader)
+            .await
+            .expect("walk")
+            .expect("binding");
+
+        assert_eq!(binding.issue_id, issue);
+        assert_eq!(binding.thread_id, "grandchild");
+        assert_eq!(binding.is_primary, 0, "a fork must not become primary");
+        assert_eq!(binding.parent_thread_id, "child");
+        assert_eq!(binding.root_thread_id, "lead-primary");
+
+        // The intermediate hop is written back too, not just the thread asked for.
+        let middle = orch
+            .store
+            .get_thread_binding("child")
+            .await
+            .expect("get")
+            .expect("child bound");
+        assert_eq!(middle.issue_id, issue);
+        assert_eq!(middle.is_primary, 0);
+
+        // The primary is untouched by adoption.
+        let lead = orch
+            .store
+            .get_thread_binding("lead-primary")
+            .await
+            .expect("get")
+            .expect("lead bound");
+        assert_eq!(lead.is_primary, 1);
+    }
+
+    #[tokio::test]
+    async fn a_fork_cycle_fails_closed_without_binding_anything() {
+        let (orch, _dir) = fixture().await;
+        issue_with_lead(&orch, "lead-primary").await;
+        // a -> b -> a, never reaching a known thread.
+        let reader = fake_reader(vec![
+            thread_info("a", Some("b"), "A"),
+            thread_info("b", Some("a"), "B"),
+        ]);
+
+        let error = adopt_fork_chain(&orch.store, "a", reader)
+            .await
+            .expect_err("a cycle must fail, not resolve");
+        assert!(error.to_string().contains("cycle"), "got: {error}");
+
+        for id in ["a", "b"] {
+            assert!(
+                orch.store.get_thread_binding(id).await.expect("get").is_none(),
+                "{id} must not be bound by a failed walk"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_over_long_fork_chain_fails_closed() {
+        let (orch, _dir) = fixture().await;
+        issue_with_lead(&orch, "lead-primary").await;
+        // Longer than MAX_FORK_DEPTH and never reaching the known lead.
+        let depth = MAX_FORK_DEPTH + 8;
+        let chain: Vec<ThreadInfo> = (0..depth)
+            .map(|i| thread_info(&format!("t{i}"), Some(&format!("t{}", i + 1)), "T"))
+            .collect();
+
+        let error = adopt_fork_chain(&orch.store, "t0", fake_reader(chain))
+            .await
+            .expect_err("an unbounded chain must fail");
+        assert!(error.to_string().contains("exceeds"), "got: {error}");
+        assert!(orch
+            .store
+            .get_thread_binding("t0")
+            .await
+            .expect("get")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn metadata_for_the_wrong_thread_fails_closed() {
+        let (orch, _dir) = fixture().await;
+        issue_with_lead(&orch, "lead-primary").await;
+        // Asked about "child", the host answered about a different thread. Trusting
+        // that reply would bind the wrong conversation to the issue.
+        let error = adopt_fork_chain(&orch.store, "child", |_| {
+            std::future::ready(Ok(thread_info(
+                "someone-else",
+                Some("lead-primary"),
+                "Impostor",
+            )))
+        })
+        .await
+        .expect_err("mismatched metadata must fail");
+
+        assert!(error.to_string().contains("metadata"), "got: {error}");
+        assert!(orch
+            .store
+            .get_thread_binding("child")
+            .await
+            .expect("get")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn an_unrelated_or_unreadable_thread_stays_unbound() {
+        let (orch, _dir) = fixture().await;
+        issue_with_lead(&orch, "lead-primary").await;
+
+        // A plain Codex chat: readable, but not a fork of anything.
+        let plain = adopt_fork_chain(
+            &orch.store,
+            "plain",
+            fake_reader(vec![thread_info("plain", None, "Plain")]),
+        )
+        .await
+        .expect("walk");
+        assert!(plain.is_none(), "a non-fork must not be adopted");
+
+        // Unreadable metadata is reported as unbound rather than guessed at.
+        let unreadable = adopt_fork_chain(&orch.store, "ghost", fake_reader(vec![]))
+            .await
+            .expect("an unreadable thread is not an error");
+        assert!(unreadable.is_none());
+        assert!(orch
+            .store
+            .get_thread_binding("plain")
+            .await
+            .expect("get")
+            .is_none());
     }
 
     #[tokio::test]
