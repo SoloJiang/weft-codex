@@ -312,14 +312,50 @@ weft-codex: Could not select one renderer target. Candidates: Codex (app://-/ind
 `theme.fontSans` / `theme.fontMono` 实测首位是 `Maple Mono NF CN`——用户本机字体设置
 的产物，不同机器不同。这两项只应断言"非空"，不得断言具体值。
 
-## 6. 维护规则
+## 6. 升级回归演练
+
+单测能断言分级表与本文件一致，但断言不了"我们分级的锚点在发行版里真的存在"，
+也断言不了"少一个锚点时真的会降级"。这两件事由 `scripts/upgrade-drill.mjs` 覆盖：
+它在活的 renderer 上改掉锚点属性名（模拟一次 Codex 升级），走**真实探针管线**
+（`buildProbeExpression` + `reportFromSnapshot`）读出 tier，然后还原。
+
+```
+node launcher/dist/cli.js start --safe-mode --debug-port=9227 --profile-dir=/tmp/weft-codex-drill
+node scripts/upgrade-drill.mjs 9227
+```
+
+**不要对着日常使用的 Codex 跑**——它会改 DOM 属性。脚本每次都还原，并在结尾复验
+tier 已回到基线；但中途崩溃会留下被改过的 renderer，重新加载窗口即可恢复。
+
+### build 6321 实测（2026-08-10）
+
+| 步骤 | tier | 失败探针 |
+|---|---|---|
+| 基线 | `weft-mode` | 无 |
+| 改名 `data-app-action-sidebar-thread-id`（22 个节点） | **`additive`** | `sidebar.threadRoute(subtractive)` |
+| 还原 | `weft-mode` | 无 |
+| 改名 `data-app-action-sidebar-scroll`（1 个节点） | **`safe-mode`** | `sidebar.scroll(base)`、`mode.switcher(subtractive)` |
+| 还原 | `weft-mode` | 无 |
+
+两点值得记下：
+
+- 这条演练同时证明了 2026-08-10 的重分级是有效的。`sidebar.threadRoute` 原为
+  `optional`，同样的改名在重分级之前会让 tier **纹丝不动**——正是"全绿着坏掉"。
+- base 锚点失效会**级联**让 `mode.switcher` 一起失败：模式触发器的发现作用域是
+  `sidebar.closest("nav")`（`renderer-agent.ts`），sidebar 找不到时触发器也就找不到。
+  因此 `mode.switcher` 的失败不一定代表菜单本身有问题，排障时应先看 `sidebar.scroll`。
+
+## 7. 维护规则
 
 - 只追加，不改写历史行。需订正历史行时另起一行并注明「订正 YYYY-MM-DD，原行见上」，
   保留可审计轨迹。
 - `ok` 只有 `true` / `false` / `未记录` 三种取值；**禁止把未留证的锚点填成 `true`**。
 - 采集必须在 `--safe-mode`、专用 profile、未注入的条件下进行，否则测到的是 Weft 自己
   改过的 DOM。若某项只能在注入路径下观测（如 §3 的 CSP），单独标注采集条件。
-- Anchor id 与 `launcher/src/probes.ts` 完全一致；`probes.ts` 增删探针时同步更新本文件
-  （先改代码，再补文档行）。
+- Anchor id 与 `launcher/src/probes.ts` 完全一致。**这条由测试强制**：
+  `probes.test.ts` 的「the compatibility matrix documents every probe of the newest
+  build」会解析 §2 中 build 号最大的那组行，与 `reportFromSnapshot` 的实际输出对账；
+  新增探针未补文档行、或改了 `requiredFor` 未同步，都会让测试失败。因此本文件不是
+  可选文档，而是构建的一部分。
 - spec `docs/specs/2026-08-08-codex-desktop-migration-design.md` 中的 build / 协议版本
   断言，在重大版本变更后应指回本文件，而不是在 spec 正文里继续累积日期戳。
