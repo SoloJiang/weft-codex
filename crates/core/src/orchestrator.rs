@@ -341,6 +341,23 @@ impl Orchestrator {
             rx,
         ));
 
+        // Resolve the basis title lazily: the id/revision are already on the
+        // task, so a missing artifact row degrades to "no basis" rather than
+        // failing the spawn.
+        let basis_row = if direction.source_artifact_id != 0 {
+            self.store
+                .get_artifact(direction.source_artifact_id)
+                .await
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
+        let basis = basis_row.as_ref().map(|row| brief::ArtifactBasis {
+            id: row.id,
+            revision: direction.source_artifact_revision,
+            title: &row.title,
+        });
         let text = brief::direction_brief(
             &issue.title,
             &direction.name,
@@ -350,6 +367,7 @@ impl Orchestrator {
             &repo.name,
             &party,
             &url,
+            basis.as_ref(),
         );
         let turn_id = match client.start_turn(&thread_id, &text).await {
             Ok(turn_id) => turn_id,

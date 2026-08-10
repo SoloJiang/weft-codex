@@ -61,6 +61,10 @@ pub fn router(state: ApiState) -> Router {
             "/api/issues/{id}/artifacts",
             post(create_artifact).get(list_artifacts),
         )
+        .route(
+            "/api/issues/{id}/artifact-staleness",
+            get(artifact_staleness),
+        )
         .route("/api/artifacts/{id}", get(get_artifact).post(update_artifact))
         .route("/api/artifacts/{id}/status", post(set_artifact_status))
         .route("/api/events", get(sse_events))
@@ -235,6 +239,25 @@ async fn list_artifacts(State(state): State<ApiState>, Path(issue_id): Path<i64>
     match state.store.list_artifacts(issue_id).await {
         Ok(rows) => ok(json!(rows)),
         Err(error) => artifact_fail(error),
+    }
+}
+
+/// Tasks whose planning document has moved on since they were created.
+///
+/// Served as its own answer rather than left for each client to join: the
+/// comparison is a product rule, and three clients re-deriving it would
+/// eventually disagree about what "stale" means.
+async fn artifact_staleness(State(state): State<ApiState>, Path(issue_id): Path<i64>) -> Response {
+    match state.store.stale_artifact_basis(issue_id).await {
+        Ok(rows) => ok(json!(rows
+            .into_iter()
+            .map(|(direction_id, used, current)| json!({
+                "directionId": direction_id,
+                "usedRevision": used,
+                "currentRevision": current
+            }))
+            .collect::<Vec<Value>>())),
+        Err(error) => fail(error),
     }
 }
 

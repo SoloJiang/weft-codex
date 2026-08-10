@@ -51,6 +51,8 @@ CREATE TABLE IF NOT EXISTS direction (
     base_branch TEXT NOT NULL DEFAULT '',
     spec TEXT NOT NULL DEFAULT '',
     codex_thread_id TEXT NOT NULL DEFAULT '',
+    source_artifact_id INTEGER NOT NULL DEFAULT 0,
+    source_artifact_revision INTEGER NOT NULL DEFAULT 0,
     attention INTEGER NOT NULL DEFAULT 0,
     attention_reason TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
@@ -463,6 +465,11 @@ pub struct DirectionRow {
     pub base_branch: String,
     pub spec: String,
     pub codex_thread_id: String,
+    /// Which artifact revision this task was planned from, or 0 when the issue
+    /// had none. Recorded at creation so a plan can always be traced back to
+    /// the document it was derived from.
+    pub source_artifact_id: i64,
+    pub source_artifact_revision: i64,
     pub attention: i64,
     pub attention_reason: String,
     pub created_at: String,
@@ -553,6 +560,22 @@ impl Store {
         // Additive guards for databases created before a column existed
         // (SQLite has no ADD COLUMN IF NOT EXISTS, so probe the pragma).
         ensure_column(&pool, "direction", "spec", "TEXT NOT NULL DEFAULT ''").await?;
+        // Tasks created before artifacts existed keep 0/0, which reads as
+        // "planned from no document" rather than "planned from revision 0".
+        ensure_column(
+            &pool,
+            "direction",
+            "source_artifact_id",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+        .await?;
+        ensure_column(
+            &pool,
+            "direction",
+            "source_artifact_revision",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+        .await?;
         ensure_column(&pool, "workspace", "repo_map", "TEXT NOT NULL DEFAULT ''").await?;
         ensure_column(&pool, "issue", "kind", "TEXT NOT NULL DEFAULT 'feature'").await?;
         ensure_column(&pool, "repo_ref", "remote_url", "TEXT NOT NULL DEFAULT ''").await?;
@@ -1177,10 +1200,29 @@ impl Store {
         reason: &str,
         spec: &str,
     ) -> anyhow::Result<i64> {
+        // Snapshot the artifact basis here rather than asking the caller for
+        // it: a lead cannot forget to pass it, cannot pass a revision it never
+        // read, and the recorded value is exactly what existed at creation.
+        let mut tx = self.pool.begin().await.context("add_direction begin")?;
+        let basis = sqlx::query(
+            "SELECT id, revision FROM issue_artifact
+             WHERE issue_id = ? AND kind = 'test_cases' AND status != 'superseded'
+             ORDER BY id DESC LIMIT 1",
+        )
+        .bind(issue_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .context("add_direction artifact basis")?;
+        let (artifact_id, artifact_revision) = match basis {
+            Some(row) => (row.get::<i64, _>("id"), row.get::<i64, _>("revision")),
+            None => (0, 0),
+        };
+
         let row = sqlx::query(
             "INSERT INTO direction
-             (issue_id, name, slug, repo_id, mandate, base_branch, reason, spec, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+             (issue_id, name, slug, repo_id, mandate, base_branch, reason, spec,
+              source_artifact_id, source_artifact_revision, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
         )
         .bind(issue_id)
         .bind(name)
@@ -1190,11 +1232,52 @@ impl Store {
         .bind(base_branch)
         .bind(reason)
         .bind(spec)
+        .bind(artifact_id)
+        .bind(artifact_revision)
         .bind(now_unix())
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .context("add_direction")?;
-        Ok(row.get::<i64, _>("id"))
+        let id = row.get::<i64, _>("id");
+        tx.commit().await.context("add_direction commit")?;
+        Ok(id)
+    }
+
+    /// Tasks whose planning document has moved on since they were created.
+    ///
+    /// Derived by comparing revisions rather than stored as a flag: a flag has
+    /// to be maintained on every artifact write and silently rots when one path
+    /// forgets. Returns the task id with the revision it used and the revision
+    /// that exists now.
+    pub async fn stale_artifact_basis(
+        &self,
+        issue_id: i64,
+    ) -> anyhow::Result<Vec<(i64, i64, i64)>> {
+        let rows = sqlx::query(
+            "SELECT d.id AS direction_id,
+                    d.source_artifact_revision AS used,
+                    a.revision AS current
+             FROM direction d
+             JOIN issue_artifact a ON a.id = d.source_artifact_id
+             WHERE d.issue_id = ?
+               AND d.source_artifact_id != 0
+               AND a.revision > d.source_artifact_revision
+             ORDER BY d.id",
+        )
+        .bind(issue_id)
+        .fetch_all(&self.pool)
+        .await
+        .context("stale_artifact_basis")?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                (
+                    row.get::<i64, _>("direction_id"),
+                    row.get::<i64, _>("used"),
+                    row.get::<i64, _>("current"),
+                )
+            })
+            .collect())
     }
 
     pub async fn get_direction(&self, id: i64) -> anyhow::Result<Option<DirectionRow>> {
@@ -2061,6 +2144,86 @@ mod tests {
             source: "agent",
             source_thread_id: "lead-1",
         }
+    }
+
+    async fn add_task(store: &Store, issue: i64, name: &str) -> i64 {
+        store
+            .add_direction(issue, name, name, 1, "plan+impl", "main", "", "spec")
+            .await
+            .expect("task")
+    }
+
+    #[tokio::test]
+    async fn a_task_records_the_artifact_revision_it_was_planned_from() {
+        let (store, issue, _dir) = artifact_fixture().await;
+
+        // No document yet: 0/0 means "planned from nothing", not "revision 0".
+        let before = add_task(&store, issue, "early").await;
+        let row = store.get_direction(before).await.expect("get").expect("row");
+        assert_eq!(row.source_artifact_id, 0);
+        assert_eq!(row.source_artifact_revision, 0);
+
+        let artifact = store
+            .create_artifact(new_artifact(issue, "- case one"))
+            .await
+            .expect("create");
+        store
+            .update_artifact_content(artifact.id, 1, "- case two", "T", "agent", "")
+            .await
+            .expect("revise");
+
+        let after = add_task(&store, issue, "later").await;
+        let row = store.get_direction(after).await.expect("get").expect("row");
+        assert_eq!(row.source_artifact_id, artifact.id);
+        assert_eq!(row.source_artifact_revision, 2, "must capture what existed");
+    }
+
+    #[tokio::test]
+    async fn revising_the_document_makes_earlier_tasks_visibly_stale() {
+        let (store, issue, _dir) = artifact_fixture().await;
+        let artifact = store
+            .create_artifact(new_artifact(issue, "- case one"))
+            .await
+            .expect("create");
+        let planned = add_task(&store, issue, "planned").await;
+
+        assert!(
+            store.stale_artifact_basis(issue).await.expect("stale").is_empty(),
+            "nothing is stale before the document moves"
+        );
+
+        store
+            .update_artifact_content(artifact.id, 1, "- case one\n- case two", "T", "agent", "")
+            .await
+            .expect("revise");
+
+        let stale = store.stale_artifact_basis(issue).await.expect("stale");
+        assert_eq!(stale, vec![(planned, 1, 2)], "used 1, current is 2");
+
+        // A task planned after the revision is not dragged in with it.
+        let fresh = add_task(&store, issue, "fresh").await;
+        let stale = store.stale_artifact_basis(issue).await.expect("stale");
+        assert_eq!(stale.len(), 1);
+        assert_ne!(stale[0].0, fresh);
+    }
+
+    #[tokio::test]
+    async fn a_superseded_document_is_not_used_as_a_basis() {
+        let (store, issue, _dir) = artifact_fixture().await;
+        let artifact = store
+            .create_artifact(new_artifact(issue, "v1"))
+            .await
+            .expect("create");
+        store
+            .set_artifact_status(artifact.id, 1, ArtifactStatus::Superseded, "")
+            .await
+            .expect("supersede");
+
+        // Planning from a replaced document would record a basis nobody should
+        // act on; recording none is the honest answer.
+        let task = add_task(&store, issue, "after-supersede").await;
+        let row = store.get_direction(task).await.expect("get").expect("row");
+        assert_eq!(row.source_artifact_id, 0);
     }
 
     #[tokio::test]
