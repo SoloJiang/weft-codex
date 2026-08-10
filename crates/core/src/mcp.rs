@@ -1061,6 +1061,56 @@ mod tests {
         assert!(resp.is_none());
     }
 
+    /// The test-cases skill tells an agent which tools to call by name. If a
+    /// tool is renamed and the skill is not, the agent follows instructions
+    /// that quietly no-op — so the document is checked against the real list.
+    #[test]
+    fn the_test_cases_skill_only_names_tools_that_exist() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../skills/weft-derive-test-cases/SKILL.md");
+        let skill = std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+
+        let offered: Vec<String> = tool_list("lead")["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .filter_map(|entry| entry["name"].as_str().map(str::to_string))
+            .collect();
+
+        // Every `artifact_*` token the skill mentions must be a real tool.
+        let mut mentioned: Vec<String> = Vec::new();
+        for raw in skill.split(|c: char| !c.is_alphanumeric() && c != '_') {
+            if raw.starts_with("artifact_") && !mentioned.iter().any(|seen| seen == raw) {
+                mentioned.push(raw.to_string());
+            }
+        }
+        assert!(
+            !mentioned.is_empty(),
+            "the skill no longer references any artifact tool"
+        );
+        for name in &mentioned {
+            assert!(
+                offered.contains(name),
+                "the skill tells the agent to call `{name}`, which is not offered"
+            );
+        }
+
+        // And the workflow it describes has to be reachable: read, write, status.
+        for required in ["artifact_read", "artifact_write", "artifact_status"] {
+            assert!(
+                mentioned.iter().any(|name| name == required),
+                "the skill stopped mentioning {required}"
+            );
+        }
+
+        // The sentinel is gone for good — publishing goes through MCP now.
+        assert!(
+            !skill.contains("<weft:test_cases>"),
+            "the skill still emits the legacy sentinel instead of writing an artifact"
+        );
+    }
+
     /// Tool results are text, so the structured payload rides inside it.
     /// Parsing here mirrors exactly what an agent has to do.
     fn tool_json(response: &Value) -> Value {
