@@ -29,7 +29,39 @@ fn bus_block(party: &str, bus_url: &str) -> String {
     )
 }
 
+/// What planning document a task was derived from, if any.
+///
+/// A reference, never a copy: the artifact belongs to the issue and keeps
+/// moving, so embedding its text would hand the worker a snapshot that silently
+/// goes out of date. The worker reads the live document through MCP instead.
+pub struct ArtifactBasis<'a> {
+    pub id: i64,
+    pub revision: i64,
+    pub title: &'a str,
+}
+
+fn artifact_block(basis: Option<&ArtifactBasis<'_>>) -> String {
+    let Some(basis) = basis else {
+        return String::new();
+    };
+    let title = if basis.title.is_empty() {
+        "test cases"
+    } else {
+        basis.title
+    };
+    format!(
+        "\n\nPlanned from: {title} (artifact {id}, revision {revision}).\n\
+         Read it with `artifact_read(id: {id})` before you start. If the \
+         revision you read is higher than {revision}, the plan predates the \
+         current document — reconcile the difference with the lead over the \
+         bus rather than guessing which one is right.",
+        id = basis.id,
+        revision = basis.revision
+    )
+}
+
 /// First message for a direction (worker) thread.
+#[allow(clippy::too_many_arguments)]
 pub fn direction_brief(
     issue_title: &str,
     direction_name: &str,
@@ -39,6 +71,7 @@ pub fn direction_brief(
     repo_name: &str,
     party: &str,
     bus_url: &str,
+    basis: Option<&ArtifactBasis<'_>>,
 ) -> String {
     let spec_line = if spec.is_empty() {
         String::new()
@@ -62,7 +95,8 @@ pub fn direction_brief(
          {spec_line}\
          {mandate_line}{reason_line}\n\
          When done, post a completion summary to `lead` via the bus."
-    ) + &bus_block(party, bus_url)
+    ) + &artifact_block(basis)
+        + &bus_block(party, bus_url)
 }
 
 /// First message for an issue's lead thread.
@@ -111,6 +145,51 @@ pub fn bus_envelope(from: &str, text: &str) -> String {
 }
 
 #[cfg(test)]
+mod basis_tests {
+    use super::*;
+
+    fn brief_with(basis: Option<&ArtifactBasis<'_>>) -> String {
+        direction_brief(
+            "Fix login",
+            "backend-fix",
+            "do the thing",
+            "plan+impl",
+            "why",
+            "api",
+            "3",
+            "http://127.0.0.1:47810/bus/1/3/mcp",
+            basis,
+        )
+    }
+
+    #[test]
+    fn the_brief_references_the_planning_document_without_copying_it() {
+        let basis = ArtifactBasis {
+            id: 7,
+            revision: 3,
+            title: "Checkout test cases",
+        };
+        let brief = brief_with(Some(&basis));
+
+        assert!(brief.contains("Checkout test cases"));
+        assert!(brief.contains("artifact 7"));
+        assert!(brief.contains("revision 3"));
+        // A reference, not a copy: the worker must read the live document, or
+        // it would act on a snapshot that keeps drifting.
+        assert!(brief.contains("artifact_read(id: 7)"));
+        // And it must be told what to do when the document has moved on.
+        assert!(brief.contains("higher than 3"));
+    }
+
+    #[test]
+    fn a_task_planned_from_nothing_says_nothing() {
+        let brief = brief_with(None);
+        assert!(!brief.contains("Planned from"));
+        assert!(!brief.contains("artifact_read"));
+    }
+}
+
+#[cfg(test)]
 mod tests {
     #[test]
     fn direction_brief_carries_identity_and_mandate() {
@@ -123,6 +202,7 @@ mod tests {
             "api",
             "3",
             "http://127.0.0.1:47810/bus/1/3/mcp",
+            None,
         );
         assert!(b.contains("Fix login"));
         assert!(b.contains("Create hello.txt"));
