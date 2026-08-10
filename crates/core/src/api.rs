@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 use tokio_stream::StreamExt;
 
 use crate::orchestrator::Orchestrator;
-use crate::store::Store;
+use crate::store::{ArtifactError, ArtifactRow, ArtifactStatus, NewArtifact, Store};
 use crate::{curator, events, repo_intake};
 
 #[derive(Clone)]
@@ -57,6 +57,16 @@ pub fn router(state: ApiState) -> Router {
             post(analyze_relations),
         )
         .route("/api/workspaces/{id}/repo-map", get(repo_map))
+        .route(
+            "/api/issues/{id}/artifacts",
+            post(create_artifact).get(list_artifacts),
+        )
+        .route(
+            "/api/issues/{id}/artifact-staleness",
+            get(artifact_staleness),
+        )
+        .route("/api/artifacts/{id}", get(get_artifact).post(update_artifact))
+        .route("/api/artifacts/{id}/status", post(set_artifact_status))
         .route("/api/events", get(sse_events))
         .with_state(state)
 }
@@ -97,10 +107,244 @@ fn ok(value: Value) -> Response {
     Json(value).into_response()
 }
 
+/// Map an artifact failure to a response the UI can branch on.
+///
+/// Unlike [`fail`], nothing here inspects a message: the reason is a type, and
+/// it travels as a stable `code` plus the fields that make it actionable. A
+/// revision conflict carries both revisions so the client can reload or merge
+/// without a second round trip.
+fn artifact_fail(error: ArtifactError) -> Response {
+    let (status, body) = match error {
+        ArtifactError::NotFound { id } => (
+            StatusCode::NOT_FOUND,
+            json!({ "code": "not_found", "artifactId": id }),
+        ),
+        ArtifactError::RevisionConflict {
+            id,
+            expected,
+            actual,
+        } => (
+            StatusCode::CONFLICT,
+            json!({
+                "code": "revision_conflict",
+                "artifactId": id,
+                "expectedRevision": expected,
+                "actualRevision": actual
+            }),
+        ),
+        ArtifactError::ContentTooLarge { limit, actual } => (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            json!({ "code": "content_too_large", "limit": limit, "actual": actual }),
+        ),
+        ArtifactError::UnsupportedValue { field, ref value } => (
+            StatusCode::BAD_REQUEST,
+            json!({ "code": "unsupported_value", "field": field, "value": value }),
+        ),
+        ArtifactError::IllegalTransition { from, to } => (
+            StatusCode::CONFLICT,
+            json!({
+                "code": "illegal_transition",
+                "from": from.as_str(),
+                "to": to.as_str()
+            }),
+        ),
+        ArtifactError::Database(ref inner) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "code": "store_failure", "detail": format!("{inner:#}") }),
+        ),
+    };
+    let mut payload = body;
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("error".into(), Value::String(error.to_string()));
+    }
+    (status, Json(payload)).into_response()
+}
+
+fn artifact_event(name: &str, row: &ArtifactRow) {
+    events::emit(
+        name,
+        json!({
+            "id": row.id,
+            "issueId": row.issue_id,
+            "kind": row.kind,
+            "revision": row.revision,
+            "status": row.status
+        }),
+    );
+}
+
+/// The SSE name for a status move, so a client can react to "this went stale"
+/// without diffing two snapshots.
+fn status_event(status: ArtifactStatus) -> &'static str {
+    match status {
+        ArtifactStatus::Stale => "artifact.stale",
+        ArtifactStatus::Superseded => "artifact.superseded",
+        _ => "artifact.updated",
+    }
+}
+
+#[derive(Deserialize)]
+struct CreateArtifact {
+    kind: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default = "default_format")]
+    format: String,
+    #[serde(default)]
+    content: String,
+    #[serde(default = "default_source")]
+    source: String,
+    #[serde(default)]
+    source_thread_id: String,
+}
+
+fn default_format() -> String {
+    "markdown".to_string()
+}
+
+fn default_source() -> String {
+    "agent".to_string()
+}
+
+#[derive(Deserialize)]
+struct UpdateArtifact {
+    /// Required, and deliberately not defaulted: a client that forgets it must
+    /// get a deserialisation error rather than silently overwrite whatever the
+    /// current revision happens to be.
+    expected_revision: i64,
+    content: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default = "default_source")]
+    source: String,
+    #[serde(default)]
+    source_thread_id: String,
+}
+
+#[derive(Deserialize)]
+struct SetArtifactStatus {
+    expected_revision: i64,
+    status: String,
+    #[serde(default)]
+    stale_reason: String,
+}
+
 #[derive(Deserialize)]
 struct CreateWorkspace {
     name: String,
     slug: String,
+}
+
+async fn list_artifacts(State(state): State<ApiState>, Path(issue_id): Path<i64>) -> Response {
+    match state.store.list_artifacts(issue_id).await {
+        Ok(rows) => ok(json!(rows)),
+        Err(error) => artifact_fail(error),
+    }
+}
+
+/// Tasks whose planning document has moved on since they were created.
+///
+/// Served as its own answer rather than left for each client to join: the
+/// comparison is a product rule, and three clients re-deriving it would
+/// eventually disagree about what "stale" means.
+async fn artifact_staleness(State(state): State<ApiState>, Path(issue_id): Path<i64>) -> Response {
+    match state.store.stale_artifact_basis(issue_id).await {
+        Ok(rows) => ok(json!(rows
+            .into_iter()
+            .map(|(direction_id, used, current)| json!({
+                "directionId": direction_id,
+                "usedRevision": used,
+                "currentRevision": current
+            }))
+            .collect::<Vec<Value>>())),
+        Err(error) => fail(error),
+    }
+}
+
+async fn get_artifact(State(state): State<ApiState>, Path(id): Path<i64>) -> Response {
+    match state.store.get_artifact(id).await {
+        Ok(Some(row)) => ok(json!(row)),
+        Ok(None) => artifact_fail(ArtifactError::NotFound { id }),
+        Err(error) => artifact_fail(error),
+    }
+}
+
+async fn create_artifact(
+    State(state): State<ApiState>,
+    Path(issue_id): Path<i64>,
+    Json(body): Json<CreateArtifact>,
+) -> Response {
+    let created = state
+        .store
+        .create_artifact(NewArtifact {
+            issue_id,
+            kind: &body.kind,
+            title: &body.title,
+            format: &body.format,
+            content: &body.content,
+            source: &body.source,
+            source_thread_id: &body.source_thread_id,
+        })
+        .await;
+    match created {
+        Ok(row) => {
+            artifact_event("artifact.created", &row);
+            ok(json!(row))
+        }
+        Err(error) => artifact_fail(error),
+    }
+}
+
+async fn update_artifact(
+    State(state): State<ApiState>,
+    Path(id): Path<i64>,
+    Json(body): Json<UpdateArtifact>,
+) -> Response {
+    let updated = state
+        .store
+        .update_artifact_content(
+            id,
+            body.expected_revision,
+            &body.content,
+            &body.title,
+            &body.source,
+            &body.source_thread_id,
+        )
+        .await;
+    match updated {
+        Ok(row) => {
+            artifact_event("artifact.updated", &row);
+            ok(json!(row))
+        }
+        Err(error) => artifact_fail(error),
+    }
+}
+
+/// Lifecycle moves, including supersede — `{"status": "superseded"}` is the
+/// supersede operation. Keeping one endpoint means there is exactly one place
+/// where the transition rules apply.
+async fn set_artifact_status(
+    State(state): State<ApiState>,
+    Path(id): Path<i64>,
+    Json(body): Json<SetArtifactStatus>,
+) -> Response {
+    let Some(status) = ArtifactStatus::parse(&body.status) else {
+        return artifact_fail(ArtifactError::UnsupportedValue {
+            field: "status",
+            value: body.status,
+        });
+    };
+    let updated = state
+        .store
+        .set_artifact_status(id, body.expected_revision, status, &body.stale_reason)
+        .await;
+    match updated {
+        Ok(row) => {
+            artifact_event(status_event(status), &row);
+            ok(json!(row))
+        }
+        Err(error) => artifact_fail(error),
+    }
 }
 
 async fn create_workspace(

@@ -269,7 +269,13 @@ class AttachedRenderer {
     const session = await CdpSession.connect(target.webSocketDebuggerUrl)
     let probe = await probeRenderer(session)
     const hydrationDeadline = Date.now() + 20_000
-    while (probe.tier === "safe-mode" && Date.now() < hydrationDeadline) {
+    // Keep retrying below weft-mode, not just at safe-mode. Codex paints the
+    // sidebar shell before it fills the conversation list, and after the CSP
+    // reload it does so again — a probe landing in that window used to pin the
+    // whole session to `additive` with no retry, because the loop only looked
+    // for safe-mode. A genuinely missing anchor still settles at its real tier
+    // once the deadline passes.
+    while (probe.tier !== "weft-mode" && Date.now() < hydrationDeadline) {
       await new Promise((resolve) => setTimeout(resolve, 150))
       if (session.isClosed()) break
       try {

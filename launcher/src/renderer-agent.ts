@@ -202,6 +202,11 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       const values = {
         weftCodexMode: state.mode,
         weftCodexView: state.view,
+        // Spec §7.5 splits mounting into Tier 1 (additive, native UI untouched)
+        // and Tier 2 (weft-mode, subtractive). Publishing the tier here is what
+        // lets the stylesheet fail open: every subtractive rule is scoped to
+        // tier="weft-mode", so a failed subtractive probe cannot hide native UI.
+        weftCodexTier: config.compatibilityTier,
         weftCodexModeCapability: state.modeButton ? "native" : "fallback",
         weftCodexCspBypass: state.cspBypass ? "true" : "false",
       };
@@ -464,24 +469,38 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
           overflow: hidden;
           background: var(--color-token-main-surface-primary);
         }
-        html[data-weft-codex-mode="weft"] [data-app-action-sidebar-scroll] {
+        /* Tier 2 only. Every rule that hides or reflows native chrome is gated
+           on tier="weft-mode"; a failed subtractive probe leaves the host UI
+           untouched instead of hiding it (spec §7.5 fail-open). */
+        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] [data-app-action-sidebar-scroll] {
           gap: 0 !important;
           overflow: hidden !important;
         }
-        html[data-weft-codex-mode="weft"] [data-weft-codex-native-header-action] {
+        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] [data-weft-codex-native-header-action] {
           display: none !important;
         }
-        html[data-weft-codex-mode="weft"] [data-app-action-sidebar-scroll] > :not(#${SIDEBAR_ROOT_ID}) {
+        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] [data-app-action-sidebar-scroll] > :not(#${SIDEBAR_ROOT_ID}) {
           display: none !important;
         }
-        html[data-weft-codex-mode="weft"] #${SIDEBAR_ROOT_ID} {
+        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] #${SIDEBAR_ROOT_ID} {
           display: flex;
           flex: 1 1 auto;
           height: 100%;
         }
-        html[data-weft-codex-mode="weft"] #${SIDEBAR_ROOT_ID} > iframe {
+        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] #${SIDEBAR_ROOT_ID} > iframe {
           display: block;
           flex: 1 1 auto;
+        }
+        /* Tier 1: native sidebar keeps every row; Weft only appends an entry
+           that opens the workspace overlay. */
+        html[data-weft-codex-tier="additive"][data-weft-codex-mode="weft"] #${SIDEBAR_ROOT_ID} {
+          display: block;
+          flex: 0 0 auto;
+          height: 30px;
+          padding: 0 var(--padding-row-x, 8px);
+        }
+        html[data-weft-codex-tier="additive"][data-weft-codex-mode="weft"] .weft-codex-fallback-button {
+          display: block;
         }
         html[data-weft-codex-mode="weft"][data-weft-codex-view="workspace"] #${WORKSPACE_ROOT_ID} {
           display: block;
@@ -967,6 +986,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       const root = document.documentElement;
       delete root.dataset.weftCodexMode;
       delete root.dataset.weftCodexView;
+      delete root.dataset.weftCodexTier;
       delete root.dataset.weftCodexModeCapability;
       delete root.dataset.weftCodexCspBypass;
       for (const element of document.querySelectorAll("[data-weft-codex-mode-header]")) {
