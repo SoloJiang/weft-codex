@@ -1,5 +1,8 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import { readFileSync } from "node:fs"
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
 
 import {
   buildProbeExpression,
@@ -133,4 +136,64 @@ test("failure reasons are user-facing and never leak a selector", () => {
     assert.ok(failure.reason, `${failure.id} has no user-facing reason`)
     assert.doesNotMatch(failure.reason ?? "", /\[data-|#root|querySelector/)
   }
+})
+
+// N0-05 (#6): one fixture per requiredFor level, so every level's user-visible
+// consequence is pinned. `base` and `additive` both mean safe-mode — a failed
+// additive probe is NOT a lesser degradation, and that is easy to misread.
+test("a base anchor failure enters safe mode", () => {
+  const report = reportFromSnapshot(healthySnapshot(["sidebar.scroll"]))
+  assert.equal(report.tier, "safe-mode")
+})
+
+test("an additive token failure also enters safe mode, not a lesser tier", () => {
+  const snapshot = healthySnapshot()
+  snapshot.tokens["--color-token-foreground"] = ""
+  assert.equal(reportFromSnapshot(snapshot).tier, "safe-mode")
+})
+
+test("an optional probe failure changes nothing", () => {
+  const snapshot = { ...healthySnapshot(), titlebarDragRegion: false }
+  const report = reportFromSnapshot(snapshot)
+  assert.equal(report.tier, "weft-mode")
+  assert.equal(report.probes.find((entry) => entry.id === "titlebar.dragRegion")?.ok, false)
+})
+
+// N0-05 (#6): the compatibility matrix is the upgrade regression signal, so it
+// has to stay mechanically in sync with the probes. Adding a probe without
+// documenting it, or changing a classification without updating the matrix,
+// must fail here rather than silently drift.
+function matrixRows(): { build: number; anchor: string; requiredFor: string }[] {
+  const here = dirname(fileURLToPath(import.meta.url))
+  const matrix = readFileSync(join(here, "..", "..", "docs", "compat", "codex-builds.md"), "utf8")
+  const rows: { build: number; anchor: string; requiredFor: string }[] = []
+  for (const line of matrix.split("\n")) {
+    const match = /^\|\s*(\d{4,})\s*\|\s*`([^`]+)`\s*\|\s*(base|additive|subtractive|optional)\s*\|/.exec(line)
+    if (!match) continue
+    const [, build, anchor, requiredFor] = match
+    if (!build || !anchor || !requiredFor) continue
+    rows.push({ build: Number(build), anchor, requiredFor })
+  }
+  return rows
+}
+
+test("the compatibility matrix documents every probe of the newest build", () => {
+  const rows = matrixRows()
+  assert.ok(rows.length > 0, "no anchor rows parsed from docs/compat/codex-builds.md")
+  const newest = Math.max(...rows.map((row) => row.build))
+  const documented = new Map(
+    rows.filter((row) => row.build === newest).map((row) => [row.anchor, row.requiredFor]),
+  )
+  const probes = reportFromSnapshot(healthySnapshot()).probes
+
+  const undocumented = probes.filter((probe) => !documented.has(probe.id)).map((probe) => probe.id)
+  assert.deepEqual(undocumented, [], `probes missing from the matrix for build ${newest}`)
+
+  const stale = [...documented.keys()].filter((id) => !probes.some((probe) => probe.id === id))
+  assert.deepEqual(stale, [], `matrix rows for build ${newest} with no matching probe`)
+
+  const mismatched = probes
+    .filter((probe) => documented.get(probe.id) !== probe.requiredFor)
+    .map((probe) => `${probe.id}: code=${probe.requiredFor} matrix=${documented.get(probe.id)}`)
+  assert.deepEqual(mismatched, [], "requiredFor disagrees between code and matrix")
 })
