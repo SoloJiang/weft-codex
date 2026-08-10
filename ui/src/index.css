@@ -1086,6 +1086,23 @@ main {
   vertical-align: 1px;
 }
 
+/* Attention reads as a quiet marker rather than a solid block: the card
+   already carries a warning border, so repeating it at full strength made a
+   routine "needs you" look like a crash. */
+.badge-attention {
+  gap: 3px;
+  padding: 1px 5px 1px 4px;
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  color: var(--warn);
+  font-weight: 500;
+}
+
+.badge-attention > svg {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+}
+
 /* ── issue detail ─────────────────────────────────────────────────── */
 
 .detail-nav { margin-bottom: var(--space-3); }

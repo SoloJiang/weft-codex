@@ -1,10 +1,19 @@
 import * as React from "react"
-import { Check, Flag, MoreHorizontal, Play, RotateCcw, Search, Send } from "lucide-react"
+import {
+  AlertTriangle,
+  Check,
+  Flag,
+  MoreHorizontal,
+  Play,
+  RotateCcw,
+  Search,
+  Send,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
-import { useI18n } from "@/i18n"
+import { useI18n, type MessageKey } from "@/i18n"
 import type { BoardEntry, Direction, DirectionStatus, Issue, Repo } from "@/types"
 import { STATUSES } from "@/types"
 import { AsyncButton, EmptyState, ThreadLink } from "./shared"
@@ -29,9 +38,44 @@ export function directionMeta(
   return parts.join(" · ")
 }
 
+/**
+ * Every reason the orchestrator can attach to a task, mapped to user wording.
+ *
+ * The previous fallback returned `attention_reason` itself, so any reason
+ * without an entry here rendered its raw internal identifier on the card —
+ * `thread-resume-failed` and friends. Unmapped reasons now read as the generic
+ * label instead; the raw value stays inspectable in the DOM for triage but
+ * never becomes text a user reads.
+ */
+const ATTENTION_LABELS: Record<string, MessageKey> = {
+  "worker-start-failed": "dir.startFailed",
+  "thread-resume-failed": "dir.resumeFailed",
+  "turn failed": "dir.turnFailed",
+  "quota exceeded": "dir.quotaExceeded",
+}
+
 function attentionLabel(direction: Direction, t: ReturnType<typeof useI18n>["t"]): string {
-  if (direction.attention_reason === "worker-start-failed") return t("dir.startFailed")
-  return direction.attention_reason || t("dir.attention")
+  const key = ATTENTION_LABELS[direction.attention_reason]
+  return key ? t(key) : t("dir.attention")
+}
+
+/**
+ * Icon plus short text, never icon alone: the product bar is that state must
+ * not rest on colour or a wordless glyph, and a hover-only tooltip is
+ * unreachable by keyboard and absent on touch.
+ */
+function AttentionBadge({ direction }: { direction: Direction }) {
+  const { t } = useI18n()
+  const known = Boolean(ATTENTION_LABELS[direction.attention_reason])
+  return (
+    <span
+      className="badge badge-attention"
+      data-attention-reason={known ? undefined : direction.attention_reason || undefined}
+    >
+      <AlertTriangle aria-hidden="true" />
+      {attentionLabel(direction, t)}
+    </span>
+  )
 }
 
 export function DirectionActions({
@@ -269,9 +313,7 @@ function TaskCard({
       </button>
       <h3 className="name">
         {direction.name}
-        {direction.attention ? (
-          <span className="badge">{attentionLabel(direction, t)}</span>
-        ) : null}
+        {direction.attention ? <AttentionBadge direction={direction} /> : null}
       </h3>
       {meta ? <div className="sub">{meta}</div> : null}
       <TaskCardActions direction={direction} actions={actions} />
