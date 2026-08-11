@@ -894,13 +894,6 @@ main {
   padding: 10px;
 }
 
-.issue-board-card-main {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px;
-  gap: 6px;
-  align-items: start;
-}
-
 .issue-board-card-body {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -926,24 +919,14 @@ main {
   line-height: 1.35;
 }
 
-.issue-board-lead-button {
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--dim);
-  cursor: pointer;
+.issue-board-card-actions {
+  margin-top: 8px;
+  justify-content: flex-start;
 }
-.issue-board-lead-button:hover {
-  background: var(--hover);
-  color: var(--text);
-}
-.issue-board-lead-button svg {
-  width: 14px;
-  height: 14px;
+
+.issue-board-lead-link {
+  margin-inline-start: -1px;
+  padding-inline-start: 0;
 }
 
 .kanban-column-count {

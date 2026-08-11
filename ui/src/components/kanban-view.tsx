@@ -2,7 +2,6 @@ import * as React from "react"
 import {
   Check,
   Flag,
-  MessageCircle,
   Play,
   RotateCcw,
   Search,
@@ -15,7 +14,7 @@ import { useI18n } from "@/i18n"
 import type { BoardEntry, Direction, DirectionStatus, Issue, Repo } from "@/types"
 import { STATUSES } from "@/types"
 import { buildIssueBoard, groupIssueBoard, type IssueBoardCard } from "@/lib/issue-board"
-import { AsyncButton, EmptyState, ThreadLink, openCodexThread } from "./shared"
+import { AsyncButton, EmptyState, ThreadLink } from "./shared"
 
 export interface WorkActions {
   onError: (error: unknown) => void
@@ -130,10 +129,12 @@ function IssueBoardCardView({
   card,
   onOpenIssue,
   onOpenLead,
+  onError,
 }: {
   card: IssueBoardCard
   onOpenIssue: (id: number) => void
-  onOpenLead: (entry: BoardEntry) => Promise<void> | void
+  onOpenLead: (entry: BoardEntry) => Promise<void>
+  onError: (error: unknown) => void
 }) {
   const { t } = useI18n()
   const { entry, status, totalTasks, doneTasks, attentionCount, hasLead } = card
@@ -149,26 +150,36 @@ function IssueBoardCardView({
       className={`kanban-card issue-board-card${attentionCount ? " attention" : ""}`}
       aria-label={t("kanban.issueCardLabel", { title: entry.issue.title })}
     >
-      <div className="issue-board-card-main">
-        <button
-          type="button"
-          className="kanban-card-issue issue-board-card-body"
-          aria-label={t("kanban.openIssueBoard", { title: entry.issue.title })}
-          onClick={() => onOpenIssue(entry.issue.id)}
-        >
-          <span className="kanban-card-issue-number">#{entry.issue.id}</span>
-          <span className="kanban-card-issue-title">{entry.issue.title}</span>
-          <span className="issue-board-card-signal">{signal}</span>
-        </button>
-        <button
-          type="button"
-          className="issue-board-lead-button"
-          aria-label={t(hasLead ? "kanban.openLead" : "kanban.startLead", { title: entry.issue.title })}
-          title={t(hasLead ? "kanban.openLead" : "kanban.startLead", { title: entry.issue.title })}
-          onClick={() => { void onOpenLead(entry) }}
-        >
-          <MessageCircle aria-hidden="true" />
-        </button>
+      <button
+        type="button"
+        className="kanban-card-issue issue-board-card-body"
+        aria-label={t("kanban.openIssueBoard", { title: entry.issue.title })}
+        onClick={() => onOpenIssue(entry.issue.id)}
+      >
+        <span className="kanban-card-issue-number">#{entry.issue.id}</span>
+        <span className="kanban-card-issue-title">{entry.issue.title}</span>
+        <span className="issue-board-card-signal">{signal}</span>
+      </button>
+      <div className="kanban-card-actions issue-board-card-actions">
+        {hasLead ? (
+          <ThreadLink
+            threadId={entry.issue.lead_codex_thread_id}
+            onError={onError}
+            label={t("dir.openThread")}
+            className="issue-board-lead-link"
+          />
+        ) : (
+          <AsyncButton
+            variant="ghost"
+            className="issue-board-lead-link"
+            label={t("issue.spawnLead")}
+            pendingLabel={t("loading.startingLead")}
+            onAction={() => onOpenLead(entry)}
+            onError={onError}
+          >
+            <Play aria-hidden="true" />
+          </AsyncButton>
+        )}
       </div>
     </article>
   )
@@ -179,11 +190,13 @@ function IssueBoardColumn({
   cards,
   onOpenIssue,
   onOpenLead,
+  onError,
 }: {
   status: DirectionStatus
   cards: IssueBoardCard[]
   onOpenIssue: (id: number) => void
-  onOpenLead: (entry: BoardEntry) => Promise<void> | void
+  onOpenLead: (entry: BoardEntry) => Promise<void>
+  onError: (error: unknown) => void
 }) {
   const { t } = useI18n()
   const headingId = `kanban-status-${status}`
@@ -202,6 +215,7 @@ function IssueBoardColumn({
             card={card}
             onOpenIssue={onOpenIssue}
             onOpenLead={onOpenLead}
+            onError={onError}
           />
         ))}
       </div>
@@ -256,15 +270,7 @@ export function KanbanView({
   }, [cards, deferredQuery, repos])
   const grouped = React.useMemo(() => groupIssueBoard(visibleCards), [visibleCards])
 
-  const openLead = React.useCallback(async (entry: BoardEntry) => {
-    if (entry.issue.lead_codex_thread_id) {
-      try {
-        await openCodexThread(entry.issue.lead_codex_thread_id)
-      } catch (error) {
-        actions.onError(error)
-      }
-      return
-    }
+  const startLead = React.useCallback(async (entry: BoardEntry) => {
     await actions.onStartLead(entry.issue)
   }, [actions])
 
@@ -312,7 +318,8 @@ export function KanbanView({
                 status={status}
                 cards={grouped[status]}
                 onOpenIssue={onOpenIssue}
-                onOpenLead={openLead}
+                onOpenLead={startLead}
+                onError={actions.onError}
               />
             ))}
           </div>
