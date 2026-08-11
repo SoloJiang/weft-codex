@@ -26,6 +26,7 @@ export interface WeftdOptions {
 export interface RuntimeLayout {
   weftdPath: string
   webDir: string
+  skillsDir: string
   source: "override" | "bundle" | "source"
 }
 
@@ -44,6 +45,7 @@ function layoutAt(root: string, source: RuntimeLayout["source"]): RuntimeLayout 
   return {
     weftdPath: path.join(root, "bin", "weftd"),
     webDir: path.join(root, "share", "weft-codex", "web"),
+    skillsDir: path.join(root, "share", "weft-codex", "skills"),
     source,
   }
 }
@@ -71,6 +73,7 @@ export function resolveRuntimeLayout(options: RuntimeLayoutOptions = {}): Runtim
   return {
     weftdPath: exists(debugDaemon) ? debugDaemon : releaseDaemon,
     webDir: path.join(sourceRoot, "crates", "daemon", "web"),
+    skillsDir: path.join(sourceRoot, "skills"),
     source: "source",
   }
 }
@@ -81,6 +84,10 @@ export function defaultWeftdPath(): string {
 
 export function defaultWebDir(): string {
   return resolveRuntimeLayout({ runtimeRoot: process.env.WEFT_CODEX_RUNTIME_ROOT }).webDir
+}
+
+export function defaultSkillsDir(): string {
+  return resolveRuntimeLayout({ runtimeRoot: process.env.WEFT_CODEX_RUNTIME_ROOT }).skillsDir
 }
 
 export function codexLaunchArgs(profileDir: string, debugPort: number): string[] {

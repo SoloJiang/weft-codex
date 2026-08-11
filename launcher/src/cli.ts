@@ -12,6 +12,7 @@ import { pickRepositoryDirectories } from "./native-dialogs.js"
 import { readHostPreferences, writeHostPreferences } from "./preferences.js"
 import {
   defaultProfileDir,
+  defaultSkillsDir,
   defaultWebDir,
   defaultWeftdPath,
   ensureWeftd,
@@ -25,6 +26,12 @@ import {
 import { probeRenderer } from "./probes.js"
 import { RendererSupervisor, type RendererHostEvent, type RendererReadySnapshot } from "./renderer-host.js"
 import type { HostMode } from "./renderer-agent.js"
+import {
+  defaultCodexSkillsDir,
+  ensureManagedSkills,
+  formatSkillSyncSummary,
+  type SkillSyncResult,
+} from "./skills.js"
 
 const HOST_VERSION = "0.1.1"
 
@@ -84,15 +91,48 @@ function runtimeCheck(): DoctorCheck {
   }
 }
 
+async function syncSkills(force = false): Promise<SkillSyncResult> {
+  const skillsDir = option("skills-dir") ?? defaultSkillsDir()
+  const targetDir = option("codex-skills-dir") ?? defaultCodexSkillsDir(option("codex-home"))
+  return ensureManagedSkills({
+    sourceDir: skillsDir,
+    targetDir,
+    force,
+  })
+}
+
+async function installSkillsCommand(): Promise<void> {
+  const result = await syncSkills(flag("force"))
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
+  if (result.skipped.length > 0) process.exitCode = 3
+}
+
 async function doctor(): Promise<void> {
   const layout = resolveRuntimeLayout({ runtimeRoot: process.env.WEFT_CODEX_RUNTIME_ROOT })
   const weftdPath = option("weftd-path") ?? defaultWeftdPath()
   const webDir = option("web-dir") ?? defaultWebDir()
+  const skillsDir = option("skills-dir") ?? defaultSkillsDir()
   const checks: DoctorCheck[] = [
     runtimeCheck(),
     await pathCheck("weftd", weftdPath, fsConstants.X_OK),
     await pathCheck("web", path.join(webDir, "index.html"), fsConstants.R_OK),
+    await pathCheck("skills", path.join(skillsDir, "weft-derive-test-cases", "SKILL.md"), fsConstants.R_OK),
   ]
+  let skills: SkillSyncResult | null = null
+  try {
+    skills = await syncSkills(false)
+    const skipped = skills.skipped.map((entry) => entry.name).join(", ")
+    checks.push({
+      id: "codex-skills",
+      ok: skills.skipped.length === 0,
+      detail: skipped
+        ? `${formatSkillSyncSummary(skills)}; local overrides: ${skipped}`
+        : formatSkillSyncSummary(skills),
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    checks.push({ id: "codex-skills", ok: false, detail: message })
+  }
   try {
     const install = await inspectCodexInstall(option("app-path"))
     checks.push({
@@ -109,6 +149,7 @@ async function doctor(): Promise<void> {
     ok,
     version: HOST_VERSION,
     layout,
+    skills,
     checks,
   }, null, 2)}\n`)
   if (!ok) process.exitCode = 1
@@ -116,9 +157,10 @@ async function doctor(): Promise<void> {
 
 function help(): void {
   process.stdout.write(`weft-codex ${HOST_VERSION}\n\n`)
-  process.stdout.write("Usage: weft-codex [start|doctor|inspect-install|probe|attach] [options]\n")
+  process.stdout.write("Usage: weft-codex [start|doctor|install-skills|inspect-install|probe|attach] [options]\n")
   process.stdout.write("Running without a command starts a managed Codex instance in Weft mode.\n")
   process.stdout.write("Use --safe-mode to launch the isolated official Codex without weftd or UI injection.\n")
+  process.stdout.write("Product skills sync into $CODEX_HOME/skills on doctor/start/attach and refresh on upgrades.\n")
 }
 
 async function probe(): Promise<void> {
@@ -201,8 +243,22 @@ async function runHost(endpoint: string, ownedCodex: SpawnedProcess | null): Pro
   }
 }
 
+async function ensureSkillsBestEffort(): Promise<void> {
+  try {
+    const result = await syncSkills(false)
+    process.stderr.write(`[weft-codex] ${formatSkillSyncSummary(result)}\n`)
+    for (const entry of result.skipped) {
+      process.stderr.write(`[weft-codex] skill skipped: ${entry.name}${entry.reason ? ` (${entry.reason})` : ""}\n`)
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    process.stderr.write(`[weft-codex] skill sync failed: ${message}\n`)
+  }
+}
+
 async function attach(): Promise<void> {
   const endpoint = option("endpoint") ?? "http://127.0.0.1:9222"
+  await ensureSkillsBestEffort()
   const daemon = await ensureWeftd({
     url: option("weftd-url"),
     executablePath: option("weftd-path"),
@@ -220,6 +276,7 @@ async function attach(): Promise<void> {
 async function start(): Promise<void> {
   const install = await inspectCodexInstall(option("app-path"))
   const safeMode = flag("safe-mode")
+  if (!safeMode) await ensureSkillsBestEffort()
   const daemon = safeMode
     ? null
     : await ensureWeftd({
@@ -275,6 +332,10 @@ async function main(): Promise<void> {
   }
   if (command === "doctor") {
     await doctor()
+    return
+  }
+  if (command === "install-skills") {
+    await installSkillsCommand()
     return
   }
   if (command === "inspect-install") {

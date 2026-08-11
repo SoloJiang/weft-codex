@@ -33,6 +33,7 @@ test("resolves a tar archive layout from the launcher executable", () => {
   }), {
     weftdPath: "/opt/weft-codex/bin/weftd",
     webDir: "/opt/weft-codex/share/weft-codex/web",
+    skillsDir: "/opt/weft-codex/share/weft-codex/skills",
     source: "bundle",
   })
 })
@@ -46,6 +47,7 @@ test("an explicit runtime root wins even before files are built", () => {
   }), {
     weftdPath: "/tmp/custom-runtime/bin/weftd",
     webDir: "/tmp/custom-runtime/share/weft-codex/web",
+    skillsDir: "/tmp/custom-runtime/share/weft-codex/skills",
     source: "override",
   })
 })
@@ -62,6 +64,7 @@ test("a source checkout prefers the incrementally built debug daemon", () => {
   }), {
     weftdPath: "/workspace/target/debug/weftd",
     webDir: "/workspace/crates/daemon/web",
+    skillsDir: "/workspace/skills",
     source: "source",
   })
 })

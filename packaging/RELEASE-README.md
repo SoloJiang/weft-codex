@@ -38,3 +38,17 @@ CDP 和 weftd 都只监听 loopback。当前 Codex 发行版阻止本地 iframe 
 
 Host 不是第二个 App，也不复制、修改或重签官方 Codex。若未来通过正式渠道分发
 Host 二进制，仍需独立完成 Developer ID 签名和 notarization。
+
+## Product skills
+
+Runtime packages ship Codex skills under `share/weft-codex/skills/`.
+`./install.sh`, `weft-codex doctor`, and normal `weft-codex` starts sync those
+skills into `$CODEX_HOME/skills` (default `~/.codex/skills`). Managed copies are
+marked with `.weft-managed` and refresh only when the package skill `version`
+changes (or when you pass `--force`).
+
+```sh
+weft-codex install-skills          # explicit refresh
+weft-codex install-skills --force  # overwrite a local non-managed fork
+```
+

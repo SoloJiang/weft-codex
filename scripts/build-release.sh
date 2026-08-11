@@ -56,13 +56,20 @@ bun build "$PROJECT_ROOT/launcher/src/cli.ts" \
 
 RUNTIME_NAME="weft-codex-$VERSION-macos-$PACKAGE_ARCH"
 RUNTIME_ROOT="$STAGING_DIR/$RUNTIME_NAME"
-mkdir -p "$RUNTIME_ROOT/bin" "$RUNTIME_ROOT/libexec" "$RUNTIME_ROOT/share/weft-codex/web"
+mkdir -p "$RUNTIME_ROOT/bin" "$RUNTIME_ROOT/libexec" \
+  "$RUNTIME_ROOT/share/weft-codex/web" \
+  "$RUNTIME_ROOT/share/weft-codex/skills"
 install -m 755 "$STAGING_DIR/weft-codex" "$RUNTIME_ROOT/bin/weft-codex"
 install -m 755 "$PROJECT_ROOT/target/release/weftd" "$RUNTIME_ROOT/bin/weftd"
 install -m 755 "$PROJECT_ROOT/packaging/install.sh" "$RUNTIME_ROOT/install.sh"
 install -m 755 "$PROJECT_ROOT/packaging/weft-codex-wrapper" \
   "$RUNTIME_ROOT/libexec/weft-codex-wrapper"
 cp -R "$PROJECT_ROOT/crates/daemon/web/." "$RUNTIME_ROOT/share/weft-codex/web/"
+if [ ! -d "$PROJECT_ROOT/skills" ]; then
+  echo "Missing product skills directory: $PROJECT_ROOT/skills" >&2
+  exit 1
+fi
+cp -R "$PROJECT_ROOT/skills/." "$RUNTIME_ROOT/share/weft-codex/skills/"
 install -m 644 "$PROJECT_ROOT/packaging/RELEASE-README.md" "$RUNTIME_ROOT/README.md"
 printf '{\n  "version": "%s",\n  "build": "%s",\n  "platform": "macos",\n  "architecture": "%s"\n}\n' \
   "$VERSION" "$BUILD_NUMBER" "$PACKAGE_ARCH" > "$RUNTIME_ROOT/manifest.json"

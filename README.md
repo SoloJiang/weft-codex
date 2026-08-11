@@ -188,6 +188,24 @@ The CLI is a headless lifecycle owner: it starts Codex and weftd, probes rendere
 compatibility, mounts the Weft surfaces, and cleans up the processes and temporary
 renderer state it created.
 
+## Product skills
+
+weft-codex ships Codex skills with the runtime (today: `weft-derive-test-cases`).
+They are installed into `$CODEX_HOME/skills` automatically by:
+
+- `./install.sh` / package upgrades
+- `weft-codex doctor`
+- normal `weft-codex` / `weft-codex attach` starts
+
+Managed copies are marked with `.weft-managed` and refresh only when the
+package skill frontmatter `version` changes. A local non-managed fork is left alone unless you force
+it:
+
+```sh
+weft-codex install-skills
+weft-codex install-skills --force
+```
+
 ## Development
 
 ```sh

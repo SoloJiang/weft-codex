@@ -1,5 +1,6 @@
 ---
 name: weft-derive-test-cases
+version: 1
 description: Use when deriving or revising an issue's test cases in weft-codex — a draft → enrich → independent adversarial review → clarify → finalize workflow, published as a versioned `test_cases` artifact through the weft MCP tools. Also use when the human edits the document and asks you to carry their version forward.
 ---
 

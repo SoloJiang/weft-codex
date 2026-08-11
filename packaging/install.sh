@@ -20,6 +20,7 @@ for required_path in \
   bin/weft-codex \
   bin/weftd \
   share/weft-codex/web/index.html \
+  share/weft-codex/skills/weft-derive-test-cases/SKILL.md \
   libexec/weft-codex-wrapper
 do
   if [ ! -e "$PACKAGE_ROOT/$required_path" ]; then
@@ -59,11 +60,14 @@ fi
 ln -sfn "releases/$RELEASE_ID" "$RUNTIME_BASE/current"
 install -m 755 "$RELEASE_ROOT/libexec/weft-codex-wrapper" "$PREFIX/bin/weft-codex"
 
+# doctor also refreshes product skills into $CODEX_HOME/skills so upgrades
+# carry the runtime's SKILL.md without a separate install step.
 "$PREFIX/bin/weft-codex" doctor >/dev/null
 
 echo "Installed weft-codex:"
 echo "  command: $PREFIX/bin/weft-codex"
 echo "  runtime: $RELEASE_ROOT"
+echo "  skills:  synced into ${CODEX_HOME:-$HOME/.codex}/skills on doctor/start"
 case ":$PATH:" in
   *":$PREFIX/bin:"*) ;;
   *) echo "  PATH: add $PREFIX/bin to your shell PATH" ;;
