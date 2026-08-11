@@ -166,6 +166,23 @@ weft-codex CLI
 CLI 是无界面的生命周期管理器：负责启动 Codex 与 weftd、探测 renderer 兼容性、
 挂载 Weft 表面，并在退出时清理自己创建的进程和临时 renderer 状态。
 
+## 产品 Skill
+
+weft-codex 会把产品 skill（当前是 `weft-derive-test-cases`）随 runtime 一起交付。
+以下路径会自动同步到 `$CODEX_HOME/skills`：
+
+- `./install.sh` / 版本升级
+- `weft-codex doctor`
+- 正常启动 `weft-codex` / `weft-codex attach`
+
+托管副本带 `.weft-managed` 标记；runtime 内容变化时自动刷新。若本地有未托管的修改，
+默认保留，需要时可强制覆盖：
+
+```sh
+weft-codex install-skills
+weft-codex install-skills --force
+```
+
 ## 开发
 
 ```sh

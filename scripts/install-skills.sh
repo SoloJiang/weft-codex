@@ -1,23 +1,22 @@
 #!/bin/sh
-# Install weft-codex's Codex skills into the user's Codex home.
+# Sync weft-codex product skills into the user's Codex home.
 #
-# Skills live in the user's Codex config, not in weft-codex's own prefix, so
-# this is deliberately a separate, explicit step rather than something the
-# launcher does behind your back on startup.
+# Preferred path: `weft-codex doctor` / `weft-codex` / package install.sh already
+# refresh managed skills from the runtime package. This script remains for
+# source checkouts and explicit force reinstalls.
 #
-#   scripts/install-skills.sh            # install, refusing to clobber edits
-#   scripts/install-skills.sh --force    # overwrite local modifications
+#   scripts/install-skills.sh            # install/update managed skills
+#   scripts/install-skills.sh --force    # overwrite local non-managed copies
 #   CODEX_HOME=/tmp/x scripts/install-skills.sh
 set -eu
 
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 PROJECT_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
-SOURCE_DIR="$PROJECT_ROOT/skills"
 
-FORCE=0
+FORCE_ARGS=
 for arg in "$@"; do
   case "$arg" in
-    --force) FORCE=1 ;;
+    --force) FORCE_ARGS=--force ;;
     *)
       echo "install-skills: unknown argument: $arg" >&2
       exit 2
@@ -25,42 +24,21 @@ for arg in "$@"; do
   esac
 done
 
-if [ ! -d "$SOURCE_DIR" ]; then
-  echo "install-skills: no skills/ directory at $SOURCE_DIR" >&2
-  exit 1
+if [ -x "$PROJECT_ROOT/launcher/dist/cli.js" ] || [ -f "$PROJECT_ROOT/launcher/src/cli.ts" ]; then
+  if [ ! -d "$PROJECT_ROOT/launcher/node_modules" ]; then
+    pnpm --dir "$PROJECT_ROOT/launcher" install --frozen-lockfile >/dev/null
+  fi
+  if [ ! -d "$PROJECT_ROOT/launcher/dist" ]; then
+    pnpm --dir "$PROJECT_ROOT/launcher" build >/dev/null
+  fi
+  exec node "$PROJECT_ROOT/launcher/dist/cli.js" install-skills \
+    --skills-dir="$PROJECT_ROOT/skills" \
+    ${FORCE_ARGS}
 fi
 
-CODEX_HOME=${CODEX_HOME:-"$HOME/.codex"}
-TARGET_DIR="$CODEX_HOME/skills"
-mkdir -p "$TARGET_DIR"
+if command -v weft-codex >/dev/null 2>&1; then
+  exec weft-codex install-skills --skills-dir="$PROJECT_ROOT/skills" ${FORCE_ARGS}
+fi
 
-installed=0
-skipped=0
-for skill_path in "$SOURCE_DIR"/*/; do
-  [ -d "$skill_path" ] || continue
-  skill=$(basename "$skill_path")
-  source_file="$skill_path/SKILL.md"
-  if [ ! -f "$source_file" ]; then
-    echo "install-skills: $skill has no SKILL.md, skipping" >&2
-    continue
-  fi
-  target_file="$TARGET_DIR/$skill/SKILL.md"
-
-  # Only refuse when the installed copy differs from ours *and* the caller did
-  # not ask for it: an identical file is a no-op, not a conflict.
-  if [ -f "$target_file" ] && [ "$FORCE" -eq 0 ]; then
-    if ! cmp -s "$source_file" "$target_file"; then
-      echo "install-skills: $skill differs from the installed copy; re-run with --force to overwrite" >&2
-      skipped=$((skipped + 1))
-      continue
-    fi
-  fi
-
-  mkdir -p "$TARGET_DIR/$skill"
-  cp "$source_file" "$target_file"
-  installed=$((installed + 1))
-  echo "install-skills: installed $skill -> $target_file"
-done
-
-echo "install-skills: $installed installed, $skipped skipped"
-[ "$skipped" -eq 0 ] || exit 3
+echo "install-skills: neither launcher build output nor weft-codex is available" >&2
+exit 1

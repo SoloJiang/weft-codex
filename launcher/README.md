@@ -38,9 +38,10 @@ pnpm attach -- --endpoint=http://127.0.0.1:9224
 `weftd-url`、`weftd-path`、`web-dir`、`weft-home`、`web-url`、`target-url`、
 `mode=work|codex|weft`。`--once` 只做一次注入验收并立即清理。
 
-发行包会优先从自身 `bin/ + share/weft-codex/web/` 解析 runtime，不依赖源码
-checkout；开发态才回退到仓库的 `target/` 与 `crates/daemon/web/`。Host 只是
-后台启动与注入进程，不提供第二个 App 表面。
+发行包会优先从自身 `bin/ + share/weft-codex/web/ + share/weft-codex/skills/` 解析
+runtime，不依赖源码 checkout；开发态才回退到仓库的 `target/`、`crates/daemon/web/`
+与 `skills/`。Host 在 doctor/start/attach 时把产品 skill 同步进 `$CODEX_HOME/skills`，
+升级 runtime 后会自动刷新托管副本。Host 只是后台启动与注入进程，不提供第二个 App 表面。
 
 任何 base/additive capability 失败都会进入 safe mode；模式切换器不匹配时只降级为
 additive，并保留自有 Weft 入口。只有 iframe 被当前发行版 CSP 阻止时，Host 才对
