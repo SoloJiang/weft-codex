@@ -105,6 +105,7 @@ test("dispose also removes the injected roots and stylesheet", () => {
   const source = buildRendererAgentSource(baseConfig)
   assert.match(source, /if \(state\.sidebarRoot\) state\.sidebarRoot\.remove\(\)/)
   assert.match(source, /if \(state\.workspaceRoot\) state\.workspaceRoot\.remove\(\)/)
+  assert.match(source, /if \(state\.modalRoot\) state\.modalRoot\.remove\(\)/)
   assert.match(source, /getElementById\(STYLE_ID\)[\s\S]{0,60}style\.remove\(\)/)
 })
 
@@ -114,5 +115,31 @@ test("installing twice disposes the previous agent first", () => {
   assert.match(
     source,
     /const previous = window\[GLOBAL_KEY\];[\s\S]{0,160}previous\.dispose\(\)/,
+  )
+})
+
+test("dialog actions use a dedicated host-level modal surface", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(source, /message\.action === "dialog\.present"/)
+  assert.match(source, /message\.action === "dialog\.mounted"/)
+  assert.match(source, /message\.action === "dialog\.dismiss"/)
+  assert.match(source, /root\.id = MODAL_ROOT_ID/)
+  assert.match(source, /createFrame\("modal"\)/)
+  assert.match(source, /#weft-codex-modal-root \{[\s\S]*?position: fixed;[\s\S]*?inset: 0;/)
+  assert.match(source, /#weft-codex-modal-root\[data-open="true"\]/)
+  assert.match(source, /#weft-codex-modal-root > iframe/)
+  assert.match(source, /background: transparent !important/)
+  assert.match(source, /frame === state\.modalFrame && mountDialog\(\)/)
+  assert.match(source, /if \(frame === state\.modalFrame\) postDialogState\(\)/)
+})
+
+test("dialog presentation never reparents or restyles the workspace surface", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.doesNotMatch(source, /data-weft-codex-dialog/)
+  assert.doesNotMatch(source, /function setDialogOpen/)
+  assert.doesNotMatch(source, /weft-codex-dialog-main-fill/)
+  assert.doesNotMatch(
+    source,
+    /#weft-codex-workspace-root\s*\{[^}]*position:\s*fixed/s,
   )
 })

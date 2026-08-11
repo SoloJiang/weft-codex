@@ -30,8 +30,10 @@ export interface RendererAgentStatus {
   cspBypass: boolean
   sidebarMounted: boolean
   workspaceMounted: boolean
+  modalMounted: boolean
   sidebarReady: boolean
   workspaceReady: boolean
+  modalReady: boolean
   nativeModeSwitcher: boolean
 }
 
@@ -103,8 +105,10 @@ function parseAgentStatus(value: unknown): RendererAgentStatus | null {
     candidate.cspBypass,
     candidate.sidebarMounted,
     candidate.workspaceMounted,
+    candidate.modalMounted,
     candidate.sidebarReady,
     candidate.workspaceReady,
+    candidate.modalReady,
     candidate.nativeModeSwitcher,
   ]
   if (booleans.some((value) => typeof value !== "boolean")) return null
@@ -148,7 +152,7 @@ async function waitForReady(session: CdpSession, timeoutMs: number): Promise<Ren
       // A renderer reload briefly has no execution context. Keep waiting for
       // the document-start agent in the new document.
     }
-    if (latest?.sidebarReady && latest.workspaceReady) return latest
+    if (latest?.sidebarReady && latest.workspaceReady && latest.modalReady) return latest
     await new Promise((resolve) => setTimeout(resolve, 120))
   }
   return latest
@@ -347,7 +351,7 @@ class AttachedRenderer {
     })
 
     let status = await waitForReady(this.session, 4500)
-    if (!status?.sidebarReady || !status.workspaceReady) {
+    if (!status?.sidebarReady || !status.workspaceReady || !status.modalReady) {
       options.onWarning?.("Local iframe handshake failed; enabling dedicated-instance CSP compatibility mode")
       this.cspBypass = true
       await this.session.send("Page.setBypassCSP", { enabled: true })
@@ -366,7 +370,7 @@ class AttachedRenderer {
       status = await waitForReady(this.session, 8000)
     }
 
-    if (!status?.sidebarReady || !status.workspaceReady) {
+    if (!status?.sidebarReady || !status.workspaceReady || !status.modalReady) {
       await this.disposeAgent()
       return {
         target: this.publicTarget(),

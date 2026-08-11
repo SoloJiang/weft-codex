@@ -185,4 +185,18 @@ export type DialogState =
   | { type: "message"; target: "lead" | "task"; id: number; intent: MessageIntent }
   | null
 
+export type ActiveDialogState = Exclude<DialogState, null>
+
+export type DialogSubmission =
+  | { type: "workspace"; name: string }
+  | { type: "issue"; title: string; kind: IssueKind }
+  | { type: "repositories"; paths: string[] }
+  | {
+      type: "message"
+      target: "lead" | "task"
+      id: number
+      text: string
+      intent: MessageIntent
+    }
+
 export type ToastKind = "info" | "success" | "error"

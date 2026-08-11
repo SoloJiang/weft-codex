@@ -4,6 +4,7 @@ export type HostMode = "work" | "codex" | "weft"
 
 const SIDEBAR_ROOT_ID = "weft-codex-sidebar-root"
 const WORKSPACE_ROOT_ID = "weft-codex-workspace-root"
+const MODAL_ROOT_ID = "weft-codex-modal-root"
 const NATIVE_CHECK_ATTR = "data-weft-codex-native-mode-check"
 
 export interface RendererAgentConfig {
@@ -62,6 +63,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
     const allowedTokens = ${serializedTokens};
     const SIDEBAR_ROOT_ID = "weft-codex-sidebar-root";
     const WORKSPACE_ROOT_ID = "weft-codex-workspace-root";
+    const MODAL_ROOT_ID = "weft-codex-modal-root";
     const STYLE_ID = "weft-codex-host-style";
     const MODE_ITEM_ATTR = "data-weft-codex-mode-item";
     const NATIVE_CHECK_ATTR = "data-weft-codex-native-mode-check";
@@ -79,6 +81,10 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       workspaceRoot: null,
       sidebarFrame: null,
       workspaceFrame: null,
+      modalRoot: null,
+      modalFrame: null,
+      dialogState: null,
+      modalVisible: false,
       modeButton: null,
       savedModeButton: null,
       mutationObserver: null,
@@ -214,6 +220,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         state.mode = "weft";
         if (state.modeButton) applyWeftModeButton(state.modeButton);
       } else {
+        dismissDialog();
         state.mode = nextMode;
         state.nativeMode = nextMode;
         state.view = "workspace";
@@ -246,13 +253,93 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
     function createFrame(surface) {
       const frame = document.createElement("iframe");
       frame.dataset.weftCodexSurface = surface;
-      frame.title = surface === "sidebar" ? "Workspace navigation" : "Workspace";
+      if (surface === "sidebar") frame.title = "Workspace navigation";
+      else if (surface === "modal") frame.title = "Dialog";
+      else frame.title = "Workspace";
       frame.src = surfaceUrl(surface);
       frame.referrerPolicy = "no-referrer";
       frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
       frame.setAttribute("allow", "clipboard-read; clipboard-write");
-      frame.addEventListener("load", () => publishContextSoon());
+      frame.addEventListener("load", () => {
+        if (surface === "modal") {
+          state.modalVisible = false;
+          syncModalRoot();
+        }
+        publishContextSoon();
+      });
       return frame;
+    }
+
+    function isDialogState(value) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+      if (value.type === "workspace" || value.type === "issue" || value.type === "repositories") {
+        return true;
+      }
+      if (value.type !== "message") return false;
+      if (value.target !== "lead" && value.target !== "task") return false;
+      if (value.intent !== "message" && value.intent !== "continue") return false;
+      return Number.isInteger(value.id) && value.id > 0;
+    }
+
+    function syncModalRoot() {
+      const root = state.modalRoot;
+      if (!(root instanceof HTMLElement)) return;
+      const open = Boolean(state.modalVisible && state.dialogState);
+      root.dataset.open = open ? "true" : "false";
+      root.setAttribute("aria-hidden", open ? "false" : "true");
+    }
+
+    function ensureModalRoot() {
+      let root = state.modalRoot;
+      if (!(root instanceof HTMLElement)) {
+        root = document.createElement("div");
+        root.id = MODAL_ROOT_ID;
+        root.dataset.weftCodexHostSurface = "modal";
+        root.dataset.open = "false";
+        root.setAttribute("aria-hidden", "true");
+        const frame = createFrame("modal");
+        root.append(frame);
+        state.modalRoot = root;
+        state.modalFrame = frame;
+      }
+      const parent = document.body || document.documentElement;
+      if (root.parentElement !== parent) parent.append(root);
+      syncModalRoot();
+      return true;
+    }
+
+    function postDialogState() {
+      const frame = state.modalFrame;
+      if (!(frame instanceof HTMLIFrameElement) || !frame.contentWindow) return;
+      frame.contentWindow.postMessage({
+        source: "weft-codex-host",
+        type: "weft:dialog-state",
+        payload: state.dialogState,
+      }, childOrigin);
+    }
+
+    function presentDialog(dialog) {
+      if (!isDialogState(dialog)) return false;
+      ensureModalRoot();
+      state.dialogState = dialog;
+      state.modalVisible = false;
+      syncModalRoot();
+      postDialogState();
+      return true;
+    }
+
+    function mountDialog() {
+      if (!state.dialogState) return false;
+      state.modalVisible = true;
+      syncModalRoot();
+      return true;
+    }
+
+    function dismissDialog() {
+      state.modalVisible = false;
+      state.dialogState = null;
+      syncModalRoot();
+      postDialogState();
     }
 
     function createFallbackButton() {
@@ -325,7 +412,8 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
           width: 100%;
         }
         #${SIDEBAR_ROOT_ID} > iframe,
-        #${WORKSPACE_ROOT_ID} > iframe {
+        #${WORKSPACE_ROOT_ID} > iframe,
+        #${MODAL_ROOT_ID} > iframe {
           width: 100%;
           height: 100%;
           min-width: 0;
@@ -346,12 +434,36 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
           overflow: hidden;
           background: var(--color-token-main-surface-primary);
         }
+        /* Dialogs live in a third host-level surface. Sidebar and workspace
+           never move or change opacity, so the scrim covers the real complete
+           window without replacing either underlying surface. */
+        #${MODAL_ROOT_ID} {
+          position: fixed;
+          inset: 0;
+          z-index: var(--weft-layer-modal, 10000);
+          visibility: hidden;
+          pointer-events: none;
+        }
+        #${MODAL_ROOT_ID}[data-open="true"] {
+          visibility: visible;
+          pointer-events: auto;
+        }
+        #${MODAL_ROOT_ID} > iframe {
+          display: block;
+          background: transparent !important;
+          color-scheme: normal !important;
+        }
         /* Tier 2 only. Every rule that hides or reflows native chrome is gated
            on tier="weft-mode"; a failed subtractive probe leaves the host UI
            untouched instead of hiding it (spec §7.5 fail-open). */
         html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] [data-app-action-sidebar-scroll] {
           gap: 0 !important;
           overflow: hidden !important;
+          background: transparent !important;
+        }
+        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] #${SIDEBAR_ROOT_ID},
+        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] #${SIDEBAR_ROOT_ID} > iframe {
+          background: transparent !important;
         }
         html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] [data-weft-codex-native-header-action] {
           display: none !important;
@@ -573,6 +685,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
     function frameForSource(source) {
       if (state.sidebarFrame && source === state.sidebarFrame.contentWindow) return state.sidebarFrame;
       if (state.workspaceFrame && source === state.workspaceFrame.contentWindow) return state.workspaceFrame;
+      if (state.modalFrame && source === state.modalFrame.contentWindow) return state.modalFrame;
       return null;
     }
 
@@ -589,6 +702,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       if (state.disposed) return;
       postContext(state.sidebarFrame);
       postContext(state.workspaceFrame);
+      postContext(state.modalFrame);
     }
 
     function publishContextSoon() {
@@ -652,12 +766,28 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       if (message.type === "weft:host-context-request") {
         state.readyFrames.add(frame.dataset.weftCodexSurface || "unknown");
         postContext(frame, event.origin);
+        if (frame === state.modalFrame) postDialogState();
         notifyHost("frame.ready", { surface: frame.dataset.weftCodexSurface || "unknown" });
         return;
       }
       if (message.type !== "weft:host-action" || typeof message.requestId !== "string") return;
       if (message.action === "workspace.show") {
         setView("workspace");
+        actionResult(frame, message.requestId, true);
+        return;
+      }
+      if (message.action === "dialog.present") {
+        const accepted = presentDialog(message.dialog);
+        actionResult(frame, message.requestId, accepted, accepted ? undefined : "invalid-dialog");
+        return;
+      }
+      if (message.action === "dialog.mounted") {
+        const accepted = frame === state.modalFrame && mountDialog();
+        actionResult(frame, message.requestId, accepted, accepted ? undefined : "invalid-modal-surface");
+        return;
+      }
+      if (message.action === "dialog.dismiss") {
+        dismissDialog();
         actionResult(frame, message.requestId, true);
         return;
       }
@@ -703,6 +833,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       installStyles();
       ensureSidebarRoot();
       ensureWorkspaceRoot();
+      ensureModalRoot();
       const nextModeButton = modeButton();
       if (state.modeButton !== nextModeButton) {
         restoreModeButton();
@@ -755,8 +886,11 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
 
     function reloadFrames() {
       state.readyFrames.clear();
+      state.modalVisible = false;
+      syncModalRoot();
       if (state.sidebarFrame) state.sidebarFrame.src = surfaceUrl("sidebar");
       if (state.workspaceFrame) state.workspaceFrame.src = surfaceUrl("workspace");
+      if (state.modalFrame) state.modalFrame.src = surfaceUrl("modal");
     }
 
     function setCspBypass(enabled) {
@@ -775,8 +909,10 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         cspBypass: state.cspBypass,
         sidebarMounted: Boolean(state.sidebarRoot && state.sidebarRoot.isConnected),
         workspaceMounted: Boolean(state.workspaceRoot && state.workspaceRoot.isConnected),
+        modalMounted: Boolean(state.modalRoot && state.modalRoot.isConnected),
         sidebarReady: state.readyFrames.has("sidebar"),
         workspaceReady: state.readyFrames.has("workspace"),
+        modalReady: state.readyFrames.has("modal"),
         nativeModeSwitcher: Boolean(state.modeButton),
       };
     }
@@ -795,6 +931,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       restoreModeButton();
       if (state.sidebarRoot) state.sidebarRoot.remove();
       if (state.workspaceRoot) state.workspaceRoot.remove();
+      if (state.modalRoot) state.modalRoot.remove();
       const style = document.getElementById(STYLE_ID);
       if (style) style.remove();
       const root = document.documentElement;

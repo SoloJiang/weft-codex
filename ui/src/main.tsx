@@ -1,8 +1,9 @@
 import { createRoot } from "react-dom/client"
 
 import App from "@/App"
+import ModalApp from "@/ModalApp"
 import SidebarApp from "@/SidebarApp"
-import { useHostContext } from "@/host-context"
+import { hasRequiredHostTokens, useHostContext } from "@/host-context"
 import { I18nProvider } from "@/i18n"
 import { readUiSurface } from "@/surface"
 import "@/index.css"
@@ -15,6 +16,7 @@ function Root() {
   let content = <App />
   if (surface === "sidebar") content = <SidebarApp hostContext={context} />
   if (surface === "workspace") content = <App embedded />
+  if (surface === "modal") content = <ModalApp hostContextReady={hasRequiredHostTokens(context)} />
   return (
     <I18nProvider lang={lang}>
       {content}
