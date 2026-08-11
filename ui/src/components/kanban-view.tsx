@@ -165,17 +165,20 @@ function IssueBoardCardView({
           <ThreadLink
             threadId={entry.issue.lead_codex_thread_id}
             onError={onError}
-            label={t("dir.openThread")}
+            label={t("kanban.openLead", { title: entry.issue.title })}
+            pendingLabel={t("loading.openingThread")}
             className="issue-board-lead-link"
+            iconOnly
           />
         ) : (
           <AsyncButton
             variant="ghost"
             className="issue-board-lead-link"
-            label={t("issue.spawnLead")}
+            label={t("kanban.startLead", { title: entry.issue.title })}
             pendingLabel={t("loading.startingLead")}
             onAction={() => onOpenLead(entry)}
             onError={onError}
+            iconOnly
           >
             <Play aria-hidden="true" />
           </AsyncButton>
