@@ -43,8 +43,9 @@ Host 二进制，仍需独立完成 Developer ID 签名和 notarization。
 
 Runtime packages ship Codex skills under `share/weft-codex/skills/`.
 `./install.sh`, `weft-codex doctor`, and normal `weft-codex` starts sync those
-skills into `$CODEX_HOME/skills` (default `~/.codex/skills`) and refresh them
-when you upgrade weft-codex. Managed copies are marked with `.weft-managed`.
+skills into `$CODEX_HOME/skills` (default `~/.codex/skills`). Managed copies are
+marked with `.weft-managed` and refresh only when the package skill `version`
+changes (or when you pass `--force`).
 
 ```sh
 weft-codex install-skills          # explicit refresh

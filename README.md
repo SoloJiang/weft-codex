@@ -197,8 +197,8 @@ They are installed into `$CODEX_HOME/skills` automatically by:
 - `weft-codex doctor`
 - normal `weft-codex` / `weft-codex attach` starts
 
-Managed copies are marked with `.weft-managed` and refresh when the runtime
-skill content changes. A local non-managed fork is left alone unless you force
+Managed copies are marked with `.weft-managed` and refresh only when the
+package skill frontmatter `version` changes. A local non-managed fork is left alone unless you force
 it:
 
 ```sh

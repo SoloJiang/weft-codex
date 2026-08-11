@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto"
 import { constants as fsConstants } from "node:fs"
 import {
   access,
@@ -31,6 +30,8 @@ export interface SkillSyncOptions {
 export interface SkillSyncEntry {
   name: string
   action: "installed" | "updated" | "unchanged" | "skipped"
+  version?: string
+  previousVersion?: string
   reason?: string
 }
 
@@ -48,8 +49,51 @@ export function defaultCodexSkillsDir(codexHome = process.env.CODEX_HOME): strin
   return path.join(codexHome && codexHome.length > 0 ? codexHome : path.join(homedir(), ".codex"), "skills")
 }
 
-function contentHash(contents: string): string {
-  return createHash("sha256").update(contents).digest("hex")
+/**
+ * Read the product skill version from YAML frontmatter.
+ *
+ * Version is intentional, not content-derived: we only refresh a managed skill
+ * when this field changes. That keeps day-to-day file churn from thrashing the
+ * user's Codex home.
+ */
+export function parseSkillVersion(contents: string): string | null {
+  if (!contents.startsWith("---\n") && !contents.startsWith("---\r\n")) return null
+  const end = contents.indexOf("\n---", 4)
+  if (end < 0) return null
+  const frontmatter = contents.slice(4, end)
+  for (const rawLine of frontmatter.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line || line.startsWith("#")) continue
+    const match = /^version\s*:\s*(.+)$/.exec(line)
+    if (!match) continue
+    let value = match[1]?.trim() ?? ""
+    if (
+      (value.startsWith("\"") && value.endsWith("\""))
+      || (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1).trim()
+    }
+    return value.length > 0 ? value : null
+  }
+  return null
+}
+
+export function formatManagedMarker(version: string): string {
+  return `version=${version}\n`
+}
+
+export function parseManagedMarker(contents: string): { managed: true; version: string | null } {
+  const first = contents.split(/\r?\n/).map((line) => line.trim()).find((line) => line.length > 0) ?? ""
+  if (!first) return { managed: true, version: null }
+  const prefixed = /^version\s*=\s*(.+)$/i.exec(first)
+  if (prefixed) {
+    const version = prefixed[1]?.trim() ?? ""
+    return { managed: true, version: version.length > 0 ? version : null }
+  }
+  // Legacy hash markers from the first managed-skills cut still mean "we own this".
+  if (/^[a-f0-9]{64}$/i.test(first)) return { managed: true, version: null }
+  // Any other marker body is still treated as managed ownership.
+  return { managed: true, version: first }
 }
 
 async function listSkillNames(
@@ -78,13 +122,42 @@ async function listSkillNames(
   return skills.sort()
 }
 
+async function installSkillFiles(options: {
+  sourceFile: string
+  targetSkillDir: string
+  targetFile: string
+  markerFile: string
+  version: string
+  copyFile: (from: string, to: string) => Promise<void>
+  mkdir: (dirPath: string, options?: { recursive?: boolean }) => Promise<void>
+  writeFile: (filePath: string, contents: string) => Promise<void>
+  readdir: (dirPath: string) => Promise<string[]>
+  rm: (filePath: string, options?: { force?: boolean }) => Promise<void>
+  cleanupExtras: boolean
+}): Promise<void> {
+  await options.mkdir(options.targetSkillDir, { recursive: true })
+  await options.copyFile(options.sourceFile, options.targetFile)
+  await options.writeFile(options.markerFile, formatManagedMarker(options.version))
+  if (!options.cleanupExtras) return
+  try {
+    const children = await options.readdir(options.targetSkillDir)
+    for (const child of children) {
+      if (child === SKILL_FILE || child === MANAGED_MARKER) continue
+      await options.rm(path.join(options.targetSkillDir, child), { force: true })
+    }
+  } catch {
+    // Best-effort cleanup; the skill body is already refreshed.
+  }
+}
+
 /**
  * Install or refresh weft-managed Codex skills.
  *
- * Product skills ship inside the weft-codex runtime. They are copied into the
- * user's Codex home so Desktop can load them, and are refreshed whenever the
- * runtime is upgraded. A `.weft-managed` marker marks ownership; divergent
- * unmarked local copies are left alone unless `force` is set.
+ * Product skills ship inside the weft-codex runtime and are copied into the
+ * user's Codex home so Desktop can load them. Refresh is version-gated: a
+ * managed skill is rewritten only when the package skill's frontmatter
+ * `version` changes (or when `--force` is used). Unmarked local forks are left
+ * alone unless forced.
  */
 export async function ensureManagedSkills(options: SkillSyncOptions): Promise<SkillSyncResult> {
   const sourceDir = path.resolve(options.sourceDir)
@@ -114,7 +187,15 @@ export async function ensureManagedSkills(options: SkillSyncOptions): Promise<Sk
     const targetFile = path.join(targetSkillDir, SKILL_FILE)
     const markerFile = path.join(targetSkillDir, MANAGED_MARKER)
     const sourceContents = await readFileImpl(sourceFile)
-    const sourceDigest = contentHash(sourceContents)
+    const sourceVersion = parseSkillVersion(sourceContents)
+    if (!sourceVersion) {
+      entries.push({
+        name,
+        action: "skipped",
+        reason: "package skill is missing a frontmatter version field",
+      })
+      continue
+    }
 
     let existingContents: string | null = null
     try {
@@ -124,25 +205,31 @@ export async function ensureManagedSkills(options: SkillSyncOptions): Promise<Sk
     }
 
     let managed = false
+    let installedVersion: string | null = null
     try {
-      await readFileImpl(markerFile)
-      managed = true
+      const marker = parseManagedMarker(await readFileImpl(markerFile))
+      managed = marker.managed
+      installedVersion = marker.version
     } catch {
       managed = false
+      installedVersion = null
     }
 
     if (existingContents === null) {
-      await mkdirImpl(targetSkillDir, { recursive: true })
-      await copyFileImpl(sourceFile, targetFile)
-      await writeFileImpl(markerFile, `${sourceDigest}\n`)
-      entries.push({ name, action: "installed" })
-      continue
-    }
-
-    if (existingContents === sourceContents) {
-      // Keep the marker current so upgrades can recognize ownership later.
-      await writeFileImpl(markerFile, `${sourceDigest}\n`)
-      entries.push({ name, action: "unchanged" })
+      await installSkillFiles({
+        sourceFile,
+        targetSkillDir,
+        targetFile,
+        markerFile,
+        version: sourceVersion,
+        copyFile: copyFileImpl,
+        mkdir: mkdirImpl,
+        writeFile: writeFileImpl,
+        readdir: readdirImpl,
+        rm: rmImpl,
+        cleanupExtras: false,
+      })
+      entries.push({ name, action: "installed", version: sourceVersion })
       continue
     }
 
@@ -150,25 +237,51 @@ export async function ensureManagedSkills(options: SkillSyncOptions): Promise<Sk
       entries.push({
         name,
         action: "skipped",
+        version: sourceVersion,
         reason: "local skill differs and is not weft-managed; re-run with --force to overwrite",
       })
       continue
     }
 
-    await mkdirImpl(targetSkillDir, { recursive: true })
-    await copyFileImpl(sourceFile, targetFile)
-    await writeFileImpl(markerFile, `${sourceDigest}\n`)
-    // Drop stale sidecar files only when we own the directory.
-    try {
-      const children = await readdirImpl(targetSkillDir)
-      for (const child of children) {
-        if (child === SKILL_FILE || child === MANAGED_MARKER) continue
-        await rmImpl(path.join(targetSkillDir, child), { force: true })
+    const sameVersion = installedVersion !== null && installedVersion === sourceVersion
+    if (sameVersion && !force) {
+      // Version is the upgrade signal. Content drift at the same version is
+      // left alone so we do not thrash Codex home on every package rebuild.
+      const entry: SkillSyncEntry = {
+        name,
+        action: "unchanged",
+        version: sourceVersion,
       }
-    } catch {
-      // Best-effort cleanup; the skill body is already refreshed.
+      if (installedVersion) entry.previousVersion = installedVersion
+      entries.push(entry)
+      continue
     }
-    entries.push({ name, action: "updated" })
+
+    await installSkillFiles({
+      sourceFile,
+      targetSkillDir,
+      targetFile,
+      markerFile,
+      version: sourceVersion,
+      copyFile: copyFileImpl,
+      mkdir: mkdirImpl,
+      writeFile: writeFileImpl,
+      readdir: readdirImpl,
+      rm: rmImpl,
+      cleanupExtras: true,
+    })
+    const entry: SkillSyncEntry = {
+      name,
+      action: "updated",
+      version: sourceVersion,
+      reason: force && sameVersion
+        ? "forced refresh at the same version"
+        : installedVersion
+          ? `version ${installedVersion} → ${sourceVersion}`
+          : `installed version marker upgraded to ${sourceVersion}`,
+    }
+    if (installedVersion) entry.previousVersion = installedVersion
+    entries.push(entry)
   }
 
   return {

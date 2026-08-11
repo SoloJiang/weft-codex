@@ -175,7 +175,7 @@ weft-codex 会把产品 skill（当前是 `weft-derive-test-cases`）随 runtime
 - `weft-codex doctor`
 - 正常启动 `weft-codex` / `weft-codex attach`
 
-托管副本带 `.weft-managed` 标记；runtime 内容变化时自动刷新。若本地有未托管的修改，
+托管副本带 `.weft-managed` 标记；只有 package skill 的 frontmatter `version` 变化时才刷新。若本地有未托管的修改，
 默认保留，需要时可强制覆盖：
 
 ```sh

@@ -1,7 +1,16 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { ensureManagedSkills } from "./skills.js"
+import {
+  ensureManagedSkills,
+  formatManagedMarker,
+  parseManagedMarker,
+  parseSkillVersion,
+} from "./skills.js"
+
+function skillBody(version: string, body = "body"): string {
+  return `---\nname: demo\nversion: ${version}\ndescription: demo\n---\n\n${body}\n`
+}
 
 function memoryFs(seed: Record<string, string> = {}) {
   const files = new Map(Object.entries(seed))
@@ -71,9 +80,22 @@ function memoryFs(seed: Record<string, string> = {}) {
   }
 }
 
-test("installs missing managed skills", async () => {
+test("parses skill frontmatter versions and managed markers", () => {
+  assert.equal(parseSkillVersion(skillBody("1.2.0")), "1.2.0")
+  assert.equal(parseSkillVersion("# no frontmatter\n"), null)
+  assert.deepEqual(parseManagedMarker(formatManagedMarker("1.2.0")), {
+    managed: true,
+    version: "1.2.0",
+  })
+  assert.deepEqual(parseManagedMarker("deadbeef".repeat(8) + "\n"), {
+    managed: true,
+    version: null,
+  })
+})
+
+test("installs missing managed skills with a version marker", async () => {
   const fs = memoryFs({
-    "/runtime/skills/weft-derive-test-cases/SKILL.md": "# skill v1\n",
+    "/runtime/skills/weft-derive-test-cases/SKILL.md": skillBody("1"),
   })
   const result = await ensureManagedSkills({
     sourceDir: "/runtime/skills",
@@ -81,15 +103,21 @@ test("installs missing managed skills", async () => {
     ...fs,
   })
   assert.deepEqual(result.installed, ["weft-derive-test-cases"])
-  assert.equal(fs.files.get("/home/.codex/skills/weft-derive-test-cases/SKILL.md"), "# skill v1\n")
-  assert.match(fs.files.get("/home/.codex/skills/weft-derive-test-cases/.weft-managed") ?? "", /^[a-f0-9]{64}\n$/)
+  assert.equal(
+    fs.files.get("/home/.codex/skills/weft-derive-test-cases/SKILL.md"),
+    skillBody("1"),
+  )
+  assert.equal(
+    fs.files.get("/home/.codex/skills/weft-derive-test-cases/.weft-managed"),
+    "version=1\n",
+  )
 })
 
-test("updates a weft-managed skill when the runtime package changes", async () => {
+test("updates a managed skill only when the package version changes", async () => {
   const fs = memoryFs({
-    "/runtime/skills/weft-derive-test-cases/SKILL.md": "# skill v2\n",
-    "/home/.codex/skills/weft-derive-test-cases/SKILL.md": "# skill v1\n",
-    "/home/.codex/skills/weft-derive-test-cases/.weft-managed": "old\n",
+    "/runtime/skills/weft-derive-test-cases/SKILL.md": skillBody("2", "new"),
+    "/home/.codex/skills/weft-derive-test-cases/SKILL.md": skillBody("1", "old"),
+    "/home/.codex/skills/weft-derive-test-cases/.weft-managed": "version=1\n",
     "/home/.codex/skills/weft-derive-test-cases/stale-notes.md": "keep me? no\n",
   })
   const result = await ensureManagedSkills({
@@ -98,13 +126,38 @@ test("updates a weft-managed skill when the runtime package changes", async () =
     ...fs,
   })
   assert.deepEqual(result.updated, ["weft-derive-test-cases"])
-  assert.equal(fs.files.get("/home/.codex/skills/weft-derive-test-cases/SKILL.md"), "# skill v2\n")
+  assert.equal(
+    fs.files.get("/home/.codex/skills/weft-derive-test-cases/SKILL.md"),
+    skillBody("2", "new"),
+  )
   assert.equal(fs.files.has("/home/.codex/skills/weft-derive-test-cases/stale-notes.md"), false)
+  assert.equal(
+    fs.files.get("/home/.codex/skills/weft-derive-test-cases/.weft-managed"),
+    "version=2\n",
+  )
+})
+
+test("same version does not thrash content drift", async () => {
+  const fs = memoryFs({
+    "/runtime/skills/weft-derive-test-cases/SKILL.md": skillBody("1", "package body"),
+    "/home/.codex/skills/weft-derive-test-cases/SKILL.md": skillBody("1", "local tweak"),
+    "/home/.codex/skills/weft-derive-test-cases/.weft-managed": "version=1\n",
+  })
+  const result = await ensureManagedSkills({
+    sourceDir: "/runtime/skills",
+    targetDir: "/home/.codex/skills",
+    ...fs,
+  })
+  assert.deepEqual(result.unchanged, ["weft-derive-test-cases"])
+  assert.equal(
+    fs.files.get("/home/.codex/skills/weft-derive-test-cases/SKILL.md"),
+    skillBody("1", "local tweak"),
+  )
 })
 
 test("leaves an unmarked local skill alone unless forced", async () => {
   const fs = memoryFs({
-    "/runtime/skills/weft-derive-test-cases/SKILL.md": "# skill v2\n",
+    "/runtime/skills/weft-derive-test-cases/SKILL.md": skillBody("2"),
     "/home/.codex/skills/weft-derive-test-cases/SKILL.md": "# local fork\n",
   })
   const skipped = await ensureManagedSkills({
@@ -122,19 +175,39 @@ test("leaves an unmarked local skill alone unless forced", async () => {
     ...fs,
   })
   assert.deepEqual(forced.updated, ["weft-derive-test-cases"])
-  assert.equal(fs.files.get("/home/.codex/skills/weft-derive-test-cases/SKILL.md"), "# skill v2\n")
+  assert.equal(
+    fs.files.get("/home/.codex/skills/weft-derive-test-cases/SKILL.md"),
+    skillBody("2"),
+  )
 })
 
-test("identical content is a no-op refresh of the managed marker", async () => {
+test("legacy hash markers are treated as managed and upgraded once", async () => {
   const fs = memoryFs({
-    "/runtime/skills/weft-derive-test-cases/SKILL.md": "# skill v1\n",
-    "/home/.codex/skills/weft-derive-test-cases/SKILL.md": "# skill v1\n",
+    "/runtime/skills/weft-derive-test-cases/SKILL.md": skillBody("1", "fresh"),
+    "/home/.codex/skills/weft-derive-test-cases/SKILL.md": skillBody("1", "stale"),
+    "/home/.codex/skills/weft-derive-test-cases/.weft-managed": `${"ab".repeat(32)}\n`,
   })
   const result = await ensureManagedSkills({
     sourceDir: "/runtime/skills",
     targetDir: "/home/.codex/skills",
     ...fs,
   })
-  assert.deepEqual(result.unchanged, ["weft-derive-test-cases"])
-  assert.match(fs.files.get("/home/.codex/skills/weft-derive-test-cases/.weft-managed") ?? "", /^[a-f0-9]{64}\n$/)
+  assert.deepEqual(result.updated, ["weft-derive-test-cases"])
+  assert.equal(
+    fs.files.get("/home/.codex/skills/weft-derive-test-cases/.weft-managed"),
+    "version=1\n",
+  )
+})
+
+test("package skills without a version are skipped", async () => {
+  const fs = memoryFs({
+    "/runtime/skills/weft-derive-test-cases/SKILL.md": "---\nname: demo\n---\n\nbody\n",
+  })
+  const result = await ensureManagedSkills({
+    sourceDir: "/runtime/skills",
+    targetDir: "/home/.codex/skills",
+    ...fs,
+  })
+  assert.equal(result.skipped.length, 1)
+  assert.match(result.skipped[0]?.reason ?? "", /missing a frontmatter version/)
 })

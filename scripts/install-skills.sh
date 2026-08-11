@@ -2,7 +2,7 @@
 # Sync weft-codex product skills into the user's Codex home.
 #
 # Preferred path: `weft-codex doctor` / `weft-codex` / package install.sh already
-# refresh managed skills from the runtime package. This script remains for
+# refresh managed skills from the runtime package when their version changes. This script remains for
 # source checkouts and explicit force reinstalls.
 #
 #   scripts/install-skills.sh            # install/update managed skills
