@@ -51,6 +51,13 @@ export interface HostContextV1 {
   projectId?: string
   threadId?: string
   sidebarCollapsed: boolean
+  /**
+   * Where the search and inbox entries render. "native" means the host put them
+   * in its own sidebar header; "fallback" means it could not, and the sidebar
+   * must draw its own pair. Absent on hosts that predate the capability, which
+   * read the same as "fallback".
+   */
+  headerActions?: "native" | "fallback"
   security?: {
     cspBypass: boolean
   }
@@ -60,6 +67,10 @@ export type HostAction =
   | { action: "workspace.show" }
   | { action: "thread.open"; threadId: string }
   | { action: "repositories.pick" }
+  | { action: "inbox.count"; count: number }
+
+/** Host → UI, the opposite direction from HostAction: a trigger, not a request. */
+export type HostCommand = "search.open" | "inbox.open"
 
 interface PendingRepositoryAction {
   resolve(paths: string[]): void
@@ -95,6 +106,11 @@ function isHostContext(value: unknown): value is HostContextV1 {
   if (candidate.view !== undefined && candidate.view !== "workspace" && candidate.view !== "thread") return false
   if (candidate.projectId !== undefined && typeof candidate.projectId !== "string") return false
   if (candidate.threadId !== undefined && typeof candidate.threadId !== "string") return false
+  if (
+    candidate.headerActions !== undefined &&
+    candidate.headerActions !== "native" &&
+    candidate.headerActions !== "fallback"
+  ) return false
   if (candidate.security !== undefined) {
     if (!candidate.security || typeof candidate.security !== "object") return false
     if (typeof candidate.security.cspBypass !== "boolean") return false
@@ -160,6 +176,49 @@ export function requestHostAction(action: HostAction): boolean {
 
 export function hasHostBridge(): boolean {
   return Boolean(expectedHostOrigin()) && window.parent !== window
+}
+
+/**
+ * How many things are waiting on the human, published so the host can badge the
+ * entry it renders. One-way: the sidebar owns the number, the host only paints
+ * it, so there is nothing to await and a dropped update self-corrects on the
+ * next board refresh.
+ */
+export function reportInboxCount(count: number): boolean {
+  if (!Number.isFinite(count) || count < 0) return false
+  return requestHostAction({ action: "inbox.count", count: Math.floor(count) })
+}
+
+function isHostCommand(value: unknown): value is HostCommand {
+  return value === "search.open" || value === "inbox.open"
+}
+
+/**
+ * Subscribe to the host's header entries. The buttons live in the host document
+ * because that is where the slot is, but the panels they open belong here —
+ * spec §7.6 keeps the renderer a thin surface agent, not a second renderer of
+ * Weft data.
+ */
+export function useHostCommand(handler: (command: HostCommand) => void): void {
+  const latest = React.useRef(handler)
+  latest.current = handler
+
+  React.useEffect(() => {
+    const hostOrigin = expectedHostOrigin()
+    if (!hostOrigin || window.parent === window) return
+
+    const onMessage = (event: MessageEvent<unknown>) => {
+      if (event.source !== window.parent || event.origin !== hostOrigin) return
+      if (!event.data || typeof event.data !== "object" || Array.isArray(event.data)) return
+      const message = event.data as Record<string, unknown>
+      if (message.source !== "weft-codex-host" || message.type !== "weft:host-command") return
+      if (message.version !== 1 || !isHostCommand(message.command)) return
+      latest.current(message.command)
+    }
+
+    window.addEventListener("message", onMessage)
+    return () => window.removeEventListener("message", onMessage)
+  }, [])
 }
 
 function ensureHostResultListener() {

@@ -287,6 +287,7 @@ html[data-ui-surface="workspace"] .embedded-main {
 }
 
 .sidebar-surface {
+  position: relative;
   height: 100%;
   min-width: 0;
   display: flex;
@@ -312,6 +313,117 @@ html[data-ui-surface="workspace"] .embedded-main {
 
 .sidebar-workspace-select select {
   font-weight: 600;
+}
+
+.sidebar-header-entries {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sidebar-header-entries button[data-active="true"] {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.sidebar-inbox-entry { position: relative; }
+
+.sidebar-inbox-badge {
+  position: absolute;
+  top: -1px;
+  inset-inline-end: -1px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--link);
+  color: var(--vscode-button-foreground, #fff);
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* The panel covers the column rather than pushing it: search and the inbox are
+   momentary, and reflowing the whole tree under them loses the reader's place. */
+.sidebar-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: 8px;
+  background: var(--vscode-sideBar-background, var(--bg));
+}
+
+.sidebar-panel-header {
+  min-height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.sidebar-panel-header h2 {
+  margin: 0;
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sidebar-panel-list {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  align-content: start;
+  gap: 1px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.sidebar-search-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.sidebar-search-field > svg {
+  position: absolute;
+  inset-inline-start: 8px;
+  width: 13px;
+  height: 13px;
+  color: var(--dim);
+  pointer-events: none;
+}
+
+.sidebar-search-field input {
+  width: 100%;
+  padding-inline-start: 26px;
+}
+
+.sidebar-result-row {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+  min-height: 38px;
+  padding: 6px 8px;
+  border-radius: var(--r-md, 6px);
+  text-align: start;
+}
+
+.sidebar-result-row:hover { background: var(--hover); }
+
+.sidebar-result-kind {
+  margin-top: 2px;
+  color: var(--dim);
+  font-size: 9.5px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
 .sidebar-primary-actions { display: grid; gap: 2px; }

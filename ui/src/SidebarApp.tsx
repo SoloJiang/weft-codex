@@ -7,29 +7,46 @@ import {
   Star,
   FileText,
   FolderGit2,
+  Inbox,
   KanbanSquare,
   MessageCircle,
   Plus,
+  Search,
   SquarePen,
+  X,
 } from "lucide-react"
 
 import { api, jsonRequest } from "@/api"
 import { kindLabel, statusLabel } from "@/components/artifact-view"
 import { AsyncButton, openCodexThread } from "@/components/shared"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import type { HostContextV1 } from "@/host-context"
-import { requestHostAction } from "@/host-context"
+import { reportInboxCount, requestHostAction, useHostCommand } from "@/host-context"
 import { useI18n } from "@/i18n"
+import {
+  buildInbox,
+  deliveryFailureKey,
+  searchBoard,
+  type DeliveryFailure,
+  type InboxItem,
+  type SearchHit,
+} from "@/lib/sidebar-entries"
+import { isTypingTarget } from "@/lib/utils"
 import { createSurfaceChannel, type SurfaceMessage } from "@/surface-channel"
 import { readInitialRoute, readInitialWorkspaceId, type SurfaceRoute } from "@/surface"
 import type {
   BoardEntry,
+  Repo,
   ThreadBinding,
   ThreadLocationResponse,
   Workspace,
   ArtifactSummary,
 } from "@/types"
+
+/** Only one of the two header entries can be open; neither is the default. */
+type SidebarPanel = "none" | "search" | "inbox"
 
 const SIDEBAR_EVENT_NAMES = [
   "direction.updated",
@@ -349,12 +366,156 @@ function ArtifactSummaryList({
   )
 }
 
+/**
+ * The same two entries the host renders in its sidebar header, drawn here when
+ * it cannot. The capability must not depend on a host structure we do not own:
+ * the browser path has no host at all, and a Codex release that reshapes the
+ * mode row would otherwise take search and the inbox down with it.
+ */
+function HeaderEntries({
+  inboxCount,
+  panel,
+  onOpen,
+}: {
+  inboxCount: number
+  panel: SidebarPanel
+  onOpen: (panel: SidebarPanel) => void
+}) {
+  const { t } = useI18n()
+  return (
+    <div className="sidebar-header-entries">
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label={t("entries.search")}
+        title={t("entries.search")}
+        data-active={panel === "search" ? "true" : "false"}
+        onClick={() => onOpen("search")}
+      >
+        <Search aria-hidden="true" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="sidebar-inbox-entry"
+        aria-label={inboxCount ? t("entries.inboxCount", { count: inboxCount }) : t("entries.inbox")}
+        title={t("entries.inbox")}
+        data-active={panel === "inbox" ? "true" : "false"}
+        onClick={() => onOpen("inbox")}
+      >
+        <Inbox aria-hidden="true" />
+        {inboxCount ? (
+          <span className="sidebar-inbox-badge" aria-hidden="true">
+            {inboxCount > 99 ? "99+" : inboxCount}
+          </span>
+        ) : null}
+      </Button>
+    </div>
+  )
+}
+
+function SearchPanel({
+  hits,
+  query,
+  onQuery,
+  onOpenHit,
+}: {
+  hits: SearchHit[]
+  query: string
+  onQuery: (value: string) => void
+  onOpenHit: (hit: SearchHit) => void
+}) {
+  const { t } = useI18n()
+  const inputRef = React.useRef<HTMLInputElement>(null)
+
+  React.useEffect(() => { inputRef.current?.focus() }, [])
+
+  const kindLabels: Record<SearchHit["kind"], string> = {
+    issue: t("entries.kind.issue"),
+    direction: t("entries.kind.direction"),
+    artifact: t("entries.kind.artifact"),
+    thread: t("entries.kind.thread"),
+  }
+
+  let results: React.ReactNode = null
+  if (query.trim() && !hits.length) {
+    results = <p className="sidebar-empty" role="status">{t("entries.noMatches")}</p>
+  } else if (hits.length) {
+    results = hits.map((hit) => (
+      <button
+        key={hit.key}
+        type="button"
+        className="sidebar-result-row"
+        onClick={() => onOpenHit(hit)}
+      >
+        <span className="sidebar-result-kind">{kindLabels[hit.kind]}</span>
+        <span>
+          <span className="sidebar-row-title">{hit.title}</span>
+          <span className="sidebar-row-meta">{hit.meta}</span>
+        </span>
+      </button>
+    ))
+  }
+
+  return (
+    <>
+      <div className="sidebar-search-field">
+        <Search aria-hidden="true" />
+        <Input
+          ref={inputRef}
+          type="search"
+          value={query}
+          aria-label={t("entries.searchLabel")}
+          placeholder={t("entries.searchPlaceholder")}
+          onChange={(event) => onQuery(event.target.value)}
+        />
+      </div>
+      <div className="sidebar-panel-list">{results}</div>
+    </>
+  )
+}
+
+function InboxPanel({
+  items,
+  onOpenItem,
+}: {
+  items: InboxItem[]
+  onOpenItem: (item: InboxItem) => void
+}) {
+  const { t } = useI18n()
+  if (!items.length) {
+    return <p className="sidebar-empty" role="status">{t("entries.inboxEmpty")}</p>
+  }
+  return (
+    <div className="sidebar-panel-list">
+      {items.map((item) => (
+        <button
+          key={item.key}
+          type="button"
+          className="sidebar-attention-row"
+          onClick={() => onOpenItem(item)}
+        >
+          <AlertTriangle aria-hidden="true" />
+          <span>
+            <span className="sidebar-row-title">{item.title}</span>
+            <span className="sidebar-row-meta">{item.meta}</span>
+          </span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export default function SidebarApp({ hostContext }: { hostContext: HostContextV1 | null }) {
   const { t, lang } = useI18n()
   const [workspaces, setWorkspaces] = React.useState<Workspace[]>([])
   const [workspaceId, setWorkspaceId] = React.useState<number | null>(readInitialWorkspaceId)
   const [board, setBoard] = React.useState<BoardEntry[]>([])
+  const [repos, setRepos] = React.useState<Repo[]>([])
   const [route, setRoute] = React.useState<SurfaceRoute>(readInitialRoute)
+  const [panel, setPanel] = React.useState<SidebarPanel>("none")
+  const [query, setQuery] = React.useState("")
+  const [failures, setFailures] = React.useState<DeliveryFailure[]>([])
   const [expandedIssueId, setExpandedIssueId] = React.useState<number | null>(null)
   const [resolvedThreads, setResolvedThreads] = React.useState<Map<string, ResolvedThread>>(
     () => new Map(),
@@ -396,9 +557,15 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
   const loadWorkspace = React.useCallback(async (id: number) => {
     const sequence = loadSequence.current + 1
     loadSequence.current = sequence
-    const rows = await api<BoardEntry[]>(`/api/issues?workspace_id=${id}`)
+    // Repositories ride along because workspace search matches on repo name,
+    // which is the one thing the board carries only as an id.
+    const [rows, repoRows] = await Promise.all([
+      api<BoardEntry[]>(`/api/issues?workspace_id=${id}`),
+      api<Repo[]>(`/api/workspaces/${id}/repos`),
+    ])
     if (loadSequence.current !== sequence) return
     setBoard(normalizeBoard(rows))
+    setRepos(repoRows)
   }, [])
 
   React.useEffect(() => {
@@ -413,6 +580,7 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
     if (!workspaceId) {
       loadSequence.current += 1
       setBoard([])
+      setRepos([])
       return
     }
     setLoading(true)
@@ -440,7 +608,37 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
       }, 400)
     }
 
-    for (const name of SIDEBAR_EVENT_NAMES) source.addEventListener(name, scheduleRefresh)
+    // A failed delivery leaves a message sitting on the bus with nothing in the
+    // board to show for it, so the event itself is the only record the human
+    // ever gets. Keep it until they act on it; a refresh will not bring it back.
+    const recordFailure = (event: Event) => {
+      scheduleRefresh(event)
+      if (!(event instanceof MessageEvent) || typeof event.data !== "string") return
+      let payload: unknown
+      try {
+        payload = JSON.parse(event.data)
+      } catch {
+        return
+      }
+      if (!payload || typeof payload !== "object") return
+      const body = payload as Record<string, unknown>
+      if (typeof body.issueId !== "number" || typeof body.party !== "string") return
+      const failure: DeliveryFailure = {
+        issueId: body.issueId,
+        party: body.party,
+        reason: typeof body.reason === "string" ? body.reason : "undelivered",
+      }
+      setFailures((current) => {
+        const key = deliveryFailureKey(failure)
+        if (current.some((existing) => deliveryFailureKey(existing) === key)) return current
+        return [...current, failure]
+      })
+    }
+
+    for (const name of SIDEBAR_EVENT_NAMES) {
+      if (name === "bus.undelivered") source.addEventListener(name, recordFailure)
+      else source.addEventListener(name, scheduleRefresh)
+    }
     return () => {
       window.clearTimeout(timer)
       source.close()
@@ -577,9 +775,83 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
     navigate({ view: "issue", issueId: entry.issue.id })
   }, [navigate, openThread])
 
-  const attentionItems = board.flatMap((entry) => entry.directions
-    .filter((task) => Boolean(task.attention))
-    .map((task) => ({ task, issue: entry.issue })))
+  const deferredQuery = React.useDeferredValue(query)
+  const searchHits = React.useMemo(
+    () => searchBoard(board, repos, deferredQuery),
+    [board, repos, deferredQuery],
+  )
+  const inboxItems = React.useMemo(() => buildInbox(board, failures), [board, failures])
+
+  useHostCommand((command) => {
+    setPanel(command === "search.open" ? "search" : "inbox")
+  })
+
+  // Slash searches whatever frame you are in — the same key the kanban filter
+  // uses. ⌘K is not ours to take: the host binds it to its command menu.
+  React.useEffect(() => {
+    const openSearch = (event: KeyboardEvent) => {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return
+      if (isTypingTarget(event.target)) return
+      event.preventDefault()
+      setPanel("search")
+    }
+    window.addEventListener("keydown", openSearch)
+    return () => window.removeEventListener("keydown", openSearch)
+  }, [])
+
+  // The host paints the badge but never counts: the board lives here.
+  React.useEffect(() => { reportInboxCount(inboxItems.length) }, [inboxItems.length])
+
+  const closePanel = React.useCallback(() => {
+    setPanel("none")
+    setQuery("")
+  }, [])
+
+  const openDirectionThread = React.useCallback((issueId: number, directionId?: number) => {
+    const entry = board.find((candidate) => candidate.issue.id === issueId)
+    setExpandedIssueId(issueId)
+    const binding = entry && directionId !== undefined
+      ? primaryBranch(entry, directionId)
+      : undefined
+    if (binding) {
+      openThread(binding.thread_id)
+      return
+    }
+    navigate({ view: "issue", issueId })
+  }, [board, navigate, openThread])
+
+  const openHit = React.useCallback((hit: SearchHit) => {
+    closePanel()
+    if (hit.threadId) {
+      setExpandedIssueId(hit.issueId)
+      openThread(hit.threadId)
+      return
+    }
+    if (hit.artifactId !== undefined) {
+      navigate({ view: "artifact", issueId: hit.issueId, artifactId: hit.artifactId })
+      return
+    }
+    const entry = board.find((candidate) => candidate.issue.id === hit.issueId)
+    if (entry) {
+      openIssue(entry)
+      return
+    }
+    navigate({ view: "issue", issueId: hit.issueId })
+  }, [board, closePanel, navigate, openIssue, openThread])
+
+  const openInboxItem = React.useCallback((item: InboxItem) => {
+    closePanel()
+    if (item.failureKey) {
+      // Acting on it is the only acknowledgement there is; the bus event will
+      // not fire again for a failure that already happened.
+      setFailures((current) => current.filter(
+        (failure) => deliveryFailureKey(failure) !== item.failureKey,
+      ))
+    }
+    openDirectionThread(item.issueId, item.directionId)
+  }, [closePanel, openDirectionThread])
+
+  const headerActionsAreNative = hostContext?.headerActions === "native"
 
   let issueList: React.ReactNode
   if (loading && !board.length) {
@@ -652,6 +924,9 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
         >
           <Plus aria-hidden="true" />
         </Button>
+        {headerActionsAreNative ? null : (
+          <HeaderEntries inboxCount={inboxItems.length} panel={panel} onOpen={setPanel} />
+        )}
       </div>
 
       <div className="sidebar-primary-actions">
@@ -730,37 +1005,33 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
           ) : null}
         </section>
 
-        {attentionItems.length ? (
-          <section className="sidebar-section" aria-labelledby="sidebar-attention-heading">
-            <div className="sidebar-section-heading">
-              <h2 id="sidebar-attention-heading">{t("sidebar.needsAttention")}</h2>
-              <span>{attentionItems.length}</span>
-            </div>
-            <div className="sidebar-list">
-              {attentionItems.map(({ task, issue }) => (
-                <button
-                  key={task.id}
-                  type="button"
-                  className="sidebar-attention-row"
-                  onClick={() => {
-                    setExpandedIssueId(issue.id)
-                    const entry = board.find((candidate) => candidate.issue.id === issue.id)
-                    const thread = entry ? primaryBranch(entry, task.id) : undefined
-                    if (thread) openThread(thread.thread_id)
-                    else navigate({ view: "issue", issueId: issue.id })
-                  }}
-                >
-                  <AlertTriangle aria-hidden="true" />
-                  <span>
-                    <span className="sidebar-row-title">{task.name}</span>
-                    <span className="sidebar-row-meta">{issue.title}</span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          </section>
-        ) : null}
       </div>
+
+      {panel === "none" ? null : (
+        <section
+          className="sidebar-panel"
+          aria-label={t(panel === "search" ? "entries.search" : "entries.inbox")}
+          onKeyDown={(event) => { if (event.key === "Escape") closePanel() }}
+        >
+          <header className="sidebar-panel-header">
+            <h2>{t(panel === "search" ? "entries.search" : "entries.inbox")}</h2>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={t("entries.close")}
+              title={t("entries.close")}
+              onClick={closePanel}
+            >
+              <X aria-hidden="true" />
+            </Button>
+          </header>
+          {panel === "search" ? (
+            <SearchPanel hits={searchHits} query={query} onQuery={setQuery} onOpenHit={openHit} />
+          ) : (
+            <InboxPanel items={inboxItems} onOpenItem={openInboxItem} />
+          )}
+        </section>
+      )}
 
       {error ? (
         <footer className="sidebar-footer">

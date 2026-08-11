@@ -310,6 +310,27 @@ Work（everyday work）/ Codex 双模式（bundle 实证：`isEverydayWorkMode`�
 - Weft 模式下隐藏 Codex 常规会话列表与无关聊天入口，只保留 workspace /
   issue / kanban / repo map 表面；线程聊天仍使用原生线程视图（唯一不隐藏
   的原生表面）。
+- 侧边栏头部的两个原生 action（搜索 = Command menu、铃铛 = activity view）
+  同属"无关聊天入口"，但**不是删掉了事，而是同位换语义**：隐藏原生两个，
+  在同一槽位放 Weft 自己的搜索与收件箱，按钮克隆自原生控件以继承宿主样式。
+  模式该改变的是能力的**范围**，不是它**存不存在**——头部在模式之间保持
+  同一形状，切模式时不会突然空一块。
+  - 按钮只是触发器：点击 `postMessage` 给 sidebar iframe（`search.open` /
+    `inbox.open`），面板一律由 React 渲染；角标数由 sidebar 上报
+    （`inbox.count`），agent 只负责画那个数字，**从不读原生角标状态**。
+    这条边界就是 §7.6 的"renderer 只做 thin surface agent"。
+  - 搜索范围 = 当前 workspace 的 issue / direction / repo / artifact / 会话，
+    对 `/api/issues` 已返回的 board 做客户端过滤，不新增接口。
+  - 收件箱 = `direction.attention` + `bus.undelivered`。**`bus.parked` 不进
+    收件箱**：它表示人正在该线程上说话、turn 结束会自动 flush，不需要任何人
+    做任何事；把它列出来只会让收件箱塞满"读着读着就自己好了"的条目。
+  - 槽位锚点是 `optional` 而非 `subtractive`：它缺失只应让两个入口改在 Weft
+    sidebar 自己的头部渲染（Host Context 的 `headerActions: "fallback"`），
+    **能力不丢，只降级位置**。浏览器降级路径天然走这一支。
+  - **不要给这两个入口绑快捷键。** 实测宿主已占用 `⌘K` / `⇧⌘P`（Command
+    menu）与 `⌥⌘U`（activity view），且绑在 Electron 菜单 accelerator 层，
+    renderer 大概率收不到、也就拦不掉。Weft 搜索改用 `/` 聚焦。详见
+    `docs/compat/codex-builds.md` §5.10。
 - 线程归属数据化：weftd 创建线程时设置 `threadSource` 并遵循命名规范，
   模式过滤基于 weftd store 中的 issue/direction 归属关系判定，不靠 DOM
   结构猜测。

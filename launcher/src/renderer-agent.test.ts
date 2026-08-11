@@ -77,6 +77,56 @@ test("the additive tier appends a workspace entry instead of taking the sidebar"
   assert.match(source, /html\[data-weft-codex-mode="weft"\]\[data-weft-codex-view="workspace"\] #weft-codex-workspace-root/)
 })
 
+// The native search and activity buttons sit *inside* the mode row, not beside
+// it, so the original markModeHeader loop — which only walked the header's other
+// children — never reached them and both survived into Weft mode.
+test("the native header actions inside the mode row are marked for hiding", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(source, /function actionSlot\(button\)/)
+  assert.match(source, /const slot = actionSlot\(button\);[\s\S]{0,400}weftCodexNativeHeaderAction = ""/)
+  // Ours live in the same slot; marking them would hide what we just injected.
+  assert.match(source, /if \(child\.hasAttribute\(HEADER_ACTION_ATTR\)\) continue/)
+})
+
+// The slot is located by shape because these buttons carry no data-app-action-*
+// attribute and their only label is locale text (build 6321: "Search" /
+// "View activity, needs attention" under an en-GB host).
+test("the action slot is located structurally, never by locale text", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(source, /siblings\.length === 1 \? siblings\[0\] : null/)
+  assert.doesNotMatch(source, /aria-label[^\n]*[Ss]earch/)
+  assert.doesNotMatch(source, /View activity/)
+})
+
+test("the injected Weft entries are gated on both tier and mode", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(
+    source,
+    /html:not\(\[data-weft-codex-tier="weft-mode"\]\) \[data-weft-codex-header-action\],\s*html:not\(\[data-weft-codex-mode="weft"\]\) \[data-weft-codex-header-action\]/,
+  )
+})
+
+// Losing the slot must cost the placement, not the capability: the sidebar
+// draws the same two entries in its own header when this says "fallback".
+test("a missing action slot falls back instead of dropping the entries", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(source, /headerActions: state\.headerActionsMounted \? "native" : "fallback"/)
+  assert.match(source, /removeHeaderActions\(\);\s*state\.headerActionsMounted = false;/)
+})
+
+test("dispose removes the injected header entries", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(source, /restoreModeButton\(\);\s*removeHeaderActions\(\);/)
+})
+
+// The badge is Weft's own count. Accepting it from the workspace frame would
+// give the number two authors racing to set it.
+test("the inbox count is only accepted from the sidebar frame", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(source, /if \(frame !== state\.sidebarFrame\)[\s\S]{0,120}"inbox-count-not-from-sidebar"/)
+  assert.match(source, /"invalid-inbox-count"/)
+})
+
 test("disposing clears the tier attribute it set", () => {
   const source = buildRendererAgentSource(baseConfig)
   assert.match(source, /delete root\.dataset\.weftCodexTier/)
