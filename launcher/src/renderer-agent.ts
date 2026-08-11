@@ -253,9 +253,10 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
     function createFrame(surface) {
       const frame = document.createElement("iframe");
       frame.dataset.weftCodexSurface = surface;
-      if (surface === "sidebar") frame.title = "Workspace navigation";
-      else if (surface === "modal") frame.title = "Dialog";
-      else frame.title = "Workspace";
+      // The child publishes its localized accessible name after receiving the
+      // host locale. Use the product name only during the short handshake so
+      // no user-facing locale string is duplicated in the launcher bundle.
+      frame.title = "Weft";
       frame.src = surfaceUrl(surface);
       frame.referrerPolicy = "no-referrer";
       frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
@@ -771,6 +772,16 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         return;
       }
       if (message.type !== "weft:host-action" || typeof message.requestId !== "string") return;
+      if (message.action === "surface.label") {
+        const label = typeof message.label === "string" ? message.label.trim() : "";
+        if (!label || label.length > 120) {
+          actionResult(frame, message.requestId, false, "invalid-surface-label");
+          return;
+        }
+        frame.title = label;
+        actionResult(frame, message.requestId, true);
+        return;
+      }
       if (message.action === "workspace.show") {
         setView("workspace");
         actionResult(frame, message.requestId, true);

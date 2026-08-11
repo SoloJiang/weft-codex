@@ -29,6 +29,8 @@ function requestId(): string {
 export default function ModalApp({ hostContextReady }: { hostContextReady: boolean }) {
   const dialog = useHostDialogState()
   const { t } = useI18n()
+  const latestT = React.useRef(t)
+  latestT.current = t
   const channel = React.useMemo(createSurfaceChannel, [])
   const pending = React.useRef(new Map<string, PendingSubmission>())
 
@@ -51,12 +53,12 @@ export default function ModalApp({ hostContextReady }: { hostContextReady: boole
     return () => {
       for (const entry of pending.current.values()) {
         window.clearTimeout(entry.timeout)
-        entry.reject(new Error(t("err.unknown")))
+        entry.reject(new Error(latestT.current("err.unknown")))
       }
       pending.current.clear()
       channel?.close()
     }
-  }, [channel, t])
+  }, [channel])
 
   React.useLayoutEffect(() => {
     if (!dialog || !hostContextReady) return

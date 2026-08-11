@@ -133,6 +133,14 @@ test("dialog actions use a dedicated host-level modal surface", () => {
   assert.match(source, /if \(frame === state\.modalFrame\) postDialogState\(\)/)
 })
 
+test("surface iframe labels come from the localized UI", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(source, /message\.action === "surface\.label"/)
+  assert.match(source, /frame\.title = label/)
+  assert.doesNotMatch(source, /frame\.title = "Dialog"/)
+  assert.doesNotMatch(source, /frame\.title = "Workspace navigation"/)
+})
+
 test("dialog presentation never reparents or restyles the workspace surface", () => {
   const source = buildRendererAgentSource(baseConfig)
   assert.doesNotMatch(source, /data-weft-codex-dialog/)
