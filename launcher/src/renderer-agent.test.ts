@@ -142,6 +142,18 @@ test("modal visibility sync does not retrigger the host mutation observer", () =
   assert.doesNotMatch(source, /root\.setAttribute\("aria-hidden", open \? "false" : "true"\)/)
 })
 
+test("an open modal isolates and later restores its host-document background", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(source, /modalBackground: new Map\(\)/)
+  assert.match(source, /if \(open\) isolateModalBackground\(root\)/)
+  assert.match(source, /if \(!sibling\.inert\) sibling\.inert = true/)
+  assert.match(source, /sibling\.setAttribute\("aria-hidden", "true"\)/)
+  assert.match(source, /function restoreModalBackground\(\)/)
+  assert.match(source, /element\.inert = previous\.inert/)
+  assert.match(source, /element\.removeAttribute\("aria-hidden"\)/)
+  assert.match(source, /restoreModalBackground\(\);\s*if \(state\.sidebarRoot\)/)
+})
+
 test("surface iframe labels come from the localized UI", () => {
   const source = buildRendererAgentSource(baseConfig)
   assert.match(source, /message\.action === "surface\.label"/)
