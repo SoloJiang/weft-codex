@@ -58,6 +58,7 @@ export interface HostContextV1 {
 }
 
 export type HostAction =
+  | { action: "surface.label"; label: string }
   | { action: "workspace.show" }
   | { action: "thread.open"; threadId: string }
   | { action: "repositories.pick" }
