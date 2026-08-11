@@ -414,7 +414,6 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
             }}
           >
             <SelectTrigger
-              variant="ghost"
               className="workspace-select-shell"
               id="workspace-select"
               aria-label={t("workspace.label")}

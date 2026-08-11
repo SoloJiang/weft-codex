@@ -13,13 +13,7 @@ import { cn } from "@/lib/utils"
  * box reads as foreign inside it. Radix gives us that shape with the keyboard
  * behaviour — arrows, Home/End, type-ahead, Escape — that a hand-rolled
  * button-and-popover would have to reimplement badly.
- *
- * Two variants because the host does not answer every case: `ghost` matches the
- * host's toolbar triggers, `field` keeps dialog forms legible as forms, where
- * a control with no edge would be hard to find among labels.
  */
-
-type SelectVariant = "ghost" | "field"
 
 function Select({ ...props }: React.ComponentProps<typeof SelectPrimitive.Root>) {
   return <SelectPrimitive.Root data-slot="select" {...props} />
@@ -35,14 +29,12 @@ function SelectValue({ ...props }: React.ComponentProps<typeof SelectPrimitive.V
 
 function SelectTrigger({
   className,
-  variant = "field",
   children,
   ...props
-}: React.ComponentProps<typeof SelectPrimitive.Trigger> & { variant?: SelectVariant }) {
+}: React.ComponentProps<typeof SelectPrimitive.Trigger>) {
   return (
     <SelectPrimitive.Trigger
       data-slot="select-trigger"
-      data-variant={variant}
       className={cn("select-trigger", className)}
       {...props}
     >

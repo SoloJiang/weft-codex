@@ -922,7 +922,6 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
           onValueChange={(value) => selectWorkspace(Number(value))}
         >
           <SelectTrigger
-            variant="ghost"
             className="sidebar-workspace-select"
             id="sidebar-workspace-select"
             aria-label={t("workspace.label")}

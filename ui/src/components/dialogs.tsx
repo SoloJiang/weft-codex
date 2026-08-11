@@ -199,7 +199,7 @@ function IssueDialog({
         </Field>
         <Field label={t("issue.kindLabel")} htmlFor="issue-kind">
           <Select value={kind || undefined} onValueChange={(value) => setKind(value as IssueKind)}>
-            <SelectTrigger id="issue-kind">
+            <SelectTrigger id="issue-kind" className="w-full">
               <SelectValue placeholder={t("issue.kindPlaceholder")} />
             </SelectTrigger>
             <SelectContent>

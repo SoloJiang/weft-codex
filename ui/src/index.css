@@ -128,7 +128,15 @@
   --danger: var(--color-token-charts-red, var(--fb-danger));
   --ok: var(--color-token-charts-green, var(--fb-ok));
   --hover: var(--color-token-list-hover-background, var(--fb-hover));
-  --focus: var(--vscode-focusBorder, var(--fb-focus));
+  /**
+   * The host's own focus colour, read off its Tailwind classes:
+   * `focus-visible:outline-2 outline-offset-2 outline-token-border`. It is
+   * deliberately faint (border token, ~8% alpha) — matching it is what "same
+   * as Codex" means. The fallback stays a saturated blue because the
+   * standalone browser path has no host to match, and an 8% ring on an
+   * unknown background would be no indicator at all.
+   */
+  --focus: var(--color-token-border, var(--fb-focus));
   --r-lg: 10px;
   --r-md: 8px;
   --r-sm: 6px;
@@ -204,23 +212,38 @@ button svg,
  * why this file is the single source of truth for control chrome. Keep visual
  * properties here; keep the components to structure and behaviour.
  */
+/**
+ * The host draws edges with a hairline ring and a soft shadow, not a border.
+ *
+ * Measured on Codex's composer: `border: 0`, `box-shadow: 0 0 0 0.5px
+ * rgba(fg,.157), 0 3px 7.5px rgba(0,0,0,.04)` over a translucent surface. Its
+ * menu surface uses the same construction at a lighter alpha. A 1px CSS border
+ * reads noticeably heavier next to that, which is what made these fields look
+ * like web forms sitting inside a native app.
+ */
 input,
 textarea {
   min-height: var(--control-h);
   min-width: 0;
   padding: 6px 9px;
-  border: 1px solid var(--color-token-input-border, var(--border));
-  border-radius: var(--r-sm);
+  border: 0;
+  border-radius: var(--r-md);
   background: var(--color-token-input-background, var(--panel-2));
+  box-shadow: 0 0 0 0.5px var(--border-strong), 0 3px 7.5px rgb(0 0 0 / 0.04);
   color: var(--text);
-  transition: border-color 120ms ease, background-color 120ms ease;
+  transition: box-shadow 120ms ease, background-color 120ms ease;
 }
 
 input { height: var(--control-h); }
 
+textarea { border-radius: var(--r-lg); }
+
+/* The host expresses emphasis as alpha on the foreground, so hover lifts the
+   hairline rather than switching to a different hue. */
 input:hover:not(:disabled, :focus),
 textarea:hover:not(:disabled, :focus) {
-  border-color: var(--border-strong);
+  box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--text) 26%, transparent),
+    0 3px 7.5px rgb(0 0 0 / 0.04);
 }
 
 input:disabled,
@@ -234,9 +257,8 @@ textarea:disabled {
  *
  * Codex Desktop has no native `<select>` anywhere (build 6321: 0 selects, 0
  * listbox triggers, 14 menu-trigger buttons), so a filled bordered box reads as
- * foreign next to it. `ghost` is that host convention — transparent until
- * hovered. `field` keeps its edge for dialog forms, where a control with no
- * outline would be lost among the labels.
+ * foreign next to it. The host's trigger is transparent until hovered, with a
+ * 1px transparent border holding the space so nothing shifts.
  */
 .select-trigger {
   min-width: 0;
@@ -251,14 +273,6 @@ textarea:disabled {
   color: var(--text);
   cursor: pointer;
   transition: border-color 120ms ease, background-color 120ms ease;
-}
-
-.select-trigger[data-variant="field"] {
-  width: 100%;
-  padding: 0 9px;
-  border-color: var(--color-token-input-border, var(--border));
-  border-radius: var(--r-sm);
-  background: var(--color-token-input-background, var(--panel-2));
 }
 
 .select-trigger:hover:not([disabled]),
@@ -287,27 +301,31 @@ textarea:disabled {
   color: var(--dim);
 }
 
+/* Measured off the host's own menu: radius 15px, no border, a 0.5px ring in the
+   border token and a soft drop shadow over the dropdown surface, 4px padding. */
 .select-content {
   z-index: 40;
   min-width: var(--radix-select-trigger-width);
   max-height: var(--radix-select-content-available-height);
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
+  border: 0;
+  border-radius: 15px;
   background: var(--panel-2);
   color: var(--text);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.16);
+  box-shadow: 0 0 0 0.5px var(--border), 0 3px 7.5px rgb(0 0 0 / 0.04),
+    0 12px 32px rgb(0 0 0 / 0.12);
 }
 
 .select-viewport { padding: 4px; }
 
+/* The host's menu rows: radius --radius-lg, 5px 8px. */
 .select-item {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   min-height: 28px;
-  padding: 4px 8px;
-  border-radius: var(--r-sm);
+  padding: 5px 8px;
+  border-radius: var(--r-lg);
   outline: none;
   cursor: pointer;
   user-select: none;
@@ -353,7 +371,14 @@ textarea::placeholder {
   opacity: 1;
 }
 
+/* Fields carry a ring rather than a border now, so the invalid state has to
+   travel the same way — a border-color here would have nothing to colour. */
 [aria-invalid="true"] { border-color: var(--danger); }
+
+input[aria-invalid="true"],
+textarea[aria-invalid="true"] {
+  box-shadow: 0 0 0 1px var(--danger), 0 3px 7.5px rgb(0 0 0 / 0.04);
+}
 
 a { color: var(--link); }
 
@@ -1929,9 +1954,8 @@ main {
 }
 
 .form-field input,
-.form-field select,
-.form-field textarea { width: 100%; }
-.form-field .select-shell { width: 100%; }
+.form-field textarea,
+.form-field .select-trigger { width: 100%; }
 .field-error { margin-top: 5px; }
 .repo-paths-input { min-height: 132px; font-family: var(--mono); font-size: 12px; }
 .repo-picker-row {
