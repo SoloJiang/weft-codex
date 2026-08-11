@@ -338,9 +338,10 @@ export function useHostContext(): { lang: Language; context: HostContextV1 | nul
     const hostOrigin = expectedHostOrigin()
     let requestTimer: number | undefined
     let requestAttempts = 0
+    let contextReceived = false
 
     const requestContext = () => {
-      if (!hostOrigin || window.parent === window) return
+      if (contextReceived || !hostOrigin || window.parent === window) return
       window.parent.postMessage(
         { source: "weft-codex-ui", type: "weft:host-context-request", version: 1 },
         hostOrigin,
@@ -354,6 +355,9 @@ export function useHostContext(): { lang: Language; context: HostContextV1 | nul
     const onMessage = (event: MessageEvent<unknown>) => {
       if (!hostOrigin || event.source !== window.parent || event.origin !== hostOrigin) return
       if (!isHostEnvelope(event.data)) return
+      contextReceived = true
+      window.clearTimeout(requestTimer)
+      requestTimer = undefined
       applyHostContext(event.data.payload)
       setContext(event.data.payload)
       setLang(languageFromLocale(event.data.payload.locale))
