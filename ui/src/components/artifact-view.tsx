@@ -1,10 +1,11 @@
 import * as React from "react"
-import { ArrowLeft, RefreshCw, Save } from "lucide-react"
+import { ArrowLeft, Maximize2, Minimize2, PencilLine, RefreshCw, Save, Network } from "lucide-react"
 
 import { ApiError, api } from "@/api"
 import { Button } from "@/components/ui/button"
 import { useI18n, type MessageKey } from "@/i18n"
 import type { Artifact, ArtifactErrorBody } from "@/types"
+import { MindMap, caseCount, type NodeQuestion } from "./mindmap"
 import { AsyncButton, EmptyState } from "./shared"
 
 /**
@@ -45,6 +46,36 @@ export function statusLabel(status: string, t: ReturnType<typeof useI18n>["t"]):
   return key ? t(key) : status
 }
 
+/**
+ * Send a note to this issue's lead thread.
+ *
+ * Goes through the normal lead-message endpoint so it inherits the bus delivery
+ * semantics: the orchestrator steers a live turn instead of starting a second
+ * one (which the server accepts and then silently never runs) and confirms the
+ * turn actually started. Nothing about node questions justifies a second path.
+ */
+async function notifyLead(issueId: number, text: string): Promise<void> {
+  await api(`/api/issues/${issueId}/message`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ text }),
+  })
+}
+
+/** A question names the node by its full path, so the lead knows which case. */
+function questionText(
+  question: NodeQuestion,
+  artifact: Artifact,
+  t: ReturnType<typeof useI18n>["t"],
+): string {
+  const where = question.path.join(" › ")
+  const lead = t(question.kind === "ask" ? "mindmap.askPrefix" : "mindmap.suggestPrefix", {
+    where,
+    revision: artifact.revision,
+  })
+  return `${lead}\n\n${question.text}`
+}
+
 export function ArtifactView({
   artifactId,
   onBack,
@@ -59,6 +90,8 @@ export function ArtifactView({
   const [draft, setDraft] = React.useState("")
   const [loading, setLoading] = React.useState(true)
   const [conflict, setConflict] = React.useState<ArtifactErrorBody | null>(null)
+  const [mode, setMode] = React.useState<"map" | "source">("map")
+  const [fullscreen, setFullscreen] = React.useState(false)
 
   const load = React.useCallback(async () => {
     const row = await api<Artifact>(`/api/artifacts/${artifactId}`)
@@ -78,6 +111,8 @@ export function ArtifactView({
   }, [load, onError])
 
   const dirty = Boolean(artifact) && draft !== artifact?.content
+  const isTree = artifact?.format === "markdown_tree"
+  const cases = isTree ? caseCount(draft) : 0
 
   const save = async () => {
     if (!artifact) return
@@ -95,6 +130,10 @@ export function ArtifactView({
       setArtifact(saved)
       setDraft(saved.content)
       setConflict(null)
+      await notifyLead(
+        saved.issue_id,
+        t("mindmap.savedNotice", { revision: saved.revision, title: saved.title }),
+      )
     } catch (error) {
       // Someone (the lead, or another window) wrote first. Keep the user's text
       // — discarding it here would lose work — and offer to reload instead.
@@ -108,7 +147,11 @@ export function ArtifactView({
   if (!artifact) return <EmptyState titleKey="artifact.missing" bodyKey="artifact.missingBody" />
 
   return (
-    <section className="artifact-view" aria-label={t("artifact.viewLabel", { title: artifact.title })}>
+    <section
+      className="artifact-view"
+      data-fullscreen={fullscreen ? "true" : "false"}
+      aria-label={t("artifact.viewLabel", { title: artifact.title })}
+    >
       <header className="artifact-header">
         <Button variant="ghost" onClick={onBack}>
           <ArrowLeft aria-hidden="true" />
@@ -120,8 +163,30 @@ export function ArtifactView({
             {statusLabel(artifact.status, t)}
             {" · "}
             {t("artifact.revision", { revision: artifact.revision })}
+            {isTree ? ` · ${t("mindmap.caseCount", { count: cases })}` : null}
           </p>
         </div>
+        {isTree ? (
+          <div className="artifact-header-actions">
+            <Button
+              variant="ghost"
+              aria-pressed={mode === "map"}
+              onClick={() => setMode(mode === "map" ? "source" : "map")}
+            >
+              {mode === "map" ? <PencilLine aria-hidden="true" /> : <Network aria-hidden="true" />}
+              {t(mode === "map" ? "mindmap.editSource" : "mindmap.showMap")}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-pressed={fullscreen}
+              aria-label={t(fullscreen ? "mindmap.exitFullscreen" : "mindmap.fullscreen")}
+              onClick={() => setFullscreen((current) => !current)}
+            >
+              {fullscreen ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
+            </Button>
+          </div>
+        ) : null}
       </header>
 
       {artifact.stale_reason ? (
@@ -147,14 +212,28 @@ export function ArtifactView({
         </div>
       ) : null}
 
-      <label className="sr-only" htmlFor="artifact-content">{t("artifact.contentLabel")}</label>
-      <textarea
-        id="artifact-content"
-        className="artifact-content"
-        value={draft}
-        spellCheck={false}
-        onChange={(event) => setDraft(event.target.value)}
-      />
+      {isTree && mode === "map" ? (
+        <div className="artifact-map">
+          <MindMap
+            content={draft}
+            onError={onError}
+            onAsk={async (question: NodeQuestion) => {
+              await notifyLead(artifact.issue_id, questionText(question, artifact, t))
+            }}
+          />
+        </div>
+      ) : (
+        <>
+          <label className="sr-only" htmlFor="artifact-content">{t("artifact.contentLabel")}</label>
+          <textarea
+            id="artifact-content"
+            className="artifact-content"
+            value={draft}
+            spellCheck={false}
+            onChange={(event) => setDraft(event.target.value)}
+          />
+        </>
+      )}
 
       <footer className="artifact-actions">
         <AsyncButton
