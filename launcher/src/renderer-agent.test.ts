@@ -127,6 +127,20 @@ test("the inbox count is only accepted from the sidebar frame", () => {
   assert.match(source, /"invalid-inbox-count"/)
 })
 
+// The host states radii in rem and rem resolves against the *consuming*
+// document's root font size — 16px in Codex, 13px in the Weft surfaces — so
+// forwarding the raw string shrank every corner by 19%.
+test("rem-bearing radius tokens are resolved to pixels before forwarding", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(source, /function usedLength\(value, rootFontSize\)/)
+  assert.match(source, /token\.startsWith\("--radius"\) \? usedLength\(value, rootFontSize\) : value/)
+  // Percentages resolve against the box, so a zero-sized probe would say 0px.
+  assert.match(source, /value\.includes\("%"\)\) return value/)
+  // Context is published on every mutation and the probe forces layout.
+  assert.match(source, /state\.usedLengths\.set\(key, used\)/)
+  assert.match(source, /const key = rootFontSize \+ "\|" \+ value/)
+})
+
 test("disposing clears the tier attribute it set", () => {
   const source = buildRendererAgentSource(baseConfig)
   assert.match(source, /delete root\.dataset\.weftCodexTier/)

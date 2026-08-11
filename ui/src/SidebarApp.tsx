@@ -21,7 +21,13 @@ import { kindLabel, statusLabel } from "@/components/artifact-view"
 import { AsyncButton, openCodexThread } from "@/components/shared"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import type { HostContextV1 } from "@/host-context"
 import { reportInboxCount, requestHostAction, useHostCommand } from "@/host-context"
 import { useI18n } from "@/i18n"
@@ -807,6 +813,19 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
     setQuery("")
   }, [])
 
+  // Escape has to work wherever focus went — clicking a result list, then the
+  // panel background, used to leave the only exit as the close button.
+  React.useEffect(() => {
+    if (panel === "none") return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return
+      event.preventDefault()
+      closePanel()
+    }
+    window.addEventListener("keydown", onKeyDown)
+    return () => window.removeEventListener("keydown", onKeyDown)
+  }, [panel, closePanel])
+
   const openDirectionThread = React.useCallback((issueId: number, directionId?: number) => {
     const entry = board.find((candidate) => candidate.issue.id === issueId)
     setExpandedIssueId(issueId)
@@ -897,20 +916,25 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
   return (
     <aside className="sidebar-surface" aria-label={t("sidebar.title")}>
       <div className="sidebar-workspace-row">
-        <label className="sr-only" htmlFor="sidebar-workspace-select">{t("workspace.label")}</label>
-        <NativeSelect
-          className="sidebar-workspace-select"
-          id="sidebar-workspace-select"
-          size="sm"
+        <Select
+          value={workspaceId ? String(workspaceId) : undefined}
           disabled={!workspaces.length}
-          value={workspaceId ?? ""}
-          onChange={(event) => selectWorkspace(Number(event.target.value))}
+          onValueChange={(value) => selectWorkspace(Number(value))}
         >
-          {!workspaces.length ? <NativeSelectOption value="">{t("workspace.none")}</NativeSelectOption> : null}
-          {workspaces.map((workspace) => (
-            <NativeSelectOption key={workspace.id} value={workspace.id}>{workspace.name}</NativeSelectOption>
-          ))}
-        </NativeSelect>
+          <SelectTrigger
+            variant="ghost"
+            className="sidebar-workspace-select"
+            id="sidebar-workspace-select"
+            aria-label={t("workspace.label")}
+          >
+            <SelectValue placeholder={t("workspace.none")} />
+          </SelectTrigger>
+          <SelectContent>
+            {workspaces.map((workspace) => (
+              <SelectItem key={workspace.id} value={String(workspace.id)}>{workspace.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Button
           variant="ghost"
           size="icon-sm"
@@ -1011,7 +1035,6 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
         <section
           className="sidebar-panel"
           aria-label={t(panel === "search" ? "entries.search" : "entries.inbox")}
-          onKeyDown={(event) => { if (event.key === "Escape") closePanel() }}
         >
           <header className="sidebar-panel-header">
             <h2>{t(panel === "search" ? "entries.search" : "entries.inbox")}</h2>

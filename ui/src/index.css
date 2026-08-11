@@ -165,6 +165,18 @@ input,
 select,
 textarea { font: inherit; }
 
+/**
+ * One focus treatment for the whole UI.
+ *
+ * This used to fight shadcn's `focus-visible:ring-3`: that utility paints a
+ * box-shadow, which these rules never set, so it survived the cascade and
+ * stacked a 3px halo inside this 2px outline — about 7px of ring on one field.
+ * The components no longer carry ring utilities; this is the only ring.
+ *
+ * Codex's own text input has no focus ring at all, and that is not copied on
+ * purpose: it is the sole focusable thing in a modal, while these fields sit in
+ * a dense column where keyboard focus has to be findable.
+ */
 button:focus-visible,
 .thread-link:focus-visible,
 select:focus-visible,
@@ -185,7 +197,13 @@ button svg,
   flex: none;
 }
 
-select,
+/**
+ * These element rules are unlayered, so they beat every Tailwind utility —
+ * utilities live in a layer and unlayered CSS always wins. That is why the
+ * shadcn classes on Input/Textarea had no effect on anything measurable, and
+ * why this file is the single source of truth for control chrome. Keep visual
+ * properties here; keep the components to structure and behaviour.
+ */
 input,
 textarea {
   min-height: var(--control-h);
@@ -195,40 +213,132 @@ textarea {
   border-radius: var(--r-sm);
   background: var(--color-token-input-background, var(--panel-2));
   color: var(--text);
+  transition: border-color 120ms ease, background-color 120ms ease;
 }
 
-select,
 input { height: var(--control-h); }
 
-.select-shell {
-  position: relative;
-  display: inline-flex;
+input:hover:not(:disabled, :focus),
+textarea:hover:not(:disabled, :focus) {
+  border-color: var(--border-strong);
+}
+
+input:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/**
+ * Dropdowns follow the host's shape, not the web's.
+ *
+ * Codex Desktop has no native `<select>` anywhere (build 6321: 0 selects, 0
+ * listbox triggers, 14 menu-trigger buttons), so a filled bordered box reads as
+ * foreign next to it. `ghost` is that host convention — transparent until
+ * hovered. `field` keeps its edge for dialog forms, where a control with no
+ * outline would be lost among the labels.
+ */
+.select-trigger {
   min-width: 0;
+  height: var(--control-h);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.select-trigger[data-variant="field"] {
+  width: 100%;
+  padding: 0 9px;
+  border-color: var(--color-token-input-border, var(--border));
+  border-radius: var(--r-sm);
+  background: var(--color-token-input-background, var(--panel-2));
+}
+
+.select-trigger:hover:not([disabled]),
+.select-trigger[data-state="open"] { background: var(--hover); }
+
+.select-trigger[disabled] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.select-trigger-value {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-trigger[data-placeholder] .select-trigger-value { color: var(--placeholder); }
+
+.select-trigger-icon {
+  width: 13px;
+  height: 13px;
+  flex: none;
   color: var(--dim);
 }
 
-.select-shell select {
-  width: 100%;
-  padding-inline-end: 32px;
-  appearance: none;
-  -webkit-appearance: none;
+.select-content {
+  z-index: 40;
+  min-width: var(--radix-select-trigger-width);
+  max-height: var(--radix-select-content-available-height);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--panel-2);
+  color: var(--text);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.16);
 }
 
-.select-shell::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  inset-inline-end: 13px;
-  width: 6px;
-  height: 6px;
-  border-inline-end: 1.5px solid currentColor;
-  border-block-end: 1.5px solid currentColor;
-  transform: translateY(-65%) rotate(45deg);
-  pointer-events: none;
+.select-viewport { padding: 4px; }
+
+.select-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  padding: 4px 8px;
+  border-radius: var(--r-sm);
+  outline: none;
+  cursor: pointer;
+  user-select: none;
 }
 
-.select-shell:focus-within { color: var(--text); }
-.select-shell:has(select:disabled) { opacity: 0.48; }
+.select-item[data-highlighted] { background: var(--hover); }
+
+.select-item[data-disabled] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.select-item-check {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--accent);
+}
+
+.select-label {
+  padding: 6px 8px 2px;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.select-separator {
+  height: 1px;
+  margin: 4px;
+  background: var(--border);
+}
 
 textarea {
   width: 100%;
@@ -306,12 +416,8 @@ html[data-ui-surface="workspace"] .embedded-main {
 }
 
 .sidebar-workspace-select {
-  width: auto;
   min-width: 0;
   flex: 1;
-}
-
-.sidebar-workspace-select select {
   font-weight: 600;
 }
 

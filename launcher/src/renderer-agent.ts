@@ -87,6 +87,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       savedModeButton: null,
       headerActionsMounted: false,
       inboxCount: 0,
+      usedLengths: new Map(),
       mutationObserver: null,
       resizeObserver: null,
       mediaQuery: null,
@@ -769,13 +770,44 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       return scheme.includes("light") && !scheme.includes("dark") ? "light" : "dark";
     }
 
+    /**
+     * Resolve a token to absolute pixels before forwarding it.
+     *
+     * The host states its radii in rem (build 6321: calc(.375rem * 1.25)), and
+     * rem resolves against the *consuming* document's root font size. The Weft
+     * surfaces set 13px where the host uses 16px, so forwarding the string made
+     * every corner land 19% tighter than the host draws it — 6.09px against
+     * 7.5px. Measuring the used value here is what makes the two agree.
+     */
+    function usedLength(value, rootFontSize) {
+      // Percentages resolve against the box, not the font, so a zero-sized
+      // probe would answer 0px. Leave those alone.
+      if (!value || value.includes("%")) return value;
+      const key = rootFontSize + "|" + value;
+      const cached = state.usedLengths.get(key);
+      if (cached !== undefined) return cached;
+      const probe = document.createElement("div");
+      probe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none";
+      probe.style.borderTopLeftRadius = value;
+      document.documentElement.append(probe);
+      const used = getComputedStyle(probe).borderTopLeftRadius || value;
+      probe.remove();
+      // Keyed by root font size so a zoom change re-measures instead of
+      // serving a stale answer; the probe forces a layout, and context is
+      // published on every mutation, so this must not run each time.
+      state.usedLengths.set(key, used);
+      return used;
+    }
+
     function hostContext() {
       const root = document.documentElement;
       const style = getComputedStyle(root);
       const tokens = {};
+      const rootFontSize = style.fontSize;
       for (const token of allowedTokens) {
         const value = style.getPropertyValue(token).trim();
-        if (value) tokens[token] = value;
+        if (!value) continue;
+        tokens[token] = token.startsWith("--radius") ? usedLength(value, rootFontSize) : value;
       }
       const sidebar = document.querySelector("[data-app-action-sidebar-scroll]");
       const sidebarCollapsed = !(sidebar instanceof HTMLElement) || sidebar.getBoundingClientRect().width < 40;

@@ -9,7 +9,13 @@ import { KanbanView, type WorkActions } from "@/components/kanban-view"
 import { RepositoriesView } from "@/components/repositories-view"
 import { openCodexThread } from "@/components/shared"
 import { Button } from "@/components/ui/button"
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { useI18n } from "@/i18n"
 import { readInitialRoute, readInitialWorkspaceId } from "@/surface"
 import { createSurfaceChannel, type SurfaceMessage } from "@/surface-channel"
@@ -394,25 +400,33 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
             <SquarePen aria-hidden="true" />
             {t("issue.create")}
           </Button>
-          <label className="sr-only" htmlFor="workspace-select">{t("workspace.label")}</label>
-          <NativeSelect
-            className="workspace-select-shell"
-            id="workspace-select"
+          <Select
+            value={workspaceId ? String(workspaceId) : undefined}
             disabled={!workspaces.length}
-            value={workspaceId ?? ""}
-            onChange={(event) => {
+            onValueChange={(value) => {
               loadSequence.current += 1
               setRepos([])
               setBoard([])
               setRepoMap(null)
               setDetailIssueId(null)
               setView("kanban")
-              setWorkspaceId(Number(event.target.value))
+              setWorkspaceId(Number(value))
             }}
           >
-            {!workspaces.length ? <NativeSelectOption value="">{t("workspace.none")}</NativeSelectOption> : null}
-            {workspaces.map((workspace) => <NativeSelectOption key={workspace.id} value={workspace.id}>{workspace.name}</NativeSelectOption>)}
-          </NativeSelect>
+            <SelectTrigger
+              variant="ghost"
+              className="workspace-select-shell"
+              id="workspace-select"
+              aria-label={t("workspace.label")}
+            >
+              <SelectValue placeholder={t("workspace.none")} />
+            </SelectTrigger>
+            <SelectContent>
+              {workspaces.map((workspace) => (
+                <SelectItem key={workspace.id} value={String(workspace.id)}>{workspace.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button variant="ghost" onClick={() => setDialog({ type: "workspace" })}>
             <Plus aria-hidden="true" />
             {t("ws.add")}
