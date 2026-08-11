@@ -42,6 +42,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/issues/{id}/message", post(message_lead))
         .route("/api/issues/{id}/bus", get(bus_log))
         .route("/api/threads/resolve", post(resolve_thread))
+        .route("/api/issues/{id}/lead-thread", post(promote_lead_thread))
         .route("/api/directions/{id}/spawn", post(spawn_direction))
         .route("/api/directions/{id}/message", post(message_direction))
         .route("/api/directions/{id}/complete", post(complete_direction))
@@ -344,6 +345,39 @@ async fn set_artifact_status(
             ok(json!(row))
         }
         Err(error) => artifact_fail(error),
+    }
+}
+
+#[derive(Deserialize)]
+struct PromoteLeadThread {
+    thread_id: String,
+}
+
+/// Point the issue's lead at a different one of its own threads.
+///
+/// The human forked the lead in Codex and kept working there; this makes that
+/// fork the one the bus talks to. Delivery follows immediately because
+/// `thread_for` reads the canonical column this moves. A turn already running
+/// on the previous thread finishes where it is — messages are durable and the
+/// agent can always `bus_read`, so nothing is lost, it just lands one turn late.
+async fn promote_lead_thread(
+    State(state): State<ApiState>,
+    Path(issue_id): Path<i64>,
+    Json(body): Json<PromoteLeadThread>,
+) -> Response {
+    let thread_id = body.thread_id.trim();
+    if thread_id.is_empty() {
+        return fail(anyhow::anyhow!("invalid empty thread_id"));
+    }
+    match state.store.promote_lead_thread(issue_id, thread_id).await {
+        Ok(()) => {
+            events::emit(
+                "thread.binding.updated",
+                json!({ "issueId": issue_id, "threadId": thread_id, "primary": true }),
+            );
+            ok(json!({ "leadThreadId": thread_id }))
+        }
+        Err(e) => fail(e),
     }
 }
 
