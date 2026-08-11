@@ -68,15 +68,21 @@ export function openCodexThread(threadId: string): Promise<void> {
 export function ThreadLink({
   threadId,
   onError,
+  label,
+  pendingLabel,
+  className,
 }: {
   threadId: string
   onError?: (error: unknown) => void
+  label?: string
+  pendingLabel?: string
+  className?: string
 }) {
   const { t } = useI18n()
   const [pending, setPending] = React.useState(false)
   if (!threadId) return null
   return (
-    <Button asChild variant="ghost" className="thread-link">
+    <Button asChild variant="ghost" className={cn("thread-link", className)}>
       <a
         href={codexThreadHref(threadId)}
         aria-busy={pending}
@@ -92,7 +98,9 @@ export function ThreadLink({
         }}
       >
         <MessageCircle aria-hidden="true" />
-        {t(pending ? "loading.openingThread" : "dir.openThread")}
+        {pending
+          ? (pendingLabel ?? t("loading.openingThread"))
+          : (label ?? t("dir.openThread"))}
       </a>
     </Button>
   )
