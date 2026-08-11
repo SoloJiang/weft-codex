@@ -1,9 +1,8 @@
 import * as React from "react"
 import {
-  AlertTriangle,
   Check,
   Flag,
-  MoreHorizontal,
+  MessageCircle,
   Play,
   RotateCcw,
   Search,
@@ -12,11 +11,11 @@ import {
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
-import { useI18n, type MessageKey } from "@/i18n"
+import { useI18n } from "@/i18n"
 import type { BoardEntry, Direction, DirectionStatus, Issue, Repo } from "@/types"
 import { STATUSES } from "@/types"
-import { AsyncButton, EmptyState, ThreadLink } from "./shared"
+import { buildIssueBoard, groupIssueBoard, type IssueBoardCard } from "@/lib/issue-board"
+import { AsyncButton, EmptyState, ThreadLink, openCodexThread } from "./shared"
 
 export interface WorkActions {
   onError: (error: unknown) => void
@@ -38,45 +37,6 @@ export function directionMeta(
   return parts.join(" · ")
 }
 
-/**
- * Every reason the orchestrator can attach to a task, mapped to user wording.
- *
- * The previous fallback returned `attention_reason` itself, so any reason
- * without an entry here rendered its raw internal identifier on the card —
- * `thread-resume-failed` and friends. Unmapped reasons now read as the generic
- * label instead; the raw value stays inspectable in the DOM for triage but
- * never becomes text a user reads.
- */
-const ATTENTION_LABELS: Record<string, MessageKey> = {
-  "worker-start-failed": "dir.startFailed",
-  "thread-resume-failed": "dir.resumeFailed",
-  "turn failed": "dir.turnFailed",
-  "quota exceeded": "dir.quotaExceeded",
-}
-
-function attentionLabel(direction: Direction, t: ReturnType<typeof useI18n>["t"]): string {
-  const key = ATTENTION_LABELS[direction.attention_reason]
-  return key ? t(key) : t("dir.attention")
-}
-
-/**
- * Icon plus short text, never icon alone: the product bar is that state must
- * not rest on colour or a wordless glyph, and a hover-only tooltip is
- * unreachable by keyboard and absent on touch.
- */
-function AttentionBadge({ direction }: { direction: Direction }) {
-  const { t } = useI18n()
-  const known = Boolean(ATTENTION_LABELS[direction.attention_reason])
-  return (
-    <span
-      className="badge badge-attention"
-      data-attention-reason={known ? undefined : direction.attention_reason || undefined}
-    >
-      <AlertTriangle aria-hidden="true" />
-      {attentionLabel(direction, t)}
-    </span>
-  )
-}
 
 export function DirectionActions({
   direction,
@@ -164,193 +124,84 @@ export function IssueActions({ issue, actions }: { issue: Issue; actions: WorkAc
   )
 }
 
-interface KanbanTask {
-  direction: Direction
-  entry: BoardEntry
-}
 
-function TaskCardActions({ direction, actions }: { direction: Direction; actions: WorkActions }) {
-  const { t } = useI18n()
-  const [menuOpen, setMenuOpen] = React.useState(false)
-  const menuRef = React.useRef<HTMLDivElement>(null)
-  const canContinue = direction.status === "review" || direction.status === "done"
-  const canComplete = direction.status === "review"
-  const canRetryStart = !direction.codex_thread_id && Boolean(direction.attention)
-  const canClearAttention = Boolean(direction.attention) && !canRetryStart
-  const hasMoreActions = canContinue || canComplete || canClearAttention
 
-  React.useEffect(() => {
-    if (!menuOpen) return
-    const closeOutside = (event: PointerEvent) => {
-      if (event.target instanceof Node && menuRef.current?.contains(event.target)) return
-      setMenuOpen(false)
-    }
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMenuOpen(false)
-    }
-    document.addEventListener("pointerdown", closeOutside)
-    document.addEventListener("keydown", closeOnEscape)
-    return () => {
-      document.removeEventListener("pointerdown", closeOutside)
-      document.removeEventListener("keydown", closeOnEscape)
-    }
-  }, [menuOpen])
-
-  let primaryAction: React.ReactNode = null
-  if (canRetryStart) {
-    primaryAction = (
-      <AsyncButton
-        variant="ghost"
-        label={t("dir.retryStart")}
-        pendingLabel={t("loading.retryingTask")}
-        onAction={() => actions.onRetryTask(direction)}
-        onError={actions.onError}
-      >
-        <RotateCcw aria-hidden="true" />
-      </AsyncButton>
-    )
-  } else if (direction.codex_thread_id) {
-    primaryAction = <ThreadLink threadId={direction.codex_thread_id} onError={actions.onError} />
-  }
-
-  if (!primaryAction && !hasMoreActions) return null
-
-  return (
-    <div className="kanban-card-actions">
-      {primaryAction}
-      {hasMoreActions ? (
-        <div ref={menuRef} className="kanban-card-menu">
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            className="kanban-card-menu-trigger"
-            aria-label={t("kanban.moreActions")}
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            title={t("kanban.moreActions")}
-            onClick={() => setMenuOpen((current) => !current)}
-          >
-            <MoreHorizontal aria-hidden="true" />
-          </Button>
-          {menuOpen ? <div className="kanban-card-menu-popover" role="menu">
-            {canContinue ? (
-              <Button
-                variant="ghost"
-                role="menuitem"
-                onClick={() => {
-                  setMenuOpen(false)
-                  actions.onContinueTask(direction)
-                }}
-              >
-                <Send aria-hidden="true" />
-                {t("dir.continue")}
-              </Button>
-            ) : null}
-            {canComplete ? (
-              <AsyncButton
-                variant="ghost"
-                label={t("dir.complete")}
-                pendingLabel={t("loading.completingTask")}
-                role="menuitem"
-                onAction={async () => {
-                  await actions.onCompleteTask(direction)
-                  setMenuOpen(false)
-                }}
-                onError={actions.onError}
-              >
-                <Check aria-hidden="true" />
-              </AsyncButton>
-            ) : null}
-            {canClearAttention ? (
-              <AsyncButton
-                variant="ghost"
-                label={t("dir.clearAttention")}
-                pendingLabel={t("loading.clearingFlag")}
-                role="menuitem"
-                onAction={async () => {
-                  await actions.onClearAttention(direction)
-                  setMenuOpen(false)
-                }}
-                onError={actions.onError}
-              >
-                <Flag aria-hidden="true" />
-              </AsyncButton>
-            ) : null}
-          </div> : null}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function TaskCard({
-  task,
-  repos,
-  actions,
+function IssueBoardCardView({
+  card,
   onOpenIssue,
+  onOpenLead,
 }: {
-  task: KanbanTask
-  repos: Repo[]
-  actions: WorkActions
+  card: IssueBoardCard
   onOpenIssue: (id: number) => void
+  onOpenLead: (entry: BoardEntry) => Promise<void> | void
 }) {
   const { t } = useI18n()
-  const { direction, entry } = task
-  const meta = directionMeta(direction, repos)
+  const { entry, status, totalTasks, doneTasks, attentionCount, hasLead } = card
+  const signal = attentionCount
+    ? t("kanban.issueNeedsYou", { done: doneTasks, total: totalTasks })
+    : t("kanban.issueProgress", {
+      status: t(`status.${status}`),
+      done: doneTasks,
+      total: totalTasks,
+    })
   return (
     <article
-      className={`kanban-card${direction.attention ? " attention" : ""}`}
-      aria-label={t("dir.cardLabel", { name: direction.name })}
+      className={`kanban-card issue-board-card${attentionCount ? " attention" : ""}`}
+      aria-label={t("kanban.issueCardLabel", { title: entry.issue.title })}
     >
-      <button
-        type="button"
-        className="kanban-card-issue"
-        aria-label={t("kanban.openIssue", { title: entry.issue.title })}
-        onClick={() => onOpenIssue(entry.issue.id)}
-      >
-        <span className="kanban-card-issue-number">#{entry.issue.id}</span>
-        <span className="kanban-card-issue-title">{entry.issue.title}</span>
-      </button>
-      <h3 className="name">
-        {direction.name}
-        {direction.attention ? <AttentionBadge direction={direction} /> : null}
-      </h3>
-      {meta ? <div className="sub">{meta}</div> : null}
-      <TaskCardActions direction={direction} actions={actions} />
+      <div className="issue-board-card-main">
+        <button
+          type="button"
+          className="kanban-card-issue issue-board-card-body"
+          aria-label={t("kanban.openIssueBoard", { title: entry.issue.title })}
+          onClick={() => onOpenIssue(entry.issue.id)}
+        >
+          <span className="kanban-card-issue-number">#{entry.issue.id}</span>
+          <span className="kanban-card-issue-title">{entry.issue.title}</span>
+          <span className="issue-board-card-signal">{signal}</span>
+        </button>
+        <button
+          type="button"
+          className="issue-board-lead-button"
+          aria-label={t(hasLead ? "kanban.openLead" : "kanban.startLead", { title: entry.issue.title })}
+          title={t(hasLead ? "kanban.openLead" : "kanban.startLead", { title: entry.issue.title })}
+          onClick={() => { void onOpenLead(entry) }}
+        >
+          <MessageCircle aria-hidden="true" />
+        </button>
+      </div>
     </article>
   )
 }
 
-function KanbanColumn({
+function IssueBoardColumn({
   status,
-  tasks,
-  repos,
-  actions,
+  cards,
   onOpenIssue,
+  onOpenLead,
 }: {
   status: DirectionStatus
-  tasks: KanbanTask[]
-  repos: Repo[]
-  actions: WorkActions
+  cards: IssueBoardCard[]
   onOpenIssue: (id: number) => void
+  onOpenLead: (entry: BoardEntry) => Promise<void> | void
 }) {
   const { t } = useI18n()
   const headingId = `kanban-status-${status}`
-  const statusTasks = tasks.filter((task) => task.direction.status === status)
-
   return (
     <section className="kanban-column" aria-labelledby={headingId}>
       <header className="kanban-column-heading">
         <h2 id={headingId}>{t(`status.${status}`)}</h2>
+        <span className="kanban-column-count" aria-label={t("kanban.issueCount", { count: cards.length })}>
+          {cards.length}
+        </span>
       </header>
       <div className="kanban-column-cards">
-        {statusTasks.map((task) => (
-          <TaskCard
-            key={task.direction.id}
-            task={task}
-            repos={repos}
-            actions={actions}
+        {cards.map((card) => (
+          <IssueBoardCardView
+            key={card.entry.issue.id}
+            card={card}
             onOpenIssue={onOpenIssue}
+            onOpenLead={onOpenLead}
           />
         ))}
       </div>
@@ -362,13 +213,17 @@ function normalizedSearchValue(value: string): string {
   return value.trim().toLocaleLowerCase()
 }
 
-function taskMatches(task: KanbanTask, query: string, repo: Repo | undefined): boolean {
+function issueMatches(card: IssueBoardCard, query: string, repos: Repo[]): boolean {
   if (!query) return true
+  const repoNames = card.entry.directions
+    .map((direction) => repos.find((repo) => repo.id === direction.repo_id)?.name ?? "")
+    .join(" ")
   const values = [
-    task.entry.issue.title,
-    task.direction.name,
-    task.direction.branch,
-    repo?.name ?? "",
+    card.entry.issue.title,
+    String(card.entry.issue.id),
+    ...card.entry.directions.map((direction) => direction.name),
+    ...card.entry.directions.map((direction) => direction.branch),
+    repoNames,
   ]
   return values.some((value) => normalizedSearchValue(value).includes(query))
 }
@@ -392,30 +247,26 @@ export function KanbanView({
 }) {
   const { t } = useI18n()
   const [query, setQuery] = React.useState("")
-  const [issueFilter, setIssueFilter] = React.useState("all")
   const deferredQuery = React.useDeferredValue(query)
   const searchRef = React.useRef<HTMLInputElement>(null)
-  const repoById = React.useMemo(
-    () => new Map(repos.map((repo) => [repo.id, repo])),
-    [repos],
-  )
-  const tasks = React.useMemo<KanbanTask[]>(
-    () => board.flatMap((entry) => entry.directions.map((direction) => ({ direction, entry }))),
-    [board],
-  )
-  const visibleTasks = React.useMemo(() => {
+  const cards = React.useMemo(() => buildIssueBoard(board), [board])
+  const visibleCards = React.useMemo(() => {
     const normalizedQuery = normalizedSearchValue(deferredQuery)
-    return tasks.filter((task) => {
-      if (issueFilter !== "all" && String(task.entry.issue.id) !== issueFilter) return false
-      return taskMatches(task, normalizedQuery, repoById.get(task.direction.repo_id))
-    })
-  }, [deferredQuery, issueFilter, repoById, tasks])
+    return cards.filter((card) => issueMatches(card, normalizedQuery, repos))
+  }, [cards, deferredQuery, repos])
+  const grouped = React.useMemo(() => groupIssueBoard(visibleCards), [visibleCards])
 
-  React.useEffect(() => {
-    if (issueFilter === "all") return
-    if (board.some((entry) => String(entry.issue.id) === issueFilter)) return
-    setIssueFilter("all")
-  }, [board, issueFilter])
+  const openLead = React.useCallback(async (entry: BoardEntry) => {
+    if (entry.issue.lead_codex_thread_id) {
+      try {
+        await openCodexThread(entry.issue.lead_codex_thread_id)
+      } catch (error) {
+        actions.onError(error)
+      }
+      return
+    }
+    await actions.onStartLead(entry.issue)
+  }, [actions])
 
   React.useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
@@ -449,34 +300,19 @@ export function KanbanView({
             />
             <kbd aria-hidden="true">⌘K</kbd>
           </div>
-          <label className="sr-only" htmlFor="kanban-issue-filter">{t("kanban.issueFilterLabel")}</label>
-          <NativeSelect
-            className="kanban-issue-filter"
-            id="kanban-issue-filter"
-            value={issueFilter}
-            onChange={(event) => setIssueFilter(event.target.value)}
-          >
-            <NativeSelectOption value="all">{t("kanban.allIssues")}</NativeSelectOption>
-            {board.map((entry) => (
-              <NativeSelectOption key={entry.issue.id} value={entry.issue.id}>
-                #{entry.issue.id} {entry.issue.title}
-              </NativeSelectOption>
-            ))}
-          </NativeSelect>
         </header>
-        {tasks.length && !visibleTasks.length ? (
-          <p className="kanban-filter-empty" role="status">{t("kanban.noMatchingTasks")}</p>
+        {cards.length && !visibleCards.length ? (
+          <p className="kanban-filter-empty" role="status">{t("kanban.noMatchingIssues")}</p>
         ) : null}
         <div className="kanban-board-scroll">
           <div className="kanban-board" aria-label={t("kanban.boardLabel")}>
             {STATUSES.map((status) => (
-              <KanbanColumn
+              <IssueBoardColumn
                 key={status}
                 status={status}
-                tasks={visibleTasks}
-                repos={repos}
-                actions={actions}
+                cards={grouped[status]}
                 onOpenIssue={onOpenIssue}
+                onOpenLead={openLead}
               />
             ))}
           </div>
