@@ -1288,6 +1288,132 @@ main {
 
 .artifact-actions { display: flex; justify-content: flex-end; }
 
+/* ── mindmap ──────────────────────────────────────────────────────── */
+
+.artifact-header-actions { display: flex; align-items: center; gap: 4px; margin-inline-start: auto; }
+
+/* Fullscreen is a plain overlay, not an animated transition: the point is to
+   read a long tree, and motion here would only get in the way. */
+.artifact-view[data-fullscreen="true"] {
+  position: fixed;
+  z-index: 40;
+  inset: 0;
+  background: var(--panel);
+}
+
+.artifact-map {
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: 4px 2px;
+  overflow: auto;
+}
+
+.mindmap-preamble { margin: 0 0 8px; color: var(--dim); font-size: 12px; }
+.mindmap-empty { margin: 0; color: var(--dim); font-size: 12.5px; }
+
+.mindmap-root,
+.mindmap-children { margin: 0; padding: 0; list-style: none; }
+
+/* The guide line is what makes depth readable once a tree gets deep. */
+.mindmap-children {
+  margin-inline-start: 9px;
+  padding-inline-start: 12px;
+  border-inline-start: 1px solid var(--border);
+}
+
+.mindmap-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  min-width: 0;
+  padding: 2px 4px;
+  border-radius: var(--r-sm);
+}
+
+.mindmap-row:hover { background: var(--hover); }
+.mindmap-row:focus-within { background: var(--hover); }
+
+.mindmap-toggle,
+.mindmap-ask {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.mindmap-toggle svg,
+.mindmap-ask svg { width: 12px; height: 12px; }
+
+.mindmap-toggle:hover,
+.mindmap-ask:hover { color: var(--text); background: var(--border); }
+
+/* Dim until hovered or focused, but always present and always tabbable —
+   a control that only exists on hover cannot be reached by keyboard. */
+.mindmap-ask { margin-inline-start: auto; opacity: 0.35; }
+.mindmap-row:hover .mindmap-ask,
+.mindmap-ask:focus-visible { opacity: 1; }
+
+.mindmap-bullet {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  position: relative;
+}
+
+.mindmap-bullet::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  left: 7px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.mindmap-text { min-width: 0; font-size: 12.5px; line-height: 1.55; }
+.mindmap-node[data-leaf="false"] > .mindmap-row > .mindmap-text { font-weight: 600; }
+
+.mindmap-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 4px 0 6px 23px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--panel-2);
+}
+
+.mindmap-composer-kinds { display: flex; gap: 4px; }
+
+.mindmap-kind {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dim);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.mindmap-kind[data-active="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.mindmap-composer-input { min-height: 52px; font-size: 12px; }
+.mindmap-composer-actions { display: flex; justify-content: flex-end; gap: 6px; }
+
 /* ── issue detail ─────────────────────────────────────────────────── */
 
 .detail-nav { margin-bottom: var(--space-3); }
