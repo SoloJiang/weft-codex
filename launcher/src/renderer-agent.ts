@@ -85,6 +85,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       modalFrame: null,
       dialogState: null,
       modalVisible: false,
+      modalBackground: new Map(),
       modeButton: null,
       savedModeButton: null,
       mutationObserver: null,
@@ -292,6 +293,39 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       if (root.getAttribute("aria-hidden") !== hiddenValue) {
         root.setAttribute("aria-hidden", hiddenValue);
       }
+      if (open) isolateModalBackground(root);
+      else restoreModalBackground();
+    }
+
+    function isolateModalBackground(root) {
+      const parent = root.parentElement;
+      if (!parent) return;
+      for (const sibling of parent.children) {
+        if (!(sibling instanceof HTMLElement) || sibling === root) continue;
+        if (!state.modalBackground.has(sibling)) {
+          state.modalBackground.set(sibling, {
+            inert: sibling.inert,
+            ariaHidden: sibling.getAttribute("aria-hidden"),
+          });
+        }
+        if (!sibling.inert) sibling.inert = true;
+        if (sibling.getAttribute("aria-hidden") !== "true") {
+          sibling.setAttribute("aria-hidden", "true");
+        }
+      }
+    }
+
+    function restoreModalBackground() {
+      for (const [element, previous] of state.modalBackground) {
+        if (!element.isConnected) continue;
+        if (element.inert !== previous.inert) element.inert = previous.inert;
+        if (previous.ariaHidden === null) {
+          if (element.hasAttribute("aria-hidden")) element.removeAttribute("aria-hidden");
+        } else if (element.getAttribute("aria-hidden") !== previous.ariaHidden) {
+          element.setAttribute("aria-hidden", previous.ariaHidden);
+        }
+      }
+      state.modalBackground.clear();
     }
 
     function ensureModalRoot() {
@@ -944,6 +978,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       if (state.clickListener) document.removeEventListener("click", state.clickListener, true);
       state.pendingActions.clear();
       restoreModeButton();
+      restoreModalBackground();
       if (state.sidebarRoot) state.sidebarRoot.remove();
       if (state.workspaceRoot) state.workspaceRoot.remove();
       if (state.modalRoot) state.modalRoot.remove();
