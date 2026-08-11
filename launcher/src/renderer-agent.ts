@@ -286,8 +286,12 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       const root = state.modalRoot;
       if (!(root instanceof HTMLElement)) return;
       const open = Boolean(state.modalVisible && state.dialogState);
-      root.dataset.open = open ? "true" : "false";
-      root.setAttribute("aria-hidden", open ? "false" : "true");
+      const openValue = open ? "true" : "false";
+      const hiddenValue = open ? "false" : "true";
+      if (root.dataset.open !== openValue) root.dataset.open = openValue;
+      if (root.getAttribute("aria-hidden") !== hiddenValue) {
+        root.setAttribute("aria-hidden", hiddenValue);
+      }
     }
 
     function ensureModalRoot() {

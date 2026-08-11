@@ -133,6 +133,15 @@ test("dialog actions use a dedicated host-level modal surface", () => {
   assert.match(source, /if \(frame === state\.modalFrame\) postDialogState\(\)/)
 })
 
+test("modal visibility sync does not retrigger the host mutation observer", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(
+    source,
+    /if \(root\.getAttribute\("aria-hidden"\) !== hiddenValue\) \{\s*root\.setAttribute\("aria-hidden", hiddenValue\)/,
+  )
+  assert.doesNotMatch(source, /root\.setAttribute\("aria-hidden", open \? "false" : "true"\)/)
+})
+
 test("surface iframe labels come from the localized UI", () => {
   const source = buildRendererAgentSource(baseConfig)
   assert.match(source, /message\.action === "surface\.label"/)
