@@ -1,6 +1,6 @@
 import type { AppView } from "@/types"
 
-export type UiSurface = "standalone" | "sidebar" | "workspace"
+export type UiSurface = "standalone" | "sidebar" | "workspace" | "modal"
 
 export interface SurfaceRoute {
   view: AppView
@@ -18,7 +18,7 @@ function positiveInteger(value: string | null): number | null {
 
 export function readUiSurface(): UiSurface {
   const value = new URLSearchParams(window.location.search).get("surface")
-  if (value === "sidebar" || value === "workspace") return value
+  if (value === "sidebar" || value === "workspace" || value === "modal") return value
   return "standalone"
 }
 

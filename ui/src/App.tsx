@@ -11,12 +11,15 @@ import { openCodexThread } from "@/components/shared"
 import { Button } from "@/components/ui/button"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { useI18n } from "@/i18n"
+import { presentHostDialog } from "@/host-context"
 import { readInitialRoute, readInitialWorkspaceId } from "@/surface"
 import { createSurfaceChannel, type SurfaceMessage } from "@/surface-channel"
 import type {
   AppView,
   BoardEntry,
+  ActiveDialogState,
   DialogState,
+  DialogSubmission,
   Direction,
   Issue,
   IssueKind,
@@ -72,8 +75,16 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
   const loadSequence = React.useRef(0)
   const toastSequence = React.useRef(0)
   const surfaceState = React.useRef({ workspaceId, view, detailIssueId })
+  const dialogSubmitHandler = React.useRef<(
+    (submission: DialogSubmission) => Promise<RepoImportResponse | undefined>
+  ) | null>(null)
   const channel = React.useMemo(createSurfaceChannel, [])
   surfaceState.current = { workspaceId, view, detailIssueId }
+
+  const openDialog = React.useCallback((next: ActiveDialogState) => {
+    if (embedded && presentHostDialog(next)) return
+    setDialog(next)
+  }, [embedded])
 
   React.useEffect(() => {
     document.documentElement.lang = lang
@@ -193,11 +204,41 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
         return
       }
       if (message.type === "command" && message.command === "workspace.create") {
-        setDialog({ type: "workspace" })
+        openDialog({ type: "workspace" })
         return
       }
       if (message.type === "command" && message.command === "issue.create") {
-        setDialog({ type: "issue" })
+        openDialog({ type: "issue" })
+        return
+      }
+      if (message.type === "dialog.submit") {
+        const handler = dialogSubmitHandler.current
+        if (!handler) {
+          channel.post({
+            type: "dialog.result",
+            requestId: message.requestId,
+            ok: false,
+            error: t("err.unknown"),
+          })
+          return
+        }
+        void handler(message.submission)
+          .then((result) => {
+            channel.post({
+              type: "dialog.result",
+              requestId: message.requestId,
+              ok: true,
+              ...(result ? { result } : {}),
+            })
+          })
+          .catch((caught) => {
+            channel.post({
+              type: "dialog.result",
+              requestId: message.requestId,
+              ok: false,
+              error: errorText(caught, t("err.network"), t("err.unknown")),
+            })
+          })
         return
       }
       if (message.type === "state.request") publishState()
@@ -206,7 +247,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
     const unsubscribe = channel.subscribe(receive)
     channel.post({ type: "surface.ready", surface: embedded ? "workspace" : "standalone" })
     return unsubscribe
-  }, [channel, embedded, refreshWorkspace, notifyError])
+  }, [channel, embedded, openDialog, t])
 
   React.useEffect(() => {
     return () => channel?.close()
@@ -290,8 +331,8 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
       await api(`/api/directions/${direction.id}/attention/clear`, jsonRequest("POST"))
       await refreshCurrent()
     },
-    onContinueTask: (direction: Direction) => setDialog({ type: "message", target: "task", id: direction.id, intent: "continue" }),
-  }), [notifyError, refreshCurrent, completeTask, launchLead, t])
+    onContinueTask: (direction: Direction) => openDialog({ type: "message", target: "task", id: direction.id, intent: "continue" }),
+  }), [notifyError, refreshCurrent, completeTask, launchLead, openDialog, t])
 
   const importRepositories = async (paths: string[]): Promise<RepoImportResponse> => {
     if (!workspaceId) throw new Error(t("err.unknown"))
@@ -303,6 +344,27 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
     if (response.added) notify(t("success.reposAdded", { count: response.added }), "success")
     else if (!response.failed) notify(t("success.reposExisting"), "info")
     return response
+  }
+
+  dialogSubmitHandler.current = async (submission) => {
+    if (submission.type === "workspace") {
+      await createWorkspace(submission.name)
+      return undefined
+    }
+    if (submission.type === "issue") {
+      await createIssue(submission.title, submission.kind)
+      return undefined
+    }
+    if (submission.type === "repositories") {
+      return importRepositories(submission.paths)
+    }
+    await sendMessage(
+      submission.target,
+      submission.id,
+      submission.text,
+      submission.intent,
+    )
+    return undefined
   }
 
   const analyzeRepository = async (id: number) => {
@@ -326,8 +388,8 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
       <RepositoriesView
         workspaceId={workspaceId}
         repoMap={repoMap}
-        onCreateWorkspace={() => setDialog({ type: "workspace" })}
-        onOpenImport={() => setDialog({ type: "repositories" })}
+        onCreateWorkspace={() => openDialog({ type: "workspace" })}
+        onOpenImport={() => openDialog({ type: "repositories" })}
         onAnalyzeRepository={analyzeRepository}
         onError={notifyError}
       />
@@ -357,8 +419,8 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
         repos={repos}
         board={board}
         actions={workActions}
-        onOpenCreateIssue={() => setDialog({ type: "issue" })}
-        onCreateWorkspace={() => setDialog({ type: "workspace" })}
+        onOpenCreateIssue={() => openDialog({ type: "issue" })}
+        onCreateWorkspace={() => openDialog({ type: "workspace" })}
         onOpenIssue={(id) => { setDetailIssueId(id); setView("issue") }}
       />
     )
@@ -390,7 +452,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
           </Button>
         </nav>
         <div className="workspace-controls">
-          <Button variant="ghost" disabled={!workspaceId} onClick={() => setDialog({ type: "issue" })}>
+          <Button variant="ghost" disabled={!workspaceId} onClick={() => openDialog({ type: "issue" })}>
             <SquarePen aria-hidden="true" />
             {t("issue.create")}
           </Button>
@@ -413,7 +475,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
             {!workspaces.length ? <NativeSelectOption value="">{t("workspace.none")}</NativeSelectOption> : null}
             {workspaces.map((workspace) => <NativeSelectOption key={workspace.id} value={workspace.id}>{workspace.name}</NativeSelectOption>)}
           </NativeSelect>
-          <Button variant="ghost" onClick={() => setDialog({ type: "workspace" })}>
+          <Button variant="ghost" onClick={() => openDialog({ type: "workspace" })}>
             <Plus aria-hidden="true" />
             {t("ws.add")}
           </Button>

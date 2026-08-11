@@ -5,11 +5,15 @@ import { Slot } from "radix-ui"
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
-  "group/button inline-flex shrink-0 cursor-pointer items-center justify-center rounded-[var(--r-sm)] border border-transparent text-[13px] leading-none font-medium whitespace-nowrap no-underline transition-colors outline-none select-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)] disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
+  "group/button inline-flex shrink-0 cursor-pointer items-center justify-center rounded-[var(--r-sm)] border border-transparent text-[13px] leading-none font-medium whitespace-nowrap no-underline transition-colors duration-150 outline-none select-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--focus)] disabled:pointer-events-none disabled:opacity-40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-[var(--accent-hover)]",
+        default:
+          "bg-[var(--button-primary-bg)] text-[var(--button-primary-fg)] enabled:hover:bg-[var(--button-primary-hover-bg)]",
+        // Alias kept for dialog call sites; both use the native primary state model.
+        contrast:
+          "bg-[var(--button-primary-bg)] text-[var(--button-primary-fg)] enabled:hover:bg-[var(--button-primary-hover-bg)]",
         outline:
           "border-border bg-transparent hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground",
         secondary:
