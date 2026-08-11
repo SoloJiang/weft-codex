@@ -921,12 +921,24 @@ main {
 
 .issue-board-card-actions {
   margin-top: 8px;
-  justify-content: flex-start;
+  justify-content: flex-end;
 }
 
 .issue-board-lead-link {
-  margin-inline-start: -1px;
-  padding-inline-start: 0;
+  color: var(--dim);
+}
+
+.issue-board-lead-link:hover {
+  color: var(--text);
+}
+
+.thread-link-icon,
+.async-button-icon {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
 }
 
 .kanban-column-count {

@@ -15,6 +15,7 @@ interface AsyncButtonProps
   pendingLabel: string
   onAction: () => Promise<void>
   onError: (error: unknown) => void
+  iconOnly?: boolean
 }
 
 export function AsyncButton({
@@ -24,9 +25,13 @@ export function AsyncButton({
   onError,
   disabled,
   children,
+  iconOnly = false,
+  size,
+  className,
   ...props
 }: AsyncButtonProps) {
   const [pending, setPending] = React.useState(false)
+  const resolvedLabel = pending ? pendingLabel : label
 
   const run = async () => {
     if (pending || disabled) return
@@ -43,12 +48,16 @@ export function AsyncButton({
   return (
     <Button
       {...props}
+      size={iconOnly ? (size ?? "icon-sm") : size}
+      className={cn(className, iconOnly && "async-button-icon")}
       disabled={pending || disabled}
       aria-busy={pending}
+      aria-label={iconOnly ? resolvedLabel : undefined}
+      title={iconOnly ? resolvedLabel : undefined}
       onClick={run}
     >
       {children}
-      {pending ? pendingLabel : label}
+      {iconOnly ? <span className="sr-only">{resolvedLabel}</span> : resolvedLabel}
     </Button>
   )
 }
@@ -71,20 +80,32 @@ export function ThreadLink({
   label,
   pendingLabel,
   className,
+  iconOnly = false,
 }: {
   threadId: string
   onError?: (error: unknown) => void
   label?: string
   pendingLabel?: string
   className?: string
+  iconOnly?: boolean
 }) {
   const { t } = useI18n()
   const [pending, setPending] = React.useState(false)
   if (!threadId) return null
+  const resolvedLabel = pending
+    ? (pendingLabel ?? t("loading.openingThread"))
+    : (label ?? t("dir.openThread"))
   return (
-    <Button asChild variant="ghost" className={cn("thread-link", className)}>
+    <Button
+      asChild
+      variant="ghost"
+      size={iconOnly ? "icon-sm" : "default"}
+      className={cn("thread-link", iconOnly && "thread-link-icon", className)}
+    >
       <a
         href={codexThreadHref(threadId)}
+        aria-label={resolvedLabel}
+        title={resolvedLabel}
         aria-busy={pending}
         aria-disabled={pending}
         onClick={(event) => {
@@ -98,9 +119,7 @@ export function ThreadLink({
         }}
       >
         <MessageCircle aria-hidden="true" />
-        {pending
-          ? (pendingLabel ?? t("loading.openingThread"))
-          : (label ?? t("dir.openThread"))}
+        {iconOnly ? <span className="sr-only">{resolvedLabel}</span> : resolvedLabel}
       </a>
     </Button>
   )
