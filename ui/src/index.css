@@ -890,6 +890,74 @@ main {
 
 .kanban-card.attention { border-color: var(--warn); }
 
+.issue-board-card {
+  padding: 10px;
+}
+
+.issue-board-card-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  gap: 6px;
+  align-items: start;
+}
+
+.issue-board-card-body {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    "number title"
+    "signal signal";
+  gap: 4px 7px;
+  align-items: start;
+}
+
+.issue-board-card-body .kanban-card-issue-number { grid-area: number; }
+.issue-board-card-body .kanban-card-issue-title {
+  grid-area: title;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  -webkit-line-clamp: 3;
+}
+.issue-board-card-signal {
+  grid-area: signal;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.issue-board-lead-button {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+}
+.issue-board-lead-button:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.issue-board-lead-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.kanban-column-count {
+  min-width: 18px;
+  height: 18px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 999px;
+  background: var(--hover);
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1;
+}
+
 .kanban-card-issue {
   width: 100%;
   min-width: 0;
