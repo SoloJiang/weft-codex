@@ -890,6 +890,64 @@ impl Store {
         .context("get_issue")
     }
 
+    /// Make an already-bound lead thread this issue's primary one.
+    ///
+    /// Distinct from [`Store::set_lead_thread`], which also *creates* the
+    /// binding and therefore resets `parent_thread_id` / `root_thread_id` to a
+    /// fresh root. Promotion must not do that: the usual case is a fork the
+    /// human kept working in, and flattening its ancestry would lose the chain
+    /// that explains where it came from.
+    ///
+    /// Moves the canonical `issue.lead_codex_thread_id` too, which is what
+    /// `thread_for` reads — so every later bus delivery follows the new primary
+    /// without any other bookkeeping.
+    pub async fn promote_lead_thread(&self, issue_id: i64, thread_id: &str) -> anyhow::Result<()> {
+        let mut tx = self.pool.begin().await.context("promote_lead_thread begin")?;
+        let binding = sqlx::query_as::<_, ThreadBindingRow>(
+            "SELECT * FROM thread_binding WHERE thread_id = ?",
+        )
+        .bind(thread_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .context("load binding")?
+        .ok_or_else(|| anyhow::anyhow!("unknown thread {thread_id}"))?;
+        if binding.issue_id != issue_id {
+            anyhow::bail!("invalid: thread {thread_id} is not in issue {issue_id}");
+        }
+        if binding.direction_id.is_some() {
+            // A worker thread has its own primary within its task; promoting it
+            // to lead would make one thread answer to two parties on the bus.
+            anyhow::bail!("invalid: thread {thread_id} belongs to a task, not the lead");
+        }
+
+        let now = now_unix();
+        sqlx::query("UPDATE issue SET lead_codex_thread_id = ? WHERE id = ?")
+            .bind(thread_id)
+            .bind(issue_id)
+            .execute(&mut *tx)
+            .await
+            .context("move canonical lead pointer")?;
+        sqlx::query(
+            "UPDATE thread_binding SET is_primary = 0, updated_at = ?
+             WHERE issue_id = ? AND direction_id IS NULL",
+        )
+        .bind(&now)
+        .bind(issue_id)
+        .execute(&mut *tx)
+        .await
+        .context("clear previous lead primary")?;
+        sqlx::query(
+            "UPDATE thread_binding SET is_primary = 1, updated_at = ? WHERE thread_id = ?",
+        )
+        .bind(&now)
+        .bind(thread_id)
+        .execute(&mut *tx)
+        .await
+        .context("set new lead primary")?;
+        tx.commit().await.context("promote_lead_thread commit")?;
+        Ok(())
+    }
+
     pub async fn set_lead_thread(&self, issue_id: i64, thread_id: &str) -> anyhow::Result<()> {
         let issue = self
             .get_issue(issue_id)
@@ -2652,6 +2710,74 @@ mod tests {
         assert!(
             upgraded.get_issue(issue).await.expect("issue").is_some(),
             "the rest of the database must survive the upgrade"
+        );
+    }
+
+    #[tokio::test]
+    async fn promoting_a_fork_keeps_its_ancestry_and_moves_the_canonical_pointer() {
+        let (store, _dir) = fixture().await;
+        let ws = store.create_workspace("W", "w").await.expect("ws");
+        let issue = store.create_issue(ws, "one", "one").await.expect("i");
+        store.set_lead_thread(issue, "lead-a").await.expect("lead");
+        store
+            .bind_thread_fork("lead-b", "lead-a", "continued here")
+            .await
+            .expect("fork");
+
+        store
+            .promote_lead_thread(issue, "lead-b")
+            .await
+            .expect("promote");
+
+        let rows = store.list_thread_bindings(issue).await.expect("list");
+        let primaries: Vec<_> = rows.iter().filter(|row| row.is_primary == 1).collect();
+        assert_eq!(primaries.len(), 1, "exactly one lead primary may survive");
+        assert_eq!(primaries[0].thread_id, "lead-b");
+
+        // The whole point of a separate method: promotion must not flatten the
+        // chain that explains where this thread came from.
+        let promoted = store
+            .get_thread_binding("lead-b")
+            .await
+            .expect("get")
+            .expect("row");
+        assert_eq!(promoted.parent_thread_id, "lead-a");
+        assert_eq!(promoted.root_thread_id, "lead-a");
+
+        // thread_for reads the canonical column, so bus delivery follows.
+        let refreshed = store.get_issue(issue).await.expect("issue").expect("row");
+        assert_eq!(refreshed.lead_codex_thread_id, "lead-b");
+    }
+
+    #[tokio::test]
+    async fn promotion_refuses_threads_that_do_not_belong_to_the_issue_lead() {
+        let (store, _dir) = fixture().await;
+        let ws = store.create_workspace("W", "w").await.expect("ws");
+        let mine = store.create_issue(ws, "one", "one").await.expect("i1");
+        let theirs = store.create_issue(ws, "two", "two").await.expect("i2");
+        store.set_lead_thread(mine, "mine-lead").await.expect("a");
+        store.set_lead_thread(theirs, "their-lead").await.expect("b");
+        let direction = store
+            .add_direction(mine, "task", "task", 1, "plan+impl", "main", "", "")
+            .await
+            .expect("direction");
+        store
+            .set_direction_thread(direction, "worker-1")
+            .await
+            .expect("worker");
+
+        // Another issue's lead.
+        assert!(store.promote_lead_thread(mine, "their-lead").await.is_err());
+        // A worker thread: promoting it would make one thread answer to two
+        // parties on the bus.
+        assert!(store.promote_lead_thread(mine, "worker-1").await.is_err());
+        // Something we have never seen.
+        assert!(store.promote_lead_thread(mine, "ghost").await.is_err());
+
+        let refreshed = store.get_issue(mine).await.expect("issue").expect("row");
+        assert_eq!(
+            refreshed.lead_codex_thread_id, "mine-lead",
+            "a refused promotion must not move the pointer"
         );
     }
 

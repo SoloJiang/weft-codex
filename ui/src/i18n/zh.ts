@@ -116,6 +116,8 @@ const zh = {
   "artifact.status.ready": "已就绪",
   "artifact.status.stale": "已过期",
   "artifact.status.superseded": "已替换",
+  "sidebar.makePrimary": "把「{label}」设为主会话",
+  "sidebar.makingPrimary": "切换中…",
   "sidebar.artifacts": "产物",
 
   "repo.add": "添加仓库",

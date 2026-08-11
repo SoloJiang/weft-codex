@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronRight,
   CornerDownRight,
+  Star,
   FileText,
   FolderGit2,
   KanbanSquare,
@@ -14,7 +15,7 @@ import {
 
 import { api, jsonRequest } from "@/api"
 import { kindLabel, statusLabel } from "@/components/artifact-view"
-import { openCodexThread } from "@/components/shared"
+import { AsyncButton, openCodexThread } from "@/components/shared"
 import { Button } from "@/components/ui/button"
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import type { HostContextV1 } from "@/host-context"
@@ -52,6 +53,9 @@ type SidebarLocation =
   | { kind: "unbound-thread"; threadId: string }
 
 interface ThreadRowProps {
+  /** Present only on lead forks that can become the primary chat. */
+  onPromote?: (threadId: string) => Promise<void>
+  onError?: (error: unknown) => void
   label: string
   threadId: string
   active: boolean
@@ -162,9 +166,11 @@ function ThreadRow({
   primary = false,
   nested = false,
   onOpen,
+  onPromote,
+  onError,
 }: ThreadRowProps) {
   const { t } = useI18n()
-  return (
+  const row = (
     <button
       type="button"
       className="sidebar-thread-row"
@@ -178,16 +184,40 @@ function ThreadRow({
       {primary ? <span className="sidebar-primary-chip">{t("sidebar.primary")}</span> : null}
     </button>
   )
+  if (!onPromote) return row
+  // The promote control is a sibling, not a child: a button inside a button is
+  // invalid and screen readers flatten it unpredictably.
+  return (
+    <div className="sidebar-thread-row-wrap">
+      {row}
+      <AsyncButton
+        variant="ghost"
+        size="icon-sm"
+        className="sidebar-thread-promote"
+        label={t("sidebar.makePrimary", { label })}
+        pendingLabel={t("sidebar.makingPrimary")}
+        onAction={() => onPromote(threadId)}
+        onError={onError ?? (() => {})}
+        iconOnly
+      >
+        <Star aria-hidden="true" />
+      </AsyncButton>
+    </div>
+  )
 }
 
 function IssueConversationTree({
   entry,
   activeThreadId,
   onOpenThread,
+  onPromoteLead,
+  onError,
 }: {
   entry: BoardEntry
   activeThreadId: string | null
   onOpenThread: (threadId: string) => void
+  onPromoteLead: (threadId: string) => Promise<void>
+  onError: (error: unknown) => void
 }) {
   const { t } = useI18n()
   const leadBranches = branchesFor(entry, null)
@@ -222,6 +252,8 @@ function IssueConversationTree({
               active={activeThreadId === binding.thread_id}
               nested
               onOpen={onOpenThread}
+              onPromote={onPromoteLead}
+              onError={onError}
             />
           ))}
         </div>
@@ -522,6 +554,18 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
     navigate({ view: "artifact", issueId: artifact.issue_id, artifactId: artifact.id })
   }, [navigate])
 
+  /**
+   * Make a lead fork the issue's primary chat.
+   *
+   * The canonical pointer is what `thread_for` reads, so every later bus
+   * delivery follows immediately — no other bookkeeping, and the fork keeps its
+   * ancestry.
+   */
+  const promoteLead = React.useCallback(async (issueId: number, threadId: string) => {
+    await api(`/api/issues/${issueId}/lead-thread`, jsonRequest("POST", { thread_id: threadId }))
+    if (stateRef.current.workspaceId) await loadWorkspace(stateRef.current.workspaceId)
+  }, [loadWorkspace])
+
   const openIssue = React.useCallback((entry: BoardEntry) => {
     setExpandedIssueId(entry.issue.id)
     const primary = primaryBranch(entry, null)
@@ -675,6 +719,8 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
                 entry={expandedEntry}
                 activeThreadId={activeThreadId}
                 onOpenThread={openThread}
+                onPromoteLead={(threadId) => promoteLead(expandedEntry.issue.id, threadId)}
+                onError={reportError}
               />
               <ArtifactSummaryList
                 artifacts={expandedEntry.artifacts ?? []}

@@ -114,6 +114,8 @@ const en = {
   "artifact.status.ready": "Ready",
   "artifact.status.stale": "Stale",
   "artifact.status.superseded": "Superseded",
+  "sidebar.makePrimary": "Make “{label}” the main chat",
+  "sidebar.makingPrimary": "Switching…",
   "sidebar.artifacts": "Artifacts",
 
   "repo.add": "Add repository",

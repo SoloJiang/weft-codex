@@ -1166,6 +1166,26 @@ main {
   flex: 0 0 auto;
 }
 
+/* The promote control sits beside the row, not inside it — a button within a
+   button is invalid markup. Dimmed until hover or focus, but always tabbable. */
+.sidebar-thread-row-wrap {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sidebar-thread-row-wrap > .sidebar-thread-row { flex: 1 1 auto; }
+
+.sidebar-thread-promote {
+  flex: 0 0 auto;
+  opacity: 0.35;
+  color: var(--dim);
+}
+
+.sidebar-thread-row-wrap:hover .sidebar-thread-promote,
+.sidebar-thread-promote:focus-visible { opacity: 1; color: var(--text); }
+
 /* ── artifacts ────────────────────────────────────────────────────── */
 
 .sidebar-artifacts {
