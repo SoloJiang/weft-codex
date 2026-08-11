@@ -43,7 +43,6 @@
   --fb-danger: #fa423e;
   --fb-ok: #04b84c;
   --fb-hover: rgba(252, 252, 252, 0.08);
-  --fb-focus: #339cff;
 }
 
 @media (prefers-color-scheme: light) {
@@ -65,7 +64,6 @@
     --fb-danger: #d62925;
     --fb-ok: #087d35;
     --fb-hover: rgba(13, 13, 13, 0.06);
-    --fb-focus: #0169cc;
   }
 }
 
@@ -87,7 +85,6 @@
   --fb-danger: #fa423e;
   --fb-ok: #04b84c;
   --fb-hover: rgba(252, 252, 252, 0.08);
-  --fb-focus: #339cff;
 }
 
 :root[data-host-theme="light"] {
@@ -108,7 +105,6 @@
   --fb-danger: #d62925;
   --fb-ok: #087d35;
   --fb-hover: rgba(13, 13, 13, 0.06);
-  --fb-focus: #0169cc;
 }
 
 :root {
@@ -130,16 +126,18 @@
   --hover: var(--color-token-list-hover-background, var(--fb-hover));
   /**
    * The host's own focus colour, read off its Tailwind classes:
-   * `focus-visible:outline-2 outline-offset-2 outline-token-border`. It is
-   * deliberately faint (border token, ~8% alpha) — matching it is what "same
-   * as Codex" means. The fallback stays a saturated blue because the
-   * standalone browser path has no host to match, and an 8% ring on an
-   * unknown background would be no indicator at all.
+   * `focus-visible:outline-2 outline-offset-2 outline-token-border`.
+   *
+   * Focus is not a colour of its own here — it *is* the border token, so the
+   * fallback is the fallback's border token and the standalone path keeps the
+   * same convention rather than inventing a saturated ring of its own.
    */
-  --focus: var(--color-token-border, var(--fb-focus));
-  --r-lg: 10px;
-  --r-md: 8px;
-  --r-sm: 6px;
+  --focus: var(--color-token-border, var(--fb-border));
+  /* The host's own radius scale, in pixels because that is what the agent now
+     forwards. Kept identical here so the standalone path is not a second look. */
+  --r-lg: 12.5px;
+  --r-md: 10px;
+  --r-sm: 7.5px;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
   --mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, monospace;
   --control-h: 32px;
@@ -181,9 +179,11 @@ textarea { font: inherit; }
  * stacked a 3px halo inside this 2px outline — about 7px of ring on one field.
  * The components no longer carry ring utilities; this is the only ring.
  *
- * Codex's own text input has no focus ring at all, and that is not copied on
- * purpose: it is the sole focusable thing in a modal, while these fields sit in
- * a dense column where keyboard focus has to be findable.
+ * Geometry and colour are the host's: it writes
+ * `focus-visible:outline-2 outline-offset-2 outline-token-border` on its own
+ * controls. Its command-menu input carries no ring, but that is the exception
+ * rather than the rule — it is auto-focused and alone in a modal, so it has
+ * nothing to distinguish itself from.
  */
 button:focus-visible,
 .thread-link:focus-visible,
