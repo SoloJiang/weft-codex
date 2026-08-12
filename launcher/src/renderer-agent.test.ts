@@ -169,6 +169,7 @@ test("dispose also removes the injected roots and stylesheet", () => {
   const source = buildRendererAgentSource(baseConfig)
   assert.match(source, /if \(state\.sidebarRoot\) state\.sidebarRoot\.remove\(\)/)
   assert.match(source, /if \(state\.workspaceRoot\) state\.workspaceRoot\.remove\(\)/)
+  assert.match(source, /if \(state\.modalRoot\) state\.modalRoot\.remove\(\)/)
   assert.match(source, /getElementById\(STYLE_ID\)[\s\S]{0,60}style\.remove\(\)/)
 })
 
@@ -178,5 +179,60 @@ test("installing twice disposes the previous agent first", () => {
   assert.match(
     source,
     /const previous = window\[GLOBAL_KEY\];[\s\S]{0,160}previous\.dispose\(\)/,
+  )
+})
+
+test("dialog actions use a dedicated host-level modal surface", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(source, /message\.action === "dialog\.present"/)
+  assert.match(source, /message\.action === "dialog\.mounted"/)
+  assert.match(source, /message\.action === "dialog\.dismiss"/)
+  assert.match(source, /root\.id = MODAL_ROOT_ID/)
+  assert.match(source, /createFrame\("modal"\)/)
+  assert.match(source, /#weft-codex-modal-root \{[\s\S]*?position: fixed;[\s\S]*?inset: 0;/)
+  assert.match(source, /#weft-codex-modal-root\[data-open="true"\]/)
+  assert.match(source, /#weft-codex-modal-root > iframe/)
+  assert.match(source, /background: transparent !important/)
+  assert.match(source, /frame === state\.modalFrame && mountDialog\(\)/)
+  assert.match(source, /if \(frame === state\.modalFrame\) postDialogState\(\)/)
+})
+
+test("modal visibility sync does not retrigger the host mutation observer", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(
+    source,
+    /if \(root\.getAttribute\("aria-hidden"\) !== hiddenValue\) \{\s*root\.setAttribute\("aria-hidden", hiddenValue\)/,
+  )
+  assert.doesNotMatch(source, /root\.setAttribute\("aria-hidden", open \? "false" : "true"\)/)
+})
+
+test("an open modal isolates and later restores its host-document background", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(source, /modalBackground: new Map\(\)/)
+  assert.match(source, /if \(open\) isolateModalBackground\(root\)/)
+  assert.match(source, /if \(!sibling\.inert\) sibling\.inert = true/)
+  assert.match(source, /sibling\.setAttribute\("aria-hidden", "true"\)/)
+  assert.match(source, /function restoreModalBackground\(\)/)
+  assert.match(source, /element\.inert = previous\.inert/)
+  assert.match(source, /element\.removeAttribute\("aria-hidden"\)/)
+  assert.match(source, /restoreModalBackground\(\);\s*if \(state\.sidebarRoot\)/)
+})
+
+test("surface iframe labels come from the localized UI", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(source, /message\.action === "surface\.label"/)
+  assert.match(source, /frame\.title = label/)
+  assert.doesNotMatch(source, /frame\.title = "Dialog"/)
+  assert.doesNotMatch(source, /frame\.title = "Workspace navigation"/)
+})
+
+test("dialog presentation never reparents or restyles the workspace surface", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.doesNotMatch(source, /data-weft-codex-dialog/)
+  assert.doesNotMatch(source, /function setDialogOpen/)
+  assert.doesNotMatch(source, /weft-codex-dialog-main-fill/)
+  assert.doesNotMatch(
+    source,
+    /#weft-codex-workspace-root\s*\{[^}]*position:\s*fixed/s,
   )
 })

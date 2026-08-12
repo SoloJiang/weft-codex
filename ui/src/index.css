@@ -133,6 +133,12 @@
    * same convention rather than inventing a saturated ring of its own.
    */
   --focus: var(--color-token-border, var(--fb-border));
+  /* Codex native primary button: foreground fill, inverse surface text, and
+     an 80% foreground hover fill. Keep this separate from the neutral list
+     hover token, which is intentionally far too light behind inverse text. */
+  --button-primary-bg: var(--text);
+  --button-primary-fg: var(--color-token-dropdown-background, var(--panel));
+  --button-primary-hover-bg: color-mix(in oklab, var(--text) 80%, transparent);
   /* The host's own radius scale, in pixels because that is what the agent now
      forwards. Kept identical here so the standalone path is not a second look. */
   --r-lg: 12.5px;
@@ -405,11 +411,14 @@ html[data-ui-surface="sidebar"] body,
 html[data-ui-surface="sidebar"] #root {
   height: 100%;
   min-height: 100%;
+  /* Stay transparent so the host sidebar column (mode header + account footer)
+     and Weft content share one continuous surface — solid sideBar tokens are a
+     shade darker and create a visible band above the native footer. */
+  background: transparent;
 }
 
 html[data-ui-surface="sidebar"] body {
   overflow: hidden;
-  background: var(--vscode-sideBar-background, var(--bg));
 }
 
 html[data-ui-surface="workspace"] body {
@@ -421,6 +430,23 @@ html[data-ui-surface="workspace"] .embedded-main {
   min-height: 100dvh;
 }
 
+/* The host mounts this dedicated iframe over the complete app window. Its
+   document must remain transparent; the Radix overlay is the only scrim, so
+   the real sidebar and workspace stay visible beneath it. */
+html[data-ui-surface="modal"],
+html[data-ui-surface="modal"] body,
+html[data-ui-surface="modal"] #root {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  background: transparent !important;
+  background-color: transparent !important;
+}
+html[data-ui-surface="modal"] body {
+  padding: 0 !important;
+  overflow: hidden;
+}
+
 .sidebar-surface {
   position: relative;
   height: 100%;
@@ -430,7 +456,7 @@ html[data-ui-surface="workspace"] .embedded-main {
   gap: var(--space-2);
   padding: 8px;
   overflow: hidden;
-  background: var(--vscode-sideBar-background, var(--bg));
+  background: transparent;
 }
 
 .sidebar-workspace-row {
@@ -980,7 +1006,9 @@ main {
 
 .empty-state {
   max-width: 480px;
-  margin: clamp(56px, 12vh, 112px) auto;
+  /* Fixed-ish top offset so Kanban ↔ Repositories empty screens share one
+     visual anchor instead of a soft vh band that feels different per route. */
+  margin: 96px auto 64px;
   padding: 0 var(--space-4);
   text-align: center;
 }
@@ -1002,6 +1030,13 @@ main {
 #issues {
   min-width: 0;
   padding: 12px 6px 0;
+}
+
+/* Keep empty-workspace / empty-list screens aligned across routes.
+   Kanban nests EmptyState under #issues (board padding); Repositories does
+   not. Zero the board padding for empty states so switching does not jump. */
+#issues:has(> .empty-state) {
+  padding: 0;
 }
 
 .kanban-toolbar {
@@ -1872,24 +1907,24 @@ main {
 }
 
 .modal:not([open]) { display: none; }
-.modal::backdrop { background: rgba(0, 0, 0, 0.52); }
+.modal::backdrop { background: rgba(0, 0, 0, 0.2); }
 
 .modal-body {
-  width: min(460px, calc(100vw - 32px));
+  width: min(440px, calc(100vw - 32px));
   max-width: calc(100vw - 32px);
   max-height: calc(100dvh - 32px);
   overflow: auto;
-  padding: 18px;
+  padding: 20px;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: 18px;
   background: var(--panel);
   color: var(--text);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.32);
-  animation: modal-in 120ms ease-out;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.18);
+  animation: modal-in 150ms ease-out;
 }
 
 @keyframes modal-in {
-  from { opacity: 0; transform: scale(0.985) translateY(3px); }
+  from { opacity: 0; transform: scale(0.98) translateY(4px); }
   to { opacity: 1; transform: none; }
 }
 
@@ -1898,13 +1933,31 @@ main {
   flex-direction: row;
   justify-content: space-between;
   gap: var(--space-4);
-  margin-bottom: var(--space-4);
+  margin-bottom: 18px;
 }
 
 .modal-heading { min-width: 0; flex: 1; }
-.modal-body h2 { margin: 0; font-size: 16px; line-height: 1.3; }
-.modal-heading p { margin: 5px 0 0; font-size: 12px; line-height: 1.45; }
-.modal-close { flex: none; margin: -4px -4px 0 0; }
+.modal-body h2,
+.modal-body [data-slot="dialog-title"] {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+.modal-heading p,
+.modal-body [data-slot="dialog-description"] {
+  margin: 6px 0 0;
+  color: var(--dim);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.modal-close {
+  flex: none;
+  margin: -6px -6px 0 0;
+  color: var(--dim);
+}
+.modal-close:hover { color: var(--text); }
 .form-stack { display: grid; gap: 14px; }
 .form-field { min-width: 0; }
 
@@ -1919,6 +1972,15 @@ main {
 .form-field input,
 .form-field textarea,
 .form-field .select-trigger { width: 100%; }
+
+/* Modal fields sit on a larger surface, so they take the next radius up. The
+   focus treatment is deliberately not overridden here — one outline, everywhere
+   (see DESIGN.md, Elevation & Depth). */
+.modal-body [data-slot="input"],
+.modal-body [data-slot="textarea"],
+.modal-body [data-slot="select-trigger"] {
+  border-radius: var(--r-lg);
+}
 .field-error { margin-top: 5px; }
 .repo-paths-input { min-height: 132px; font-family: var(--mono); font-size: 12px; }
 .repo-picker-row {
@@ -1935,7 +1997,23 @@ main {
 .field-error { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .modal-error { margin-top: 12px; }
-.modal-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+}
+.modal-actions [data-slot="button"][data-variant="ghost"] {
+  color: var(--dim);
+  min-width: 64px;
+}
+.modal-actions [data-slot="button"][data-variant="contrast"],
+.modal-actions [data-slot="button"][data-variant="default"] {
+  min-width: 72px;
+  border-radius: 999px;
+  padding-inline: 14px;
+}
 
 .notifications {
   position: fixed;
@@ -2048,7 +2126,7 @@ main {
   .kanban-card-actions > button,
   .kanban-card-actions > .thread-link { height: 44px; min-height: 44px; padding: 0 10px; font-size: 13px; }
 
-  .empty-state { margin: 48px auto; }
+  .empty-state { margin: 72px auto 48px; }
   .modal-body { width: calc(100vw - 24px); max-height: calc(100dvh - 24px); padding: 16px; }
   .notifications { right: 12px; left: 12px; justify-items: stretch; }
   .toast { max-width: none; }

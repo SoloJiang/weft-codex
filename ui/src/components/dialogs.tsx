@@ -108,7 +108,12 @@ function FormDialog({
             <DialogClose asChild>
               <Button type="button" variant="ghost" disabled={pending}>{t("modal.cancel")}</Button>
             </DialogClose>
-            <Button type="submit" disabled={pending || submitDisabled} aria-busy={pending}>
+            <Button
+              type="submit"
+              variant="contrast"
+              disabled={pending || submitDisabled}
+              aria-busy={pending}
+            >
               {pending ? pendingLabel : submitLabel}
             </Button>
           </div>
@@ -145,17 +150,19 @@ function WorkspaceDialog({
       }}
     >
       <div className="form-stack">
-        <Field label={t("field.name")} htmlFor="workspace-name" error={error}>
+        <div className="form-field">
           <Input
             id="workspace-name"
             autoFocus
             maxLength={120}
             placeholder={t("workspace.namePlaceholder")}
             value={name}
+            aria-label={t("workspace.namePlaceholder")}
             aria-invalid={Boolean(error)}
             onChange={(event) => { setName(event.target.value); setError("") }}
           />
-        </Field>
+          {error ? <p className="field-error" role="alert">{error}</p> : null}
+        </div>
       </div>
     </FormDialog>
   )

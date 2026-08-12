@@ -1,4 +1,8 @@
-import type { AppView } from "@/types"
+import type {
+  AppView,
+  DialogSubmission,
+  RepoImportResponse,
+} from "@/types"
 import type { UiSurface } from "@/surface"
 
 export type SurfaceCommand = "workspace.create" | "issue.create"
@@ -11,6 +15,9 @@ export type SurfaceMessage =
   | { type: "navigate"; view: AppView; issueId: number | null; artifactId?: number | null }
   | { type: "route.changed"; view: AppView; issueId: number | null; artifactId?: number | null }
   | { type: "command"; command: SurfaceCommand }
+  | { type: "dialog.submit"; requestId: string; submission: DialogSubmission }
+  | { type: "dialog.result"; requestId: string; ok: true; result?: RepoImportResponse }
+  | { type: "dialog.result"; requestId: string; ok: false; error: string }
 
 export interface SurfaceChannel {
   post(message: SurfaceMessage): void
@@ -27,7 +34,53 @@ function isRoute(value: unknown): value is AppView {
 }
 
 function isSurface(value: unknown): value is UiSurface {
-  return value === "standalone" || value === "sidebar" || value === "workspace"
+  return value === "standalone" || value === "sidebar" || value === "workspace" || value === "modal"
+}
+
+function isRequestId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 128
+}
+
+function isIssueKind(value: unknown): boolean {
+  return value === "feature" || value === "bugfix" || value === "refactor" || value === "spike"
+}
+
+function isMessageIntent(value: unknown): boolean {
+  return value === "message" || value === "continue"
+}
+
+function isDialogSubmission(value: unknown): value is DialogSubmission {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const candidate = value as Record<string, unknown>
+  if (candidate.type === "workspace") {
+    return typeof candidate.name === "string" && candidate.name.length <= 120
+  }
+  if (candidate.type === "issue") {
+    return typeof candidate.title === "string" && candidate.title.length <= 120 && isIssueKind(candidate.kind)
+  }
+  if (candidate.type === "repositories") {
+    return Array.isArray(candidate.paths) && candidate.paths.every((path) => typeof path === "string")
+  }
+  if (candidate.type !== "message") return false
+  if (candidate.target !== "lead" && candidate.target !== "task") return false
+  return (
+    isPositiveInteger(candidate.id) &&
+    typeof candidate.text === "string" &&
+    candidate.text.length <= 20_000 &&
+    isMessageIntent(candidate.intent)
+  )
+}
+
+function isRepoImportResponse(value: unknown): value is RepoImportResponse {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const candidate = value as Record<string, unknown>
+  return (
+    Array.isArray(candidate.results) &&
+    typeof candidate.added === "number" &&
+    typeof candidate.existing === "number" &&
+    typeof candidate.failed === "number" &&
+    typeof candidate.analysisQueued === "boolean"
+  )
 }
 
 function hasValidRoute(candidate: Record<string, unknown>): boolean {
@@ -55,8 +108,16 @@ function isSurfaceMessage(value: unknown): value is SurfaceMessage {
   if (candidate.type === "navigate" || candidate.type === "route.changed") {
     return hasValidRoute(candidate)
   }
-  if (candidate.type !== "command") return false
-  return candidate.command === "workspace.create" || candidate.command === "issue.create"
+  if (candidate.type === "command") {
+    return candidate.command === "workspace.create" || candidate.command === "issue.create"
+  }
+  if (candidate.type === "dialog.submit") {
+    return isRequestId(candidate.requestId) && isDialogSubmission(candidate.submission)
+  }
+  if (candidate.type !== "dialog.result" || !isRequestId(candidate.requestId)) return false
+  if (candidate.ok === false) return typeof candidate.error === "string"
+  if (candidate.ok !== true) return false
+  return candidate.result === undefined || isRepoImportResponse(candidate.result)
 }
 
 function bridgeId(): string | null {

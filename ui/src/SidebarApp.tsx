@@ -952,23 +952,22 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
         )}
       </div>
 
-      <div className="sidebar-primary-actions">
-        <Button
-          variant="ghost"
-          className="sidebar-create-button"
-          disabled={!channel}
-          onClick={() => {
-            requestHostAction({ action: "workspace.show" })
-            channel?.post({
-              type: "command",
-              command: workspaceId ? "issue.create" : "workspace.create",
-            })
-          }}
-        >
-          {workspaceId ? <SquarePen aria-hidden="true" /> : <Plus aria-hidden="true" />}
-          {workspaceId ? t("issue.create") : t("ws.add")}
-        </Button>
-      </div>
+      {workspaceId ? (
+        <div className="sidebar-primary-actions">
+          <Button
+            variant="ghost"
+            className="sidebar-create-button"
+            disabled={!channel}
+            onClick={() => {
+              requestHostAction({ action: "workspace.show" })
+              channel?.post({ type: "command", command: "issue.create" })
+            }}
+          >
+            <SquarePen aria-hidden="true" />
+            {t("issue.create")}
+          </Button>
+        </div>
+      ) : null}
 
       <nav className="sidebar-nav" aria-label={t("nav.primary")}>
         <Button

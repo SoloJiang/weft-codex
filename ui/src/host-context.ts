@@ -1,6 +1,7 @@
 import * as React from "react"
 
 import { languageFromLocale, type Language } from "@/i18n"
+import type { ActiveDialogState, DialogState } from "@/types"
 
 const ALLOWED_TOKENS = new Set([
   "--vscode-sideBar-background",
@@ -64,10 +65,14 @@ export interface HostContextV1 {
 }
 
 export type HostAction =
+  | { action: "surface.label"; label: string }
   | { action: "workspace.show" }
   | { action: "thread.open"; threadId: string }
   | { action: "repositories.pick" }
   | { action: "inbox.count"; count: number }
+  | { action: "dialog.present"; dialog: ActiveDialogState }
+  | { action: "dialog.mounted" }
+  | { action: "dialog.dismiss" }
 
 /** Host → UI, the opposite direction from HostAction: a trigger, not a request. */
 export type HostCommand = "search.open" | "inbox.open"
@@ -92,6 +97,34 @@ interface HostContextEnvelope {
   source: "weft-codex-host"
   type: "weft:host-context"
   payload: HostContextV1
+}
+
+interface HostDialogEnvelope {
+  source: "weft-codex-host"
+  type: "weft:dialog-state"
+  payload: DialogState
+}
+
+function isActiveDialogState(value: unknown): value is ActiveDialogState {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const candidate = value as Record<string, unknown>
+  if (candidate.type === "workspace" || candidate.type === "issue" || candidate.type === "repositories") {
+    return true
+  }
+  if (candidate.type !== "message") return false
+  if (candidate.target !== "lead" && candidate.target !== "task") return false
+  if (candidate.intent !== "message" && candidate.intent !== "continue") return false
+  return typeof candidate.id === "number" && Number.isInteger(candidate.id) && candidate.id > 0
+}
+
+function isHostDialogEnvelope(value: unknown): value is HostDialogEnvelope {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const candidate = value as Record<string, unknown>
+  return (
+    candidate.source === "weft-codex-host" &&
+    candidate.type === "weft:dialog-state" &&
+    (candidate.payload === null || isActiveDialogState(candidate.payload))
+  )
 }
 
 function isHostContext(value: unknown): value is HostContextV1 {
@@ -142,6 +175,15 @@ function applyHostContext(context: HostContextV1) {
   }
 }
 
+export function hasRequiredHostTokens(context: HostContextV1 | null): boolean {
+  if (!context) return false
+  return Boolean(
+    context.tokens["--color-token-main-surface-primary"] &&
+    context.tokens["--color-token-foreground"] &&
+    context.tokens["--font-sans"],
+  )
+}
+
 function standaloneLanguage(): Language {
   const declared = document.documentElement.lang
   return languageFromLocale(declared || navigator.language || "en")
@@ -172,6 +214,14 @@ export function requestHostAction(action: HostAction): boolean {
     ...action,
   }, hostOrigin)
   return true
+}
+
+export function presentHostDialog(dialog: ActiveDialogState): boolean {
+  return requestHostAction({ action: "dialog.present", dialog })
+}
+
+export function dismissHostDialog(): boolean {
+  return requestHostAction({ action: "dialog.dismiss" })
 }
 
 export function hasHostBridge(): boolean {
@@ -219,6 +269,33 @@ export function useHostCommand(handler: (command: HostCommand) => void): void {
     window.addEventListener("message", onMessage)
     return () => window.removeEventListener("message", onMessage)
   }, [])
+}
+
+/** Receive the active dialog assigned to the dedicated host-level modal
+ * surface. The host retains the value and replays it after iframe reloads. */
+export function useHostDialogState(): DialogState {
+  const [dialog, setDialog] = React.useState<DialogState>(null)
+
+  React.useEffect(() => {
+    const hostOrigin = expectedHostOrigin()
+    const onMessage = (event: MessageEvent<unknown>) => {
+      if (!hostOrigin || event.source !== window.parent || event.origin !== hostOrigin) return
+      if (!isHostDialogEnvelope(event.data)) return
+      setDialog(event.data.payload)
+    }
+    window.addEventListener("message", onMessage)
+    // Register first, then ask the host to replay both context and its retained
+    // dialog state. This makes first-open and iframe reload ordering irrelevant.
+    if (hostOrigin && window.parent !== window) {
+      window.parent.postMessage(
+        { source: "weft-codex-ui", type: "weft:host-context-request", version: 1 },
+        hostOrigin,
+      )
+    }
+    return () => window.removeEventListener("message", onMessage)
+  }, [])
+
+  return dialog
 }
 
 function ensureHostResultListener() {
@@ -318,23 +395,39 @@ export function useHostContext(): { lang: Language; context: HostContextV1 | nul
 
   React.useEffect(() => {
     const hostOrigin = expectedHostOrigin()
+    let requestTimer: number | undefined
+    let requestAttempts = 0
+    let contextReceived = false
+
+    const requestContext = () => {
+      if (contextReceived || !hostOrigin || window.parent === window) return
+      window.parent.postMessage(
+        { source: "weft-codex-ui", type: "weft:host-context-request", version: 1 },
+        hostOrigin,
+      )
+      requestAttempts += 1
+      if (requestAttempts < 25) {
+        requestTimer = window.setTimeout(requestContext, 120)
+      }
+    }
 
     const onMessage = (event: MessageEvent<unknown>) => {
       if (!hostOrigin || event.source !== window.parent || event.origin !== hostOrigin) return
       if (!isHostEnvelope(event.data)) return
+      contextReceived = true
+      window.clearTimeout(requestTimer)
+      requestTimer = undefined
       applyHostContext(event.data.payload)
       setContext(event.data.payload)
       setLang(languageFromLocale(event.data.payload.locale))
     }
 
     window.addEventListener("message", onMessage)
-    if (hostOrigin && window.parent !== window) {
-      window.parent.postMessage(
-        { source: "weft-codex-ui", type: "weft:host-context-request", version: 1 },
-        hostOrigin,
-      )
+    requestContext()
+    return () => {
+      window.clearTimeout(requestTimer)
+      window.removeEventListener("message", onMessage)
     }
-    return () => window.removeEventListener("message", onMessage)
   }, [])
 
   return { lang, context }
