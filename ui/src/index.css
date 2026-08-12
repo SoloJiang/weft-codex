@@ -43,7 +43,6 @@
   --fb-danger: #fa423e;
   --fb-ok: #04b84c;
   --fb-hover: rgba(252, 252, 252, 0.08);
-  --fb-focus: #339cff;
 }
 
 @media (prefers-color-scheme: light) {
@@ -65,7 +64,6 @@
     --fb-danger: #d62925;
     --fb-ok: #087d35;
     --fb-hover: rgba(13, 13, 13, 0.06);
-    --fb-focus: #0169cc;
   }
 }
 
@@ -87,7 +85,6 @@
   --fb-danger: #fa423e;
   --fb-ok: #04b84c;
   --fb-hover: rgba(252, 252, 252, 0.08);
-  --fb-focus: #339cff;
 }
 
 :root[data-host-theme="light"] {
@@ -108,7 +105,6 @@
   --fb-danger: #d62925;
   --fb-ok: #087d35;
   --fb-hover: rgba(13, 13, 13, 0.06);
-  --fb-focus: #0169cc;
 }
 
 :root {
@@ -128,16 +124,26 @@
   --danger: var(--color-token-charts-red, var(--fb-danger));
   --ok: var(--color-token-charts-green, var(--fb-ok));
   --hover: var(--color-token-list-hover-background, var(--fb-hover));
-  --focus: var(--vscode-focusBorder, var(--fb-focus));
+  /**
+   * The host's own focus colour, read off its Tailwind classes:
+   * `focus-visible:outline-2 outline-offset-2 outline-token-border`.
+   *
+   * Focus is not a colour of its own here — it *is* the border token, so the
+   * fallback is the fallback's border token and the standalone path keeps the
+   * same convention rather than inventing a saturated ring of its own.
+   */
+  --focus: var(--color-token-border, var(--fb-border));
   /* Codex native primary button: foreground fill, inverse surface text, and
      an 80% foreground hover fill. Keep this separate from the neutral list
      hover token, which is intentionally far too light behind inverse text. */
   --button-primary-bg: var(--text);
   --button-primary-fg: var(--color-token-dropdown-background, var(--panel));
   --button-primary-hover-bg: color-mix(in oklab, var(--text) 80%, transparent);
-  --r-lg: 10px;
-  --r-md: 8px;
-  --r-sm: 6px;
+  /* The host's own radius scale, in pixels because that is what the agent now
+     forwards. Kept identical here so the standalone path is not a second look. */
+  --r-lg: 12.5px;
+  --r-md: 10px;
+  --r-sm: 7.5px;
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
   --mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, monospace;
   --control-h: 32px;
@@ -171,6 +177,20 @@ input,
 select,
 textarea { font: inherit; }
 
+/**
+ * One focus treatment for the whole UI.
+ *
+ * This used to fight shadcn's `focus-visible:ring-3`: that utility paints a
+ * box-shadow, which these rules never set, so it survived the cascade and
+ * stacked a 3px halo inside this 2px outline — about 7px of ring on one field.
+ * The components no longer carry ring utilities; this is the only ring.
+ *
+ * Geometry and colour are the host's: it writes
+ * `focus-visible:outline-2 outline-offset-2 outline-token-border` on its own
+ * controls. Its command-menu input carries no ring, but that is the exception
+ * rather than the rule — it is auto-focused and alone in a modal, so it has
+ * nothing to distinguish itself from.
+ */
 button:focus-visible,
 .thread-link:focus-visible,
 select:focus-visible,
@@ -191,50 +211,158 @@ button svg,
   flex: none;
 }
 
-select,
+/**
+ * These element rules are unlayered, so they beat every Tailwind utility —
+ * utilities live in a layer and unlayered CSS always wins. That is why the
+ * shadcn classes on Input/Textarea had no effect on anything measurable, and
+ * why this file is the single source of truth for control chrome. Keep visual
+ * properties here; keep the components to structure and behaviour.
+ */
+/**
+ * The host draws edges with a hairline ring and a soft shadow, not a border.
+ *
+ * Measured on Codex's composer: `border: 0`, `box-shadow: 0 0 0 0.5px
+ * rgba(fg,.157), 0 3px 7.5px rgba(0,0,0,.04)` over a translucent surface. Its
+ * menu surface uses the same construction at a lighter alpha. A 1px CSS border
+ * reads noticeably heavier next to that, which is what made these fields look
+ * like web forms sitting inside a native app.
+ */
 input,
 textarea {
   min-height: var(--control-h);
   min-width: 0;
   padding: 6px 9px;
-  border: 1px solid var(--color-token-input-border, var(--border));
-  border-radius: var(--r-sm);
+  border: 0;
+  border-radius: var(--r-md);
   background: var(--color-token-input-background, var(--panel-2));
+  box-shadow: 0 0 0 0.5px var(--border-strong), 0 3px 7.5px rgb(0 0 0 / 0.04);
   color: var(--text);
+  transition: box-shadow 120ms ease, background-color 120ms ease;
 }
 
-select,
 input { height: var(--control-h); }
 
-.select-shell {
-  position: relative;
-  display: inline-flex;
+textarea { border-radius: var(--r-lg); }
+
+/* The host expresses emphasis as alpha on the foreground, so hover lifts the
+   hairline rather than switching to a different hue. */
+input:hover:not(:disabled, :focus),
+textarea:hover:not(:disabled, :focus) {
+  box-shadow: 0 0 0 0.5px color-mix(in srgb, var(--text) 26%, transparent),
+    0 3px 7.5px rgb(0 0 0 / 0.04);
+}
+
+input:disabled,
+textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/**
+ * Dropdowns follow the host's shape, not the web's.
+ *
+ * Codex Desktop has no native `<select>` anywhere (build 6321: 0 selects, 0
+ * listbox triggers, 14 menu-trigger buttons), so a filled bordered box reads as
+ * foreign next to it. The host's trigger is transparent until hovered, with a
+ * 1px transparent border holding the space so nothing shifts.
+ */
+.select-trigger {
   min-width: 0;
+  height: var(--control-h);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.select-trigger:hover:not([disabled]),
+.select-trigger[data-state="open"] { background: var(--hover); }
+
+.select-trigger[disabled] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.select-trigger-value {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-trigger[data-placeholder] .select-trigger-value { color: var(--placeholder); }
+
+.select-trigger-icon {
+  width: 13px;
+  height: 13px;
+  flex: none;
   color: var(--dim);
 }
 
-.select-shell select {
-  width: 100%;
-  padding-inline-end: 32px;
-  appearance: none;
-  -webkit-appearance: none;
+/* Measured off the host's own menu: radius 15px, no border, a 0.5px ring in the
+   border token and a soft drop shadow over the dropdown surface, 4px padding. */
+.select-content {
+  z-index: 40;
+  min-width: var(--radix-select-trigger-width);
+  max-height: var(--radix-select-content-available-height);
+  overflow: hidden;
+  border: 0;
+  border-radius: 15px;
+  background: var(--panel-2);
+  color: var(--text);
+  box-shadow: 0 0 0 0.5px var(--border), 0 3px 7.5px rgb(0 0 0 / 0.04),
+    0 12px 32px rgb(0 0 0 / 0.12);
 }
 
-.select-shell::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  inset-inline-end: 13px;
-  width: 6px;
-  height: 6px;
-  border-inline-end: 1.5px solid currentColor;
-  border-block-end: 1.5px solid currentColor;
-  transform: translateY(-65%) rotate(45deg);
-  pointer-events: none;
+.select-viewport { padding: 4px; }
+
+/* The host's menu rows: radius --radius-lg, 5px 8px. */
+.select-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 28px;
+  padding: 5px 8px;
+  border-radius: var(--r-lg);
+  outline: none;
+  cursor: pointer;
+  user-select: none;
 }
 
-.select-shell:focus-within { color: var(--text); }
-.select-shell:has(select:disabled) { opacity: 0.48; }
+.select-item[data-highlighted] { background: var(--hover); }
+
+.select-item[data-disabled] {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.select-item-check {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--accent);
+}
+
+.select-label {
+  padding: 6px 8px 2px;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.select-separator {
+  height: 1px;
+  margin: 4px;
+  background: var(--border);
+}
 
 textarea {
   width: 100%;
@@ -249,7 +377,14 @@ textarea::placeholder {
   opacity: 1;
 }
 
+/* Fields carry a ring rather than a border now, so the invalid state has to
+   travel the same way — a border-color here would have nothing to colour. */
 [aria-invalid="true"] { border-color: var(--danger); }
+
+input[aria-invalid="true"],
+textarea[aria-invalid="true"] {
+  box-shadow: 0 0 0 1px var(--danger), 0 3px 7.5px rgb(0 0 0 / 0.04);
+}
 
 a { color: var(--link); }
 
@@ -313,6 +448,7 @@ html[data-ui-surface="modal"] body {
 }
 
 .sidebar-surface {
+  position: relative;
   height: 100%;
   min-width: 0;
   display: flex;
@@ -331,13 +467,120 @@ html[data-ui-surface="modal"] body {
 }
 
 .sidebar-workspace-select {
-  width: auto;
   min-width: 0;
   flex: 1;
+  font-weight: 600;
 }
 
-.sidebar-workspace-select select {
+.sidebar-header-entries {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sidebar-header-entries button[data-active="true"] {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.sidebar-inbox-entry { position: relative; }
+
+.sidebar-inbox-badge {
+  position: absolute;
+  top: -1px;
+  inset-inline-end: -1px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--link);
+  color: var(--vscode-button-foreground, #fff);
+  font-size: 9px;
   font-weight: 600;
+  line-height: 14px;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* The panel covers the column rather than pushing it: search and the inbox are
+   momentary, and reflowing the whole tree under them loses the reader's place. */
+.sidebar-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: 8px;
+  background: var(--vscode-sideBar-background, var(--bg));
+}
+
+.sidebar-panel-header {
+  min-height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.sidebar-panel-header h2 {
+  margin: 0;
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.sidebar-panel-list {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  align-content: start;
+  gap: 1px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.sidebar-search-field {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.sidebar-search-field > svg {
+  position: absolute;
+  inset-inline-start: 8px;
+  width: 13px;
+  height: 13px;
+  color: var(--dim);
+  pointer-events: none;
+}
+
+.sidebar-search-field input {
+  width: 100%;
+  padding-inline-start: 26px;
+}
+
+.sidebar-result-row {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+  min-height: 38px;
+  padding: 6px 8px;
+  border-radius: var(--r-md, 6px);
+  text-align: start;
+}
+
+.sidebar-result-row:hover { background: var(--hover); }
+
+.sidebar-result-kind {
+  margin-top: 2px;
+  color: var(--dim);
+  font-size: 9.5px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
 }
 
 .sidebar-primary-actions { display: grid; gap: 2px; }
@@ -417,7 +660,7 @@ html[data-ui-surface="modal"] body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 28px;
   align-items: stretch;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-lg);
 }
 
 .sidebar-issue-row[data-active="true"] {
@@ -447,7 +690,7 @@ html[data-ui-surface="modal"] body {
   width: 100%;
   min-width: 0;
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-lg);
   background: transparent;
   color: var(--text);
   cursor: pointer;
@@ -1073,43 +1316,6 @@ main {
   padding-inline-start: 0;
 }
 
-.kanban-card-menu {
-  position: relative;
-  margin-left: auto;
-}
-
-.kanban-card-menu-trigger {
-  width: 30px;
-  height: 27px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  color: var(--dim);
-}
-
-.kanban-card-menu-trigger:hover,
-.kanban-card-menu-trigger[aria-expanded="true"] { background: var(--hover); color: var(--text); }
-.kanban-card-menu-trigger svg { width: 14px; height: 14px; }
-
-.kanban-card-menu-popover {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 8;
-  min-width: 148px;
-  display: grid;
-  gap: 2px;
-  padding: 4px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-md);
-  background: var(--color-token-dropdown-background, var(--panel));
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
-}
-
-.kanban-card-menu-popover button {
-  width: 100%;
-  justify-content: flex-start;
-}
-
 .issue-head {
   min-width: 0;
   display: flex;
@@ -1253,7 +1459,7 @@ main {
   min-width: 0;
   padding: 4px 8px;
   border: 0;
-  border-radius: var(--r-sm, 6px);
+  border-radius: var(--r-lg);
   background: transparent;
   color: var(--text);
   font: inherit;
@@ -1764,24 +1970,17 @@ main {
 }
 
 .form-field input,
-.form-field select,
-.form-field textarea { width: 100%; }
+.form-field textarea,
+.form-field .select-trigger { width: 100%; }
 
+/* Modal fields sit on a larger surface, so they take the next radius up. The
+   focus treatment is deliberately not overridden here — one outline, everywhere
+   (see DESIGN.md, Elevation & Depth). */
 .modal-body [data-slot="input"],
 .modal-body [data-slot="textarea"],
-.modal-body [data-slot="native-select"] {
-  border-radius: 12px;
-  background: var(--color-token-input-background, var(--panel-2));
+.modal-body [data-slot="select-trigger"] {
+  border-radius: var(--r-lg);
 }
-.modal-body [data-slot="input"]:focus-visible,
-.modal-body [data-slot="textarea"]:focus-visible,
-.modal-body [data-slot="native-select"]:focus-visible {
-  border-color: color-mix(in srgb, var(--focus) 70%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 18%, transparent);
-  outline: none;
-  --tw-ring-shadow: 0 0 #0000;
-}
-.form-field .select-shell { width: 100%; }
 .field-error { margin-top: 5px; }
 .repo-paths-input { min-height: 132px; font-family: var(--mono); font-size: 12px; }
 .repo-picker-row {

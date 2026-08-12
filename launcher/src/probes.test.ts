@@ -43,6 +43,7 @@ function healthySnapshot(missing: string[] = []) {
     modeSwitcherId: true,
     threadRowCount: 24,
     titlebarDragRegion: true,
+    headerActionSlot: true,
     locale: "en-GB",
   }
 }

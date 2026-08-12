@@ -14,6 +14,7 @@ import { useI18n } from "@/i18n"
 import type { BoardEntry, Direction, DirectionStatus, Issue, Repo } from "@/types"
 import { STATUSES } from "@/types"
 import { buildIssueBoard, groupIssueBoard, type IssueBoardCard } from "@/lib/issue-board"
+import { isTypingTarget } from "@/lib/utils"
 import { AsyncButton, EmptyState, ThreadLink } from "./shared"
 
 export interface WorkActions {
@@ -277,9 +278,14 @@ export function KanbanView({
     await actions.onStartLead(entry.issue)
   }, [actions])
 
+  // Not ⌘K: Codex Desktop binds that (and ⇧⌘P) to its own command menu, at the
+  // Electron menu-accelerator level, so the keypress may never reach this frame
+  // — and the hint we used to print promised something the host would take.
+  // See docs/compat/codex-builds.md §5.10.
   React.useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLocaleLowerCase() !== "k") return
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return
+      if (isTypingTarget(event.target)) return
       event.preventDefault()
       searchRef.current?.focus()
     }
@@ -307,7 +313,7 @@ export function KanbanView({
               placeholder={t("kanban.searchPlaceholder")}
               onChange={(event) => setQuery(event.target.value)}
             />
-            <kbd aria-hidden="true">⌘K</kbd>
+            <kbd aria-hidden="true">/</kbd>
           </div>
         </header>
         {cards.length && !visibleCards.length ? (

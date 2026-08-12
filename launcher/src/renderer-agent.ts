@@ -6,6 +6,8 @@ const SIDEBAR_ROOT_ID = "weft-codex-sidebar-root"
 const WORKSPACE_ROOT_ID = "weft-codex-workspace-root"
 const MODAL_ROOT_ID = "weft-codex-modal-root"
 const NATIVE_CHECK_ATTR = "data-weft-codex-native-mode-check"
+const HEADER_ACTION_ATTR = "data-weft-codex-header-action"
+const HEADER_BADGE_ATTR = "data-weft-codex-header-badge"
 
 export interface RendererAgentConfig {
   webBaseUrl: string
@@ -67,6 +69,8 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
     const STYLE_ID = "weft-codex-host-style";
     const MODE_ITEM_ATTR = "data-weft-codex-mode-item";
     const NATIVE_CHECK_ATTR = "data-weft-codex-native-mode-check";
+    const HEADER_ACTION_ATTR = "data-weft-codex-header-action";
+    const HEADER_BADGE_ATTR = "data-weft-codex-header-badge";
     const THREAD_OPEN_RETRY_DELAYS = [0, 80, 160, 320, 640, 1000, 1800];
     const childOrigin = new URL(config.webBaseUrl).origin;
     const previous = window[GLOBAL_KEY];
@@ -88,6 +92,9 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       modalBackground: new Map(),
       modeButton: null,
       savedModeButton: null,
+      headerActionsMounted: false,
+      inboxCount: 0,
+      usedLengths: new Map(),
       mutationObserver: null,
       resizeObserver: null,
       mediaQuery: null,
@@ -183,6 +190,27 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       if (button.getAttribute("aria-label") !== aria) button.setAttribute("aria-label", aria);
     }
 
+    /**
+     * The container the native header actions (search, activity) live in.
+     *
+     * Located structurally, on purpose. Those buttons carry no
+     * data-app-action-* attribute of their own, and their only distinguishing
+     * mark is aria-label — which is locale text, so anchoring on it would break
+     * on any host language but the one we happened to probe. What is stable is
+     * the shape: the mode row holds the switcher plus exactly one sibling
+     * container, and that container carries the ms-auto alignment that keeps
+     * these controls flush right. Requiring exactly one sibling fails closed if
+     * that shape ever changes.
+     */
+    function actionSlot(button) {
+      if (!(button instanceof HTMLElement)) return null;
+      const modeRow = button.parentElement;
+      if (!(modeRow instanceof HTMLElement)) return null;
+      const siblings = [...modeRow.children]
+        .filter((child) => child instanceof HTMLElement && child !== button);
+      return siblings.length === 1 ? siblings[0] : null;
+    }
+
     function markModeHeader(button) {
       if (!(button instanceof HTMLElement)) return;
       const modeRow = button.parentElement;
@@ -193,6 +221,173 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         if (!(child instanceof HTMLElement) || child === modeRow) continue;
         child.dataset.weftCodexNativeHeaderAction = "";
       }
+      // The action slot lives *inside* the mode row, so the loop above never
+      // reaches it. Mark its children rather than the slot itself: the slot
+      // carries the alignment our own entries inherit by sitting in it.
+      const slot = actionSlot(button);
+      if (!(slot instanceof HTMLElement)) return;
+      for (const child of slot.children) {
+        if (!(child instanceof HTMLElement)) continue;
+        if (child.hasAttribute(HEADER_ACTION_ATTR)) continue;
+        child.dataset.weftCodexNativeHeaderAction = "";
+      }
+    }
+
+    function localeIsChinese() {
+      const locale = document.documentElement.lang || navigator.language || "en";
+      return locale.toLowerCase().startsWith("zh");
+    }
+
+    /**
+     * Weft's two header entries, in the slot the native ones vacated.
+     *
+     * They are triggers and a number, nothing more: the panels render inside
+     * the sidebar iframe where React, i18n and the design tokens already live.
+     * Spec §7.6 keeps the renderer a thin surface agent, so it must not grow a
+     * second place that knows how to draw a list of Weft data.
+     */
+    const HEADER_ACTIONS = [
+      {
+        key: "search",
+        command: "search.open",
+        path: "M11 3a8 8 0 1 0 0 16 8 8 0 0 0 0-16ZM21 21l-4.35-4.35",
+        label: { zh: "搜索 workspace", en: "Search workspace" },
+      },
+      {
+        key: "inbox",
+        command: "inbox.open",
+        path: "M22 12h-6l-2 3h-4l-2-3H2M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z",
+        label: { zh: "收件箱", en: "Inbox" },
+      },
+    ];
+
+    function headerActionIcon(path) {
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("width", "17");
+      svg.setAttribute("height", "17");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("fill", "none");
+      svg.setAttribute("stroke", "currentColor");
+      svg.setAttribute("stroke-width", "2");
+      svg.setAttribute("stroke-linecap", "round");
+      svg.setAttribute("stroke-linejoin", "round");
+      svg.setAttribute("aria-hidden", "true");
+      svg.classList.add("icon-xs", "shrink-0");
+      const node = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      node.setAttribute("d", path);
+      svg.append(node);
+      return svg;
+    }
+
+    /**
+     * Clone a native control so ours inherit the host's sizing, hover, focus
+     * ring and theme without us restating any of it — the same trick
+     * createWeftMenuItem uses for the mode menu. The native actions are hidden,
+     * not removed, so they stay available as templates; the mode switcher is
+     * the fallback because it carries the identical class string.
+     */
+    function headerActionTemplate(slot, button) {
+      const native = [...slot.querySelectorAll("button")]
+        .find((candidate) => !candidate.hasAttribute(HEADER_ACTION_ATTR));
+      if (native instanceof HTMLElement) return native;
+      return button instanceof HTMLElement ? button : null;
+    }
+
+    function inboxLabel(base, count) {
+      if (count <= 0) return base;
+      if (localeIsChinese()) return base + "，" + count + " 项待处理";
+      return base + ", " + count + " needing attention";
+    }
+
+    function applyInboxBadge() {
+      const button = document.querySelector('[' + HEADER_ACTION_ATTR + '="inbox"]');
+      if (!(button instanceof HTMLElement)) return;
+      const action = HEADER_ACTIONS.find((candidate) => candidate.key === "inbox");
+      const base = localeIsChinese() ? action.label.zh : action.label.en;
+      button.setAttribute("aria-label", inboxLabel(base, state.inboxCount));
+      let badge = button.querySelector("[" + HEADER_BADGE_ATTR + "]");
+      if (state.inboxCount <= 0) {
+        if (badge) badge.remove();
+        return;
+      }
+      if (!(badge instanceof HTMLElement)) {
+        badge = document.createElement("span");
+        badge.setAttribute(HEADER_BADGE_ATTR, "");
+        badge.setAttribute("aria-hidden", "true");
+        button.append(badge);
+      }
+      const text = state.inboxCount > 99 ? "99+" : String(state.inboxCount);
+      if (badge.textContent !== text) badge.textContent = text;
+    }
+
+    function createHeaderAction(template, action) {
+      const clone = template.cloneNode(true);
+      if (!(clone instanceof HTMLElement)) return null;
+      clone.setAttribute(HEADER_ACTION_ATTR, action.key);
+      clone.removeAttribute("data-weft-codex-native-header-action");
+      clone.removeAttribute("aria-haspopup");
+      clone.removeAttribute("aria-expanded");
+      clone.removeAttribute("data-state");
+      clone.removeAttribute("id");
+      for (const identified of clone.querySelectorAll("[id]")) identified.removeAttribute("id");
+      for (const svg of clone.querySelectorAll("svg")) svg.remove();
+      for (const text of [...clone.childNodes]) {
+        if (text.nodeType === Node.TEXT_NODE) text.remove();
+      }
+      for (const span of [...clone.querySelectorAll("span")]) {
+        if (!span.hasAttribute(HEADER_BADGE_ATTR)) span.remove();
+      }
+      clone.setAttribute("type", "button");
+      clone.setAttribute("aria-label", localeIsChinese() ? action.label.zh : action.label.en);
+      clone.append(headerActionIcon(action.path));
+      clone.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        postSurfaceCommand(action.command);
+      });
+      return clone;
+    }
+
+    /**
+     * Idempotent: React re-renders the header, so this runs on every mount pass
+     * and must converge rather than accumulate.
+     */
+    function ensureHeaderActions(button) {
+      const slot = actionSlot(button);
+      if (!(slot instanceof HTMLElement)) {
+        removeHeaderActions();
+        state.headerActionsMounted = false;
+        return;
+      }
+      const template = headerActionTemplate(slot, button);
+      if (!(template instanceof HTMLElement)) {
+        removeHeaderActions();
+        state.headerActionsMounted = false;
+        return;
+      }
+      for (const action of HEADER_ACTIONS) {
+        const selector = '[' + HEADER_ACTION_ATTR + '="' + action.key + '"]';
+        const existing = slot.querySelector(":scope > " + selector);
+        if (existing instanceof HTMLElement) continue;
+        // A stale copy can survive a re-render that moved the slot; drop it
+        // before appending so the pair never doubles up.
+        for (const orphan of document.querySelectorAll(selector)) orphan.remove();
+        const created = createHeaderAction(template, action);
+        if (created) slot.append(created);
+      }
+      state.headerActionsMounted = true;
+      applyInboxBadge();
+    }
+
+    function removeHeaderActions() {
+      for (const node of document.querySelectorAll("[" + HEADER_ACTION_ATTR + "]")) node.remove();
+    }
+
+    function setInboxCount(value) {
+      const count = Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+      if (state.inboxCount === count) return;
+      state.inboxCount = count;
+      applyInboxBadge();
     }
 
     function setDocumentState() {
@@ -206,6 +401,10 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         // tier="weft-mode", so a failed subtractive probe cannot hide native UI.
         weftCodexTier: config.compatibilityTier,
         weftCodexModeCapability: state.modeButton ? "native" : "fallback",
+        // Deliberately not part of the tier. Losing the action slot must only
+        // move where the two Weft entries render — the sidebar draws its own
+        // pair instead — never cost the whole Weft sidebar (compat §5.8).
+        weftCodexHeaderActions: state.headerActionsMounted ? "native" : "fallback",
         weftCodexCspBypass: state.cspBypass ? "true" : "false",
       };
       for (const [key, value] of Object.entries(values)) {
@@ -563,6 +762,32 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         html[data-weft-codex-mode="weft"] [${NATIVE_CHECK_ATTR}] {
           display: none !important;
         }
+        /* Ours are the mirror image of the native actions: shown only where the
+           natives are hidden. Both halves are gated on tier="weft-mode", so a
+           failed subtractive probe leaves the header entirely native. */
+        html:not([data-weft-codex-tier="weft-mode"]) [${HEADER_ACTION_ATTR}],
+        html:not([data-weft-codex-mode="weft"]) [${HEADER_ACTION_ATTR}] {
+          display: none !important;
+        }
+        [${HEADER_ACTION_ATTR}] {
+          position: relative;
+        }
+        [${HEADER_BADGE_ATTR}] {
+          position: absolute;
+          top: -1px;
+          inset-inline-end: -1px;
+          min-width: 14px;
+          height: 14px;
+          padding: 0 3px;
+          border-radius: 7px;
+          background: var(--color-token-primary);
+          color: var(--color-token-button-foreground);
+          font-size: 9px;
+          font-weight: 600;
+          line-height: 14px;
+          text-align: center;
+          pointer-events: none;
+        }
       \`;
       (document.head || document.documentElement).append(style);
     }
@@ -696,13 +921,44 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       return scheme.includes("light") && !scheme.includes("dark") ? "light" : "dark";
     }
 
+    /**
+     * Resolve a token to absolute pixels before forwarding it.
+     *
+     * The host states its radii in rem (build 6321: calc(.375rem * 1.25)), and
+     * rem resolves against the *consuming* document's root font size. The Weft
+     * surfaces set 13px where the host uses 16px, so forwarding the string made
+     * every corner land 19% tighter than the host draws it — 6.09px against
+     * 7.5px. Measuring the used value here is what makes the two agree.
+     */
+    function usedLength(value, rootFontSize) {
+      // Percentages resolve against the box, not the font, so a zero-sized
+      // probe would answer 0px. Leave those alone.
+      if (!value || value.includes("%")) return value;
+      const key = rootFontSize + "|" + value;
+      const cached = state.usedLengths.get(key);
+      if (cached !== undefined) return cached;
+      const probe = document.createElement("div");
+      probe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none";
+      probe.style.borderTopLeftRadius = value;
+      document.documentElement.append(probe);
+      const used = getComputedStyle(probe).borderTopLeftRadius || value;
+      probe.remove();
+      // Keyed by root font size so a zoom change re-measures instead of
+      // serving a stale answer; the probe forces a layout, and context is
+      // published on every mutation, so this must not run each time.
+      state.usedLengths.set(key, used);
+      return used;
+    }
+
     function hostContext() {
       const root = document.documentElement;
       const style = getComputedStyle(root);
       const tokens = {};
+      const rootFontSize = style.fontSize;
       for (const token of allowedTokens) {
         const value = style.getPropertyValue(token).trim();
-        if (value) tokens[token] = value;
+        if (!value) continue;
+        tokens[token] = token.startsWith("--radius") ? usedLength(value, rootFontSize) : value;
       }
       const sidebar = document.querySelector("[data-app-action-sidebar-scroll]");
       const sidebarCollapsed = !(sidebar instanceof HTMLElement) || sidebar.getBoundingClientRect().width < 40;
@@ -714,6 +970,10 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         mode: state.mode,
         view: state.view,
         sidebarCollapsed,
+        // "fallback" tells the sidebar to draw the search and inbox entries in
+        // its own header: the capability must survive a host that no longer
+        // offers a slot to put them in, even if the placement cannot.
+        headerActions: state.headerActionsMounted ? "native" : "fallback",
         security: { cspBypass: state.cspBypass },
       };
       const threadId = activeThreadId();
@@ -742,6 +1002,22 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       postContext(state.sidebarFrame);
       postContext(state.workspaceFrame);
       postContext(state.modalFrame);
+    }
+
+    /**
+     * Header entries are triggers only; the sidebar owns the panel. One-way and
+     * unacknowledged on purpose — there is nothing for the host to do if the
+     * frame is still loading except let the human click again.
+     */
+    function postSurfaceCommand(command) {
+      const frame = state.sidebarFrame;
+      if (!(frame instanceof HTMLIFrameElement) || !frame.contentWindow) return;
+      frame.contentWindow.postMessage({
+        source: "weft-codex-host",
+        type: "weft:host-command",
+        version: 1,
+        command,
+      }, childOrigin);
     }
 
     function publishContextSoon() {
@@ -854,6 +1130,21 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         });
         return;
       }
+      if (message.action === "inbox.count") {
+        // Only the sidebar owns this number; the workspace frame sees the same
+        // board and would race it with a second, equally authoritative answer.
+        if (frame !== state.sidebarFrame) {
+          actionResult(frame, message.requestId, false, "inbox-count-not-from-sidebar");
+          return;
+        }
+        if (typeof message.count !== "number" || !Number.isFinite(message.count)) {
+          actionResult(frame, message.requestId, false, "invalid-inbox-count");
+          return;
+        }
+        setInboxCount(message.count);
+        actionResult(frame, message.requestId, true);
+        return;
+      }
       if (message.action === "repositories.pick") {
         state.pendingActions.set(message.requestId, frame);
         notifyHost("repositories.pick", { requestId: message.requestId });
@@ -894,7 +1185,13 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         const inferred = inferNativeMode(nextModeButton);
         if (inferred !== state.mode) state.mode = inferred;
       }
-      if (nextModeButton) markModeHeader(nextModeButton);
+      if (nextModeButton) {
+        markModeHeader(nextModeButton);
+        ensureHeaderActions(nextModeButton);
+      } else {
+        removeHeaderActions();
+        state.headerActionsMounted = false;
+      }
       setDocumentState();
       syncModeMenus();
     }
@@ -963,6 +1260,8 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         workspaceReady: state.readyFrames.has("workspace"),
         modalReady: state.readyFrames.has("modal"),
         nativeModeSwitcher: Boolean(state.modeButton),
+        headerActions: state.headerActionsMounted ? "native" : "fallback",
+        inboxCount: state.inboxCount,
       };
     }
 
@@ -978,6 +1277,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       if (state.clickListener) document.removeEventListener("click", state.clickListener, true);
       state.pendingActions.clear();
       restoreModeButton();
+      removeHeaderActions();
       restoreModalBackground();
       if (state.sidebarRoot) state.sidebarRoot.remove();
       if (state.workspaceRoot) state.workspaceRoot.remove();
@@ -989,6 +1289,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       delete root.dataset.weftCodexView;
       delete root.dataset.weftCodexTier;
       delete root.dataset.weftCodexModeCapability;
+      delete root.dataset.weftCodexHeaderActions;
       delete root.dataset.weftCodexCspBypass;
       for (const element of document.querySelectorAll("[data-weft-codex-mode-header]")) {
         element.removeAttribute("data-weft-codex-mode-header");

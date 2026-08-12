@@ -73,6 +73,7 @@
 | 6321 | `sidebar.threadRoute` | subtractive | true | n=24 |
 | 6321 | `sidebar.threadActive` | subtractive | true | n=24；2026-08-10 新增探针，语义经真实点击验证（§5.1） |
 | 6321 | `mode.switcher` | subtractive | true | `nav` 作用域内、排除 sidebar 后恰好 1 个触发器（文档内共 9 个同形按钮）；触发器 `id` 为 `radix-_r_3_`（Radix 自动生成，非空） |
+| 6321 | `sidebar.headerActionSlot` | optional | true | 2026-08-11 新增探针。模式行恰好 1 个非模式按钮的元素子节点（`div.ms-auto flex items-center gap-1`），内含 Search 与 View activity 两个按钮。定 `optional` 的理由见 §5.9 |
 | 6321 | `host.locale` | additive | true | `en-GB` |
 | 6321 | `titlebar.dragRegion` | optional | true | 文档内 3 个；`main[0]`（inert）内 1 个、`main[1]`（可见）内 2 个。探针已改为**可见 main 作用域**，实测 2 个 |
 | 6321 | `theme.sidebarSurface` | additive | true | `#f2f2f3` |
@@ -152,6 +153,33 @@ Tier 1 下原生 sidebar 完整保留，Weft 收缩为入口行，而 workspace 
    被覆盖；DOM 层面破坏锚点也撑不到 attach，因为 React 会重新渲染并恢复属性。
    要观测 Tier 1，只能用 `compatibilityTier: "additive"` 构造 agent 源码并注入
    （agent 自带单实例守卫，会先 dispose 旧的）。
+
+### 2.4 头部入口接管的真实注入验证（build 6321，2026-08-11）
+
+在完整注入的 `weft-mode` 会话上实测（真 agent、真 iframe、真原生 header）：
+
+| 观测项 | 实测 |
+|---|---|
+| `data-weft-codex-header-actions` | `native` |
+| 被标记的原生 header action | 3 个（Search、View activity、New chat 块） |
+| 其中仍可见的 | **0** |
+| 注入的 Weft 入口 | 2 个，均可见，坐标 `x=189` / `x=219`——与原生两个按钮**原位重合** |
+| 角标往返 | sidebar 数出 2 条 attention → `inbox.count` → agent 写角标；`aria-label` 实测 `Inbox, 2 needing attention` |
+| 点击 → 面板 | sidebar iframe 收到 `{type:"weft:host-command", command:"search.open", version:1, origin:"app://-"}`，`.sidebar-panel` 出现 |
+| `dispose()` 后 | 注入按钮 0、标记 0、`mode`/`headerActions` 属性均清空，原生 Search 与铃铛（含蓝点）恢复 |
+
+**踩到一个坑，记下来免得重蹈**：第一次复验 `panel present: false`，一度以为是
+消息链路有 bug。真实原因是 `ensureWeftd()` 会**复用任何在默认 URL 上健康的
+daemon**——当时机器上另有一个 launcher 在跑，于是本次验证连上了它的 weftd，
+拿到的是**另一个仓库的 UI bundle**，里面根本没有这次的改动。注入的 agent 是新的，
+被注入的 UI 是旧的。
+
+> 判据：验证注入行为时，**必须同时确认 daemon 服务的是哪一份 bundle**
+> （`curl <weftd>/ | grep assets/`）。要跑私有实例就三个参数一起给：
+> `--weftd-url=<空闲端口>`、`--weft-home=<私有目录>`、`--profile-dir=<私有目录>`。
+> 只给 `--weft-home` 不给 `--weftd-url` 时，若默认 URL 上已有 daemon，
+> `--weft-home` **完全不生效**（它只在 launcher 自己 spawn daemon 时才传下去），
+> 数据会写进默认 home。
 
 ## 3. CSP / `frame-src` 行为矩阵
 
@@ -366,6 +394,68 @@ weft-codex: Could not select one renderer target. Candidates: Codex (app://-/ind
 **给后来者的判据：给一个锚点定 `requiredFor` 之前，先问它的缺失是否可能由用户数据
 造成。会的话，它就不能无条件参与分级。**
 
+### 5.9 侧边栏头部 action 槽位（2026-08-11，build 6321）
+
+Weft 模式下原生的搜索与活动两个 icon 一直没被隐藏。原因是结构判断错了作用域：
+
+```
+div#HEADER  .relative z-10 flex shrink-0 flex-col gap-2 px-row-x …
+├── div#MODEROW  .ms-2 flex items-center pe-1
+│   ├── button                                    ← 模式切换器
+│   └── div  .ms-auto flex items-center gap-1     ← action 槽位
+│       ├── span > button   aria-label="Search"
+│       └── span > button   aria-label="View activity, needs attention"
+└── div  .flex flex-col gap-1                     ← markModeHeader 唯一标记到的
+```
+
+`markModeHeader()` 遍历的是 header 的其它子节点，而槽位在 **modeRow 内部**，
+因此永远够不到。已改为同时标记槽位的子节点。
+
+两个按钮**没有任何 `data-app-action-*` 属性**，唯一可区分的是 `aria-label`，
+而它是 locale 文本（本次采集宿主为 `en-GB`）。**不得据此建锚点**——换个界面语言
+就会失配。因此 `actionSlot()` 与探针都只用形状判定："modeRow 里除模式按钮之外
+恰好一个元素子节点"，两边共用同一条判据，避免探针与运行时各说各话。
+
+按钮的 class 串与模式切换器完全相同，所以克隆原生按钮即可继承宿主的尺寸、
+hover、focus ring 与主题——与 `createWeftMenuItem` 克隆 `menuitem` 同一手法。
+真机注入实测通过（隐藏原生两个 → 克隆注入两个 → 对齐/角标正确 → 还原干净）。
+
+**`requiredFor` 定为 `optional`，这是刻意的**：槽位缺失只应让搜索与收件箱两个
+入口改在 Weft sidebar 自己的头部渲染（Host Context 的 `headerActions:
+"fallback"`），能力不丢，丢的只是位置。若定成 `subtractive`，一个纯装饰性的
+结构变动就会把整个会话打到 Tier 1、连 Weft sidebar 一起丢掉——用一个功能性
+回归换一个观感回归。判据同 §5.8：**先问这个锚点缺失的真实代价有多大。**
+
+### 5.10 `⌘K` 属于宿主，且是菜单 accelerator 级别（2026-08-11，build 6321）
+
+合成 `⌘K`（CDP `Input.dispatchKeyEvent`）**页面确实收到了**——capture 阶段监听器
+录到 `{key:"k", meta:true, defaultPrevented:false}`——但**什么都没打开**。而点击
+搜索按钮会开出 `[role="dialog"]`（"Command menu / Search commands and past chats"，
+输入框 placeholder `Search chats`），证明检测器本身有效。
+
+`⌘/` 调出的宿主快捷键表给出权威答案，摘录与本次改动相关的几条：
+
+| 功能 | 绑定 |
+|---|---|
+| Open command menu | `⌘K`、`⇧⌘P` |
+| Toggle activity view | `⌥⌘U` |
+| Find | `⌘F` |
+| Search Files… | `⌘P` |
+| Switch to Chat / Work / Codex | `⌃1` / `⌃2` / `⌃3` |
+
+即 `⌘K` 确实被宿主占用，但绑定在 **Electron 菜单 accelerator 层**，CDP 注入的键
+事件绕过了 OS 菜单层，所以合成事件打不开它。
+
+**推论方向与直觉相反**：不是"renderer 能拦截但需要拦截"，而是 renderer 层大概率
+**根本收不到真实 `⌘K`，也就无从拦截**。合成事件无法证明真实按键是否会漏到
+iframe，所以不赌——Weft 搜索改用 `/` 聚焦，不建立在 `⌘K` 上。`kanban-view.tsx`
+原先展示的 `⌘K` 提示在 Desktop 下是误导，已一并改掉。收件箱同理不抢快捷键
+（活动视图另有 `⌥⌘U`）。
+
+> 方法论：这条与 §5.1 是同一个坑的两面。§5.1 是**静态证据过度解读**，这条是
+> **合成事件的 null 结果**——两者都不能当结论用。`⌘K` 无反应的真正原因要靠
+> 宿主自己的快捷键表交叉验证才能确定，而不是从"按了没反应"直接推出"没绑定"。
+
 ## 6. 升级回归演练
 
 单测能断言分级表与本文件一致，但断言不了"我们分级的锚点在发行版里真的存在"，
@@ -413,3 +503,21 @@ tier 已回到基线；但中途崩溃会留下被改过的 renderer，重新加
   可选文档，而是构建的一部分。
 - spec `docs/specs/2026-08-08-codex-desktop-migration-design.md` 中的 build / 协议版本
   断言，在重大版本变更后应指回本文件，而不是在 spec 正文里继续累积日期戳。
+
+### 7.1 采集样式数值的四条纪律
+
+`DESIGN.md` 的每个数值都出自这里，重测时按这四条来——它们分别对应 §5.1、§5.10、
+§2.4 记录过的一次误判。
+
+1. **测伪类状态用 `CSS.forcePseudoState`，不要用 `.focus()`。** 程序化 focus 不匹配
+   `:focus-visible`，据此得出的「没有 focus 环」是假阴性。
+2. **先确认 daemon 服务的是哪份 bundle。** `ensureWeftd()` 会复用默认 URL 上**任何**
+   健康的 daemon。跑私有实例三个参数一起给：
+   `--weftd-url=<空闲端口>`、`--weft-home=<私有目录>`、`--profile-dir=<私有目录>`；
+   只给 `--weft-home` 而默认 URL 上已有 daemon 时它完全不生效。采集前
+   `curl <weftd>/ | grep assets/` 对一下 hash。
+3. **无宿主路径这样测**：剥掉 sidebar iframe `documentElement` 上宿主写入的全部 inline
+   自定义属性，同一张样式表即落到 `--fb-*`，等价于标准的无宿主状态，且保证是同一份
+   构建。
+4. **null 结果不是结论。** 合成事件没反应可能是事件没送达（`⌘K` 被 OS 菜单层拦下
+   即此例）。先用已知为真的目标验证探针本身有效，再解读 null。

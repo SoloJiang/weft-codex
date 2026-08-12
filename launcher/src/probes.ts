@@ -53,6 +53,18 @@ interface RendererSnapshot {
    * would be pinned to the additive tier forever.
    */
   threadRowCount: number
+  /**
+   * Whether the mode row still exposes exactly one sibling container — the slot
+   * the native search and activity buttons live in, and the one Weft mode puts
+   * its own search and inbox entries into.
+   *
+   * Deliberately `optional`: losing it costs the *placement* of those two
+   * entries, not the capability. The sidebar renders them in its own header
+   * instead, so degrading the whole session to Tier 1 over this would trade a
+   * cosmetic regression for a functional one (see §5.8 on sizing `requiredFor`
+   * to the real cost of the anchor's absence).
+   */
+  headerActionSlot: boolean
   locale: string
 }
 
@@ -105,7 +117,10 @@ export const VISIBLE_MAIN_HELPERS_SOURCE = `
  * surface in the launcher log and `doctor`, where a raw attribute name tells a
  * user nothing actionable. The selector still travels in `detail` for triage.
  */
-const FAILURE_REASONS: Record<keyof typeof SELECTORS | "mode.switcher" | "host.locale" | "titlebar.dragRegion", string> = {
+const FAILURE_REASONS: Record<
+  keyof typeof SELECTORS | "mode.switcher" | "host.locale" | "titlebar.dragRegion" | "sidebar.headerActionSlot",
+  string
+> = {
   "renderer.root": "Codex 应用外壳未就绪",
   "renderer.main": "找不到 Codex 主工作区，无法挂载 workspace",
   "sidebar.scroll": "找不到 Codex 侧边栏，无法挂载 Weft 区块",
@@ -116,6 +131,7 @@ const FAILURE_REASONS: Record<keyof typeof SELECTORS | "mode.switcher" | "host.l
   "sidebar.threadRoute": "找不到 Codex 的会话标识，无法打开指定会话",
   "sidebar.threadActive": "无法识别当前打开的会话，Issue 归属解析不可用",
   "mode.switcher": "找不到 Codex 的模式切换入口，Weft 模式改用回退按钮",
+  "sidebar.headerActionSlot": "Codex 侧边栏头部结构已变化，搜索与收件箱入口改在 Weft 侧边栏内显示",
   "host.locale": "无法读取 Codex 的界面语言",
   "titlebar.dragRegion": "未检测到原生标题栏拖拽区域",
 }
@@ -278,6 +294,15 @@ export function reportFromSnapshot(snapshot: RendererSnapshot): ProbeReport {
       ...(snapshot.locale.trim() ? {} : { reason: FAILURE_REASONS["host.locale"] }),
     },
     {
+      id: "sidebar.headerActionSlot",
+      ok: snapshot.headerActionSlot,
+      detail: snapshot.headerActionSlot
+        ? "Mode row exposes one action slot"
+        : "Mode row has no single action slot to host the Weft entries",
+      requiredFor: "optional",
+      ...(snapshot.headerActionSlot ? {} : { reason: FAILURE_REASONS["sidebar.headerActionSlot"] }),
+    },
+    {
       id: "titlebar.dragRegion",
       ok: snapshot.titlebarDragRegion,
       detail: snapshot.titlebarDragRegion
@@ -319,6 +344,11 @@ export function buildProbeExpression(): string {
       modeSwitcher: modeButtons.length === 1,
       modeSwitcherId: modeButtons.length === 1 && Boolean(modeButtons[0].id),
       threadRowCount: document.querySelectorAll(selectors["sidebar.threadRow"]).length,
+      // Same shape test the renderer agent's actionSlot() uses, so the probe
+      // and the runtime cannot disagree about whether the slot exists.
+      headerActionSlot: modeButtons.length === 1 &&
+        [...(modeButtons[0].parentElement?.children ?? [])]
+          .filter((child) => child instanceof HTMLElement && child !== modeButtons[0]).length === 1,
       titlebarDragRegion,
       locale: document.documentElement.lang || navigator.language || "",
     };

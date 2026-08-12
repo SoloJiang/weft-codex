@@ -11,7 +11,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { hasHostBridge, pickRepositoryPaths } from "@/host-context"
 import { useI18n } from "@/i18n"
@@ -199,17 +205,16 @@ function IssueDialog({
           />
         </Field>
         <Field label={t("issue.kindLabel")} htmlFor="issue-kind">
-          <NativeSelect
-            className="w-full"
-            id="issue-kind"
-            value={kind}
-            onChange={(event) => setKind(event.target.value as IssueKind)}
-          >
-            <NativeSelectOption value="" disabled>{t("issue.kindPlaceholder")}</NativeSelectOption>
-            {ISSUE_KINDS.map((value) => (
-              <NativeSelectOption key={value} value={value}>{t(`kind.${value}`)}</NativeSelectOption>
-            ))}
-          </NativeSelect>
+          <Select value={kind || undefined} onValueChange={(value) => setKind(value as IssueKind)}>
+            <SelectTrigger id="issue-kind" className="w-full">
+              <SelectValue placeholder={t("issue.kindPlaceholder")} />
+            </SelectTrigger>
+            <SelectContent>
+              {ISSUE_KINDS.map((value) => (
+                <SelectItem key={value} value={value}>{t(`kind.${value}`)}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </Field>
       </div>
     </FormDialog>
