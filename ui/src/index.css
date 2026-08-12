@@ -634,7 +634,7 @@ html[data-ui-surface="workspace"] .embedded-main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 28px;
   align-items: stretch;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-lg);
 }
 
 .sidebar-issue-row[data-active="true"] {
@@ -664,7 +664,7 @@ html[data-ui-surface="workspace"] .embedded-main {
   width: 100%;
   min-width: 0;
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-lg);
   background: transparent;
   color: var(--text);
   cursor: pointer;
@@ -1281,43 +1281,6 @@ main {
   padding-inline-start: 0;
 }
 
-.kanban-card-menu {
-  position: relative;
-  margin-left: auto;
-}
-
-.kanban-card-menu-trigger {
-  width: 30px;
-  height: 27px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  color: var(--dim);
-}
-
-.kanban-card-menu-trigger:hover,
-.kanban-card-menu-trigger[aria-expanded="true"] { background: var(--hover); color: var(--text); }
-.kanban-card-menu-trigger svg { width: 14px; height: 14px; }
-
-.kanban-card-menu-popover {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 8;
-  min-width: 148px;
-  display: grid;
-  gap: 2px;
-  padding: 4px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--r-md);
-  background: var(--color-token-dropdown-background, var(--panel));
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
-}
-
-.kanban-card-menu-popover button {
-  width: 100%;
-  justify-content: flex-start;
-}
-
 .issue-head {
   min-width: 0;
   display: flex;
@@ -1461,7 +1424,7 @@ main {
   min-width: 0;
   padding: 4px 8px;
   border: 0;
-  border-radius: var(--r-sm);
+  border-radius: var(--r-lg);
   background: transparent;
   color: var(--text);
   font: inherit;
