@@ -378,14 +378,14 @@ textarea::placeholder {
   opacity: 1;
 }
 
-/* Fields carry a ring rather than a border now, so the invalid state has to
-   travel the same way — a border-color here would have nothing to colour. */
-[aria-invalid="true"] { border-color: var(--danger); }
-
+/* Every semantic state travels on the ring — nothing here carries a border for
+   a `border-color` to reach. */
 input[aria-invalid="true"],
 textarea[aria-invalid="true"] {
   box-shadow: 0 0 0 1px var(--danger), 0 3px 7.5px rgb(0 0 0 / 0.04);
 }
+
+.select-trigger[aria-invalid="true"] { box-shadow: inset 0 0 0 1px var(--danger); }
 
 a { color: var(--link); }
 
@@ -712,6 +712,17 @@ html[data-ui-surface="modal"] body {
   width: 28px;
   height: 28px;
   color: var(--dim);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+/* Expanded is a state, not a hover affordance — it has to stay visible. */
+.sidebar-issue-row:hover .sidebar-issue-toggle,
+.sidebar-issue-row:focus-within .sidebar-issue-toggle,
+.sidebar-issue-toggle[aria-expanded="true"] { opacity: 1; }
+
+@media (hover: none) {
+  .sidebar-issue-toggle { opacity: 1; }
 }
 
 .sidebar-issue-toggle svg {
@@ -819,7 +830,8 @@ html[data-ui-surface="modal"] body {
 }
 
 .sidebar-primary-chip {
-  border: 1px solid var(--accent);
+  border: 1px solid transparent;
+  box-shadow: inset 0 0 0 0.5px var(--accent);
   color: var(--link);
 }
 
@@ -1168,7 +1180,10 @@ main {
   box-shadow: 0 0 0 0.5px var(--border), 0 3px 7.5px rgb(0 0 0 / 0.04);
 }
 
-.kanban-card.attention { box-shadow: 0 0 0 0.5px var(--warn), 0 3px 7.5px rgb(0 0 0 / 0.04); }
+/* No coloured outline: the host never tints a container to signal state, and a
+   ring around the whole card shouts louder than the thing it is reporting. The
+   card keeps its ordinary edge and the signal rides on the text, which is also
+   what satisfies "state must not depend on colour alone". */
 
 .issue-board-card {
   padding: 10px;
@@ -1194,7 +1209,7 @@ main {
 }
 .issue-board-card-signal {
   grid-area: signal;
-  color: var(--dim);
+  color: var(--warn);
   font-size: 11px;
   line-height: 1.35;
 }
@@ -1369,7 +1384,8 @@ main {
   align-items: center;
   min-height: 20px;
   padding: 0 6px;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
+  box-shadow: inset 0 0 0 0.5px var(--border);
   border-radius: 999px;
   background: var(--bg);
   color: var(--dim);
@@ -1665,7 +1681,8 @@ main {
 
 .mindmap-kind {
   padding: 2px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
+  box-shadow: inset 0 0 0 0.5px var(--border);
   border-radius: 999px;
   background: transparent;
   color: var(--dim);
@@ -1674,7 +1691,7 @@ main {
 }
 
 .mindmap-kind[data-active="true"] {
-  border-color: var(--accent);
+  box-shadow: inset 0 0 0 0.5px var(--accent);
   color: var(--accent);
 }
 
@@ -1840,14 +1857,15 @@ main {
   align-items: center;
   min-height: 22px;
   padding: 1px 7px;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
+  box-shadow: inset 0 0 0 0.5px var(--border);
   border-radius: var(--r-sm);
   background: var(--panel-2);
   color: var(--dim);
   font-size: 11px;
 }
 
-.tag.layer { border-color: var(--link); color: var(--link); }
+.tag.layer { box-shadow: inset 0 0 0 0.5px var(--link); color: var(--link); }
 .repo-components { margin-top: var(--space-3); border-top: 1px solid var(--border); }
 .repo-components summary {
   display: inline-flex;

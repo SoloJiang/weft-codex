@@ -158,12 +158,19 @@ ring 的**颜色**区分可交互与否，**投影的深度**区分贴在页面�
 | 浮层 | 抬升 + `0 12px 32px rgb(0 0 0/.12)` | select-content、toast |
 | 模态 | `0 0 0 0.5px var(--border)` + `0 24px 64px rgb(0 0 0/.18)` | 宿主级弹窗 |
 
-**语义状态改 ring 的颜色，不要退回 `border-color`。** 卡片的 attention、toast 的
-成败、告警块的边都走同一条 ring，换的只是颜色。
+**语义状态改 ring 的颜色，不要退回 `border-color`。** toast 的成败、告警块的边都
+走同一条 ring，换的只是颜色。
 
-`border` 只在两种情形保留：透明控件的 `1px solid transparent`（占位以免悬停时尺寸
-跳动），以及 chip / tag / 徽标这类**本身就是一圈描边**的小元件——它们不是表面，
-宿主也没有对应物。
+**但不要给容器描彩色边来表达状态。** 宿主从不为此着色容器；一圈环绕整卡的彩色轮廓
+比它所报告的事情还响。状态由内容承载——文字加颜色，容器保持普通边。这同时满足
+「状态不能只依赖颜色」：文字本身已经说清楚了。
+
+chip / tag / 徽标用 **inset ring**：`box-shadow: inset 0 0 0 0.5px …`。它们尺寸小、
+常处在紧凑行里，inset 落在原 `border` 的位置，不会被父级 `overflow` 裁掉，也不改变
+外框尺寸。
+
+`border` 只保留 `1px solid transparent` 一种用法：占位，使 ring 与 hover 不引起尺寸
+跳动。
 
 ### 焦点环
 
@@ -244,6 +251,16 @@ outline-offset: 2px;
 | 高亮 | `--hover` 底色 |
 | 选中 | 行尾 `--accent` 勾选标记 |
 | 禁用 | `opacity: .5` |
+
+### 列表行的尾部槽位
+
+宿主的会话行把次级控件（Pin / Archive）放在行尾，**静置 `opacity: 0`、hover 转 1**，
+空间始终预留所以不跳动（build 6321 实测）。行本身是一个扁平的点击目标，没有展开
+控件。
+
+Weft 的 issue 行需要展开，宿主没有对应物，因此沿用它对这个槽位的处理方式：展开箭头
+静置不显形，hover / `focus-within` 时出现；**已展开是状态而非悬停反馈，必须常驻**。
+触屏（`hover: none`）下始终显示。
 
 ### Header entry
 
