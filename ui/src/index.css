@@ -1189,35 +1189,65 @@ main {
   padding: 10px;
 }
 
+/* The title leads and owns the full column width. The issue number used to sit
+   beside it as a filled pill, spending ~40px of a ~200px column on a secondary
+   identifier and forcing long titles onto a third line. */
 .issue-board-card-body {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  grid-template-areas:
-    "number title"
-    "signal signal";
-  gap: 4px 7px;
-  align-items: start;
+  display: block;
+  width: 100%;
+  text-align: start;
 }
 
-.issue-board-card-body .kanban-card-issue-number { grid-area: number; }
 .issue-board-card-body .kanban-card-issue-title {
-  grid-area: title;
+  display: -webkit-box;
   font-size: 12px;
   font-weight: 600;
   color: var(--text);
   -webkit-line-clamp: 3;
 }
-.issue-board-card-signal {
-  grid-area: signal;
-  color: var(--warn);
+
+/* One meta row carries identifier, signal and action, replacing the separate
+   action row underneath. */
+.issue-board-card-meta {
+  min-width: 0;
+  margin-top: 5px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   line-height: 1.35;
 }
 
-.issue-board-card-actions {
-  margin-top: 8px;
-  justify-content: flex-end;
+.issue-board-card-number {
+  flex: none;
+  color: var(--dim);
 }
+
+.issue-board-card-signal {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--warn);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.issue-board-card-meta .issue-board-lead-link,
+.issue-board-card-meta .issue-board-start-lead {
+  flex: none;
+  margin-inline-start: auto;
+}
+
+/* This only appears when the lead failed to start, so it carries the failure
+   as well as the remedy — at this column width a separate reason line would be
+   truncated to nothing. */
+.issue-board-start-lead {
+  height: 20px;
+  padding-inline: 6px;
+  color: var(--warn);
+  font-size: 11px;
+}
+
+.issue-board-start-lead:hover { color: var(--text); }
 
 .issue-board-lead-link {
   color: var(--dim);
@@ -1252,10 +1282,6 @@ main {
   width: 100%;
   min-width: 0;
   min-height: 22px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  gap: 7px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -1265,20 +1291,6 @@ main {
 }
 
 .kanban-card-issue:hover .kanban-card-issue-title { color: var(--link); }
-
-.kanban-card-issue-number {
-  min-width: 27px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px 5px;
-  border-radius: 999px;
-  background: var(--hover);
-  color: var(--text);
-  font-size: 10.5px;
-  font-weight: 600;
-  line-height: 1.35;
-}
 
 .kanban-card-issue-title {
   min-width: 0;

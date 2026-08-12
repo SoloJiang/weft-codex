@@ -28,6 +28,11 @@ export function AsyncButton({
   iconOnly = false,
   size,
   className,
+  // A text button's visible label is often too terse to name it on its own in a
+  // list ("Start lead" on every card). Let callers give the full phrase without
+  // rendering it: before this, the explicit attribute below erased anything
+  // spread in, so no caller could override the accessible name.
+  "aria-label": ariaLabel,
   ...props
 }: AsyncButtonProps) {
   const [pending, setPending] = React.useState(false)
@@ -52,7 +57,7 @@ export function AsyncButton({
       className={cn(className, iconOnly && "async-button-icon")}
       disabled={pending || disabled}
       aria-busy={pending}
-      aria-label={iconOnly ? resolvedLabel : undefined}
+      aria-label={ariaLabel ?? (iconOnly ? resolvedLabel : undefined)}
       title={iconOnly ? resolvedLabel : undefined}
       onClick={run}
     >
