@@ -142,18 +142,58 @@ async function agentStatus(session: CdpSession): Promise<RendererAgentStatus | n
   return parseAgentStatus(value)
 }
 
-async function waitForReady(session: CdpSession, timeoutMs: number): Promise<RendererAgentStatus | null> {
-  const deadline = Date.now() + timeoutMs
+function surfacesMounted(status: RendererAgentStatus | null): boolean {
+  return Boolean(status?.sidebarMounted && status.workspaceMounted && status.modalMounted)
+}
+
+function surfacesReady(status: RendererAgentStatus | null): boolean {
+  return Boolean(status?.sidebarReady && status.workspaceReady && status.modalReady)
+}
+
+/**
+ * Wait for the injected surfaces, in two phases with separate budgets.
+ *
+ * Mounting and handshaking fail for unrelated reasons and on unrelated clocks.
+ * The roots can only attach once Codex has rendered its own shell — the sidebar
+ * anchor does not exist before then — and that is host hydration, which we do
+ * not control and which is slowest exactly when the machine is busiest. The
+ * handshake, by contrast, is our own frames loading over loopback: once they
+ * are attached it either completes quickly or something is genuinely wrong.
+ *
+ * Spending one budget on both meant a slow host shell consumed the whole window
+ * and the run was reported as a handshake failure — the wrong diagnosis, and it
+ * sent debugging at the frames instead of at the wait.
+ */
+export async function waitForSurfaces(
+  readStatus: () => Promise<RendererAgentStatus | null>,
+  budget: { mountMs: number; handshakeMs: number },
+): Promise<RendererAgentStatus | null> {
   let latest: RendererAgentStatus | null = null
-  while (Date.now() < deadline) {
+  const poll = async () => {
     try {
-      latest = await agentStatus(session)
+      latest = await readStatus()
     } catch {
-      // A renderer reload briefly has no execution context. Keep waiting for
-      // the document-start agent in the new document.
+      // A renderer reload briefly has no execution context. Keep the last
+      // status and wait for the document-start agent in the new document.
     }
-    if (latest?.sidebarReady && latest.workspaceReady && latest.modalReady) return latest
+  }
+
+  const mountDeadline = Date.now() + budget.mountMs
+  while (Date.now() < mountDeadline) {
+    await poll()
+    // A run that handshakes before we notice it mounted is still a success.
+    if (surfacesReady(latest)) return latest
+    if (surfacesMounted(latest)) break
     await new Promise((resolve) => setTimeout(resolve, 120))
+  }
+
+  // The handshake budget starts when the roots attach, so host hydration never
+  // eats into it.
+  const handshakeDeadline = Date.now() + budget.handshakeMs
+  while (Date.now() < handshakeDeadline) {
+    if (surfacesReady(latest)) return latest
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    await poll()
   }
   return latest
 }
@@ -350,8 +390,8 @@ class AttachedRenderer {
       cspBypass: false,
     })
 
-    let status = await waitForReady(this.session, 4500)
-    if (!status?.sidebarReady || !status.workspaceReady || !status.modalReady) {
+    let status = await waitForSurfaces(() => agentStatus(this.session), { mountMs: 4500, handshakeMs: 4500 })
+    if (!surfacesReady(status)) {
       options.onWarning?.("Local iframe handshake failed; enabling dedicated-instance CSP compatibility mode")
       this.cspBypass = true
       await this.session.send("Page.setBypassCSP", { enabled: true })
@@ -366,18 +406,25 @@ class AttachedRenderer {
       // Chromium applies Page.setBypassCSP to subsequent document loads. The
       // current app:// document has already committed its CSP, so a dedicated
       // renderer reload is required before loopback frames can navigate.
+      // A reload restarts host hydration from nothing, so the mount phase needs
+      // the longer budget here — the handshake itself is no slower than before.
       await this.session.send("Page.reload", { ignoreCache: true })
-      status = await waitForReady(this.session, 8000)
+      status = await waitForSurfaces(() => agentStatus(this.session), { mountMs: 15000, handshakeMs: 8000 })
     }
 
-    if (!status?.sidebarReady || !status.workspaceReady || !status.modalReady) {
+    if (!surfacesReady(status)) {
       await this.disposeAgent()
       return {
         target: this.publicTarget(),
         probe: this.probe,
         status,
         safeMode: true,
-        reason: "Injected surfaces did not complete the host-context handshake",
+        // Name the phase that actually failed. "Handshake" was reported even
+        // when the roots never attached, which points debugging at the frames
+        // when the host shell is what never arrived.
+        reason: surfacesMounted(status)
+          ? "Injected surfaces did not complete the host-context handshake"
+          : "Codex did not render its shell in time for the Weft surfaces to mount",
       }
     }
 
