@@ -51,10 +51,12 @@ PRODUCT.md 说「跟随宿主」「不使用与 Codex 不一致的控件、间�
 ### 2.1 三条硬约束
 
 **`--focus` 就是 border token，不是独立颜色。** 宿主把它写在自己的控件类上：
-`focus-visible:outline-2 outline-offset-2 outline-token-border`。它确实很淡
-（~8% alpha）。这是宿主的选择，我们照做——PRODUCT.md 要求的是「至少保持 Codex
-**同等级**」的可见焦点，同等级即达标。要提高可见度是产品决策，改 `--focus` 一行，
-但那属于**有意偏离宿主**，必须走 §6。
+`focus-visible:outline-2 outline-offset-2 outline-token-border`。照用。
+
+它很淡（~8% alpha），焦点可见性明显弱于常见无障碍基线。**这是已知且已接受的后果**：
+对齐宿主是规则本身，宿主是基准而不是下限，不因为我们觉得某个值不够好就单方面调高。
+真要改，那是产品层面推翻「对齐宿主」的决定，先改 PRODUCT.md，再改这里，最后才改
+`--focus`——不要反过来从一行 CSS 开始。
 
 **rem 单位的 token 必须在宿主侧解析成 px 再转发。** `rem` 按**消费方**根字号解析：
 Codex 根字号 16px，Weft 表面是 13px。直接转发 `calc(.375rem * 1.25)` 会让每个圆角
@@ -97,6 +99,10 @@ outline-offset: 2px;
 全站唯一的 focus 处理，`index.css` 里那一条规则统管。**不要再叠 ring/box-shadow。**
 历史教训见 §7.1。
 
+输入框同样有 ring。宿主的 command menu 输入框确实没有，但那是**例外而非通则**——
+它在模态里自动聚焦、独此一个，没有需要区分的对象；宿主的按钮、侧栏行、下拉触发器
+都带。我们的字段在密集单列里并排存在，适用的是通则。
+
 ### 3.3 hover = 前景色透明度，不换色相
 
 宿主表达强调的方式是「在前景色上加 alpha」，不是切换到另一个颜色。行按钮 hover 是
@@ -120,7 +126,7 @@ composer `25px`。
 | 下拉触发器 | **不是 `<select>`**：透明按钮 + Radix menu | Radix Select，透明触发器 |
 | 浮层 | radius 15px、`border:0`、ring `.082` 0.5px + 投影、padding 4px | 同 |
 | 菜单项 | radius 12.5px、padding 5px 8px | 同 |
-| 单行输入 | 见 §6.1 | `border:0`、ring `--border-strong` + 投影、radius `--r-md` |
+| 单行输入 | 全站仅一个（command menu）：`border:0`、透明底、radius 0、无 ring | `border:0`、ring `--border-strong` + 投影、radius `--r-md`、有 ring（§3.2） |
 | 多行输入 | composer：radius 25px、ring `.157` + 投影 | 同构造，radius `--r-lg` |
 | focus | `outline 2px` / `offset 2px` / border token | 同 |
 
@@ -168,16 +174,15 @@ composer `25px`。
 2. 只在**确有必要**处偏离，且偏离幅度最小化
 3. **把理由写进代码注释**，包含"宿主是怎么做的"和"为什么这里不能照做"
 
-已有的三个先例，可作为判据的参照：
+注意区分两种情况：宿主对同一件事有**两种行为**时，跟通则、不跟例外，那不算偏离
+（focus ring 就是这样，见 §3.2）。本节只收宿主**确实没有对应物**的决定。
 
-**6.1 输入框保留 focus ring。** 宿主的 command menu 输入框无 ring——但那是例外
-而非通则：它在模态里自动聚焦、独此一个，没有需要区分的对象。我们的字段在密集单列
-里并排存在，所以采用宿主**按钮**的 focus 约定。
+已有的两个先例，可作为判据的参照：
 
-**6.2 面板覆盖而非挤压。** 搜索/收件箱面板 `position: absolute; inset: 0` 盖住
+**6.1 面板覆盖而非挤压。** 搜索/收件箱面板 `position: absolute; inset: 0` 盖住
 侧栏，而不是把下面的树推开——它们是瞬时的，重排整棵树会让人丢失阅读位置。
 
-**6.3 `bus.parked` 不进收件箱。** 它表示人正在该线程上说话、turn 结束会自动 flush，
+**6.2 `bus.parked` 不进收件箱。** 它表示人正在该线程上说话、turn 结束会自动 flush，
 不需要任何人做任何事。列出来只会让收件箱塞满"读着读着就自己好了"的条目。收件箱只
 放真正等人处理的东西。
 
