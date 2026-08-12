@@ -154,16 +154,16 @@ function IssueBoardCardView({
   onError: (error: unknown) => void
 }) {
   const { t } = useI18n()
-  const { entry, status, totalTasks, doneTasks, attentionCount, hasLead, leadAttention } = card
-  // A lead that failed outranks task attention: nothing else on this issue can
-  // move until it is running again. One discriminated value, mapped once.
-  let signal = t("kanban.issueProgress", {
-    status: t(`status.${status}`),
-    done: doneTasks,
-    total: totalTasks,
-  })
+  const { entry, totalTasks, doneTasks, attentionCount, hasLead, leadAttention } = card
+  // The column heading already states the status, so repeating it on every card
+  // spends the one line of meta on something the reader just read. Only what is
+  // specific to this card goes here. A failed lead outranks task attention:
+  // nothing else on this issue can move until it is running again.
+  let signal = ""
   if (leadAttention) signal = leadFailureText(entry.issue.lead_attention_reason, t)
-  else if (attentionCount) signal = t("kanban.issueNeedsYou", { done: doneTasks, total: totalTasks })
+  else if (attentionCount) signal = t("kanban.issueNeedsYou")
+  else if (totalTasks) signal = t("kanban.issueProgress", { done: doneTasks, total: totalTasks })
+
   return (
     <article
       className={`kanban-card issue-board-card${attentionCount || leadAttention ? " attention" : ""}`}
@@ -175,11 +175,18 @@ function IssueBoardCardView({
         aria-label={t("kanban.openIssueBoard", { title: entry.issue.title })}
         onClick={() => onOpenIssue(entry.issue.id)}
       >
-        <span className="kanban-card-issue-number">#{entry.issue.id}</span>
         <span className="kanban-card-issue-title">{entry.issue.title}</span>
-        <span className="issue-board-card-signal">{signal}</span>
       </button>
-      <div className="kanban-card-actions issue-board-card-actions">
+      <div className="issue-board-card-meta">
+        <span className="issue-board-card-number">#{entry.issue.id}</span>
+        {/* With no lead the reason and the retry say the same thing, and at
+            ~122px they cannot both fit — showing both truncated the reason to a
+            single letter. The retry carries the failure itself, in warn. */}
+        {hasLead && signal ? (
+          // Long reasons must not push the row wider than the column; the full
+          // text stays reachable on hover rather than being lost.
+          <span className="issue-board-card-signal" title={signal}>{signal}</span>
+        ) : null}
         {hasLead ? (
           <ThreadLink
             threadId={entry.issue.lead_codex_thread_id}
@@ -190,17 +197,19 @@ function IssueBoardCardView({
             iconOnly
           />
         ) : (
+          // Starting a lead is a different capability from opening one, so it
+          // does not borrow the chat icon — the board is its only entry point
+          // (App wires onStartLead nowhere else), and a lead that never started
+          // is an exception worth naming in words.
           <AsyncButton
             variant="ghost"
-            className="issue-board-lead-link"
-            label={t("kanban.startLead", { title: entry.issue.title })}
+            className="issue-board-start-lead"
+            label={t("kanban.startLeadShort")}
             pendingLabel={t("loading.startingLead")}
+            aria-label={t("kanban.startLead", { title: entry.issue.title })}
             onAction={() => onOpenLead(entry)}
             onError={onError}
-            iconOnly
-          >
-            <Play aria-hidden="true" />
-          </AsyncButton>
+          />
         )}
       </div>
     </article>

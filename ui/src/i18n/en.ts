@@ -53,14 +53,15 @@ const en = {
   "kanban.issueCount": "{count} issues",
 
   "kanban.issueCardLabel": "Issue {title}",
-  "kanban.issueProgress": "{status} · {done}/{total}",
+  "kanban.issueProgress": "{done}/{total} done",
   "lead.startFailed": "Lead did not start",
   "lead.resumeFailed": "Lead could not be recovered",
   "lead.turnError": "Lead stopped with an error",
   "lead.failed": "Lead needs attention",
-  "kanban.issueNeedsYou": "Needs you · {done}/{total}",
+  "kanban.startLeadShort": "Retry lead",
+  "kanban.issueNeedsYou": "Needs you",
   "kanban.openLead": "Open the primary lead chat for {title}",
-  "kanban.startLead": "Start the primary lead for {title}",
+  "kanban.startLead": "Retry starting the primary lead for {title}",
   "kanban.moreActions": "More task actions",
 
   "issue.create": "Create issue",

@@ -55,14 +55,15 @@ const zh = {
   "kanban.issueCount": "{count} 个 issue",
 
   "kanban.issueCardLabel": "Issue {title}",
-  "kanban.issueProgress": "{status} · {done}/{total}",
+  "kanban.issueProgress": "已完成 {done}/{total}",
   "lead.startFailed": "Lead 未能启动",
   "lead.resumeFailed": "Lead 无法恢复",
   "lead.turnError": "Lead 执行出错",
   "lead.failed": "Lead 需要处理",
-  "kanban.issueNeedsYou": "需要你 · {done}/{total}",
+  "kanban.startLeadShort": "重试启动",
+  "kanban.issueNeedsYou": "需要你",
   "kanban.openLead": "打开 {title} 的 Lead 主会话",
-  "kanban.startLead": "启动 {title} 的 Lead",
+  "kanban.startLead": "重试启动 {title} 的 Lead",
   "kanban.moreActions": "更多任务操作",
 
   "issue.create": "新建 issue",
