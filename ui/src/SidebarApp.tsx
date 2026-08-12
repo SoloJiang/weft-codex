@@ -63,6 +63,7 @@ const SIDEBAR_EVENT_NAMES = [
   "bus.parked",
   "bus.undelivered",
   "thread.binding.updated",
+  "lead.attention",
 ]
 
 interface ResolvedThread {

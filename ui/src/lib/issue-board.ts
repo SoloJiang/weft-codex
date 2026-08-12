@@ -10,6 +10,8 @@ export interface IssueBoardCard {
   doneTasks: number
   attentionCount: number
   hasLead: boolean
+  /** The lead failed to start, resume, or errored mid-turn. */
+  leadAttention: boolean
 }
 
 const STATUS_RANK: Record<DirectionStatus, number> = {
@@ -50,6 +52,7 @@ export function toIssueBoardCard(entry: BoardEntry): IssueBoardCard {
     doneTasks,
     attentionCount,
     hasLead: Boolean(entry.issue.lead_codex_thread_id),
+    leadAttention: Boolean(entry.issue.lead_attention),
   }
 }
 

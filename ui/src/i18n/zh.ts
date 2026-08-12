@@ -56,6 +56,10 @@ const zh = {
 
   "kanban.issueCardLabel": "Issue {title}",
   "kanban.issueProgress": "{status} · {done}/{total}",
+  "lead.startFailed": "Lead 未能启动",
+  "lead.resumeFailed": "Lead 无法恢复",
+  "lead.turnError": "Lead 执行出错",
+  "lead.failed": "Lead 需要处理",
   "kanban.issueNeedsYou": "需要你 · {done}/{total}",
   "kanban.openLead": "打开 {title} 的 Lead 主会话",
   "kanban.startLead": "启动 {title} 的 Lead",

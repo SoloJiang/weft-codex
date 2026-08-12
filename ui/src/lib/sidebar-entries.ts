@@ -21,7 +21,7 @@ export interface SearchHit {
   artifactId?: number
 }
 
-export type InboxItemKind = "attention" | "delivery"
+export type InboxItemKind = "attention" | "delivery" | "lead"
 
 export interface InboxItem {
   key: string
@@ -147,6 +147,16 @@ export function searchBoard(
 export function buildInbox(board: BoardEntry[], failures: DeliveryFailure[]): InboxItem[] {
   const items: InboxItem[] = []
   for (const entry of board) {
+    // A stalled lead blocks everything under it, so it leads the list.
+    if (entry.issue.lead_attention) {
+      items.push({
+        key: `lead:${entry.issue.id}`,
+        kind: "lead",
+        issueId: entry.issue.id,
+        title: entry.issue.title,
+        meta: entry.issue.lead_attention_reason,
+      })
+    }
     for (const direction of entry.directions) {
       if (!direction.attention) continue
       items.push({

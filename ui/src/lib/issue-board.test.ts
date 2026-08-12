@@ -33,6 +33,8 @@ function issue(partial: Partial<Issue> = {}): Issue {
     slug: partial.slug ?? "demo",
     kind: partial.kind ?? "feature",
     lead_codex_thread_id: partial.lead_codex_thread_id ?? "",
+    lead_attention: partial.lead_attention ?? 0,
+    lead_attention_reason: partial.lead_attention_reason ?? "",
     created_at: partial.created_at ?? "",
   }
 }
