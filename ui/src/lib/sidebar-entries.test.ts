@@ -19,6 +19,8 @@ function issue(partial: Partial<Issue> = {}): Issue {
     slug: partial.slug ?? "ship-the-importer",
     kind: partial.kind ?? "feature",
     lead_codex_thread_id: partial.lead_codex_thread_id ?? "",
+    lead_attention: partial.lead_attention ?? 0,
+    lead_attention_reason: partial.lead_attention_reason ?? "",
     created_at: partial.created_at ?? "",
   }
 }
@@ -170,4 +172,22 @@ test("a delivery failure on an already-flagged direction does not double up", ()
 
 test("a delivery failure for an issue no longer on the board is dropped", () => {
   assert.deepEqual(buildInbox(board(), [{ issueId: 999, party: "1", reason: "gone" }]), [])
+})
+
+// A lead that will not start blocks everything under it, so it has to reach the
+// inbox rather than living only in a toast that disappears.
+test("a stalled lead reaches the inbox ahead of its tasks", () => {
+  const items = buildInbox(
+    board({
+      issue: issue({ lead_attention: 1, lead_attention_reason: "start-failed" }),
+      directions: [direction({ attention: 1, attention_reason: "stuck" })],
+    }),
+    [],
+  )
+  assert.deepEqual(items.map((item) => item.kind), ["lead", "attention"])
+  assert.equal(items[0]?.meta, "start-failed")
+})
+
+test("an issue with a healthy lead contributes nothing to the inbox", () => {
+  assert.deepEqual(buildInbox(board(), []), [])
 })

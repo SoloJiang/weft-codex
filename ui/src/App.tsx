@@ -54,6 +54,7 @@ const EVENT_NAMES = [
   "bus.parked",
   "bus.undelivered",
   "thread.human-active",
+  "lead.attention",
   "thread.binding.updated",
 ]
 
@@ -292,7 +293,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
 
   const createIssue = async (title: string, kind: IssueKind) => {
     if (!workspaceId) throw new Error(t("err.unknown"))
-    const created = await api<{ id: number }>("/api/issues", jsonRequest("POST", {
+    const created = await api<{ id: number; codexThreadId?: string | null }>("/api/issues", jsonRequest("POST", {
       workspace_id: workspaceId,
       title,
       slug: slugify(title),
@@ -302,10 +303,16 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
     setDetailIssueId(created.id)
     setView("issue")
     notify(t("success.issueCreated"), "success")
-    void launchLead(created.id).catch((caught) => {
-      notifyError(caught)
-      void refreshCurrent()
-    })
+    // The lead is started server side with the issue, so there is no second
+    // call to race here. A start that failed is recorded on the issue and shows
+    // on the board; opening the thread is all that is left.
+    if (created.codexThreadId) {
+      window.setTimeout(() => {
+        void openCodexThread(created.codexThreadId as string).catch(() => {
+          notifyError(new Error(t("err.threadOpen")))
+        })
+      }, 0)
+    }
   }
 
   const sendMessage = async (target: "lead" | "task", id: number, text: string, intent: MessageIntent) => {

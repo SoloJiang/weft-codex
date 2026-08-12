@@ -400,10 +400,55 @@ impl Orchestrator {
     /// Create the issue's lead thread: read-only sandbox over the first repo
     /// (the lead coordinates; it does not write code). Returns the new
     /// Codex thread id.
+    /// Reasons are stable codes, not error prose: the UI renders them through
+    /// i18n, and a raw error chain would leak internals into the interface.
+    pub const LEAD_START_FAILED: &'static str = "start-failed";
+    pub const LEAD_RESUME_FAILED: &'static str = "resume-failed";
+    pub const LEAD_TURN_ERROR: &'static str = "turn-error";
+
+    /// Record that the lead needs a human, and say so. Persisting matters more
+    /// than the event: the resume failures happen at daemon boot, before any UI
+    /// has connected to hear about them.
+    pub async fn flag_lead(&self, issue_id: i64, reason: &str) {
+        if let Err(error) = self.store.set_lead_attention(issue_id, Some(reason)).await {
+            eprintln!("[weftd] flag lead {issue_id} failed: {error:#}");
+            return;
+        }
+        events::emit(
+            "lead.attention",
+            json!({ "issueId": issue_id, "reason": reason }),
+        );
+    }
+
+    /// Starting or recovering the lead is what clears the flag — a retry that
+    /// succeeds must not leave the issue looking broken.
+    async fn clear_lead_attention(&self, issue_id: i64) {
+        if let Err(error) = self.store.set_lead_attention(issue_id, None).await {
+            eprintln!("[weftd] clear lead attention {issue_id} failed: {error:#}");
+        }
+    }
+
     pub async fn spawn_lead(&self, issue_id: i64) -> anyhow::Result<String> {
+        // Checked out here so it never reaches the flag: a daemon that is not
+        // live yet is a system state, not this issue failing. Flagging it would
+        // mark every issue created during startup as broken.
         if !runtime::agents_allowed() {
             anyhow::bail!("daemon is not live; refusing to spawn agents");
         }
+        match self.spawn_lead_inner(issue_id).await {
+            Ok(thread_id) => {
+                self.clear_lead_attention(issue_id).await;
+                Ok(thread_id)
+            }
+            Err(error) => {
+                eprintln!("[weftd] spawn lead {issue_id} failed: {error:#}");
+                self.flag_lead(issue_id, Self::LEAD_START_FAILED).await;
+                Err(error)
+            }
+        }
+    }
+
+    async fn spawn_lead_inner(&self, issue_id: i64) -> anyhow::Result<String> {
         // Repeated create responses and concurrent retries are idempotent.
         let gate = self.inject_lock.lock().await;
         let issue = self
@@ -655,13 +700,11 @@ impl Orchestrator {
                 continue;
             }
             if let Err(error) = client.resume_thread(&issue.lead_codex_thread_id).await {
-                events::emit(
-                    "lead.attention",
-                    json!({ "issueId": issue.id, "reason": "thread-resume-failed" }),
-                );
                 eprintln!("[weftd] resume lead thread {} failed: {error:#}", issue.id);
+                self.flag_lead(issue.id, Self::LEAD_RESUME_FAILED).await;
                 continue;
             }
+            self.clear_lead_attention(issue.id).await;
             let rx = client.subscribe(&issue.lead_codex_thread_id).await;
             tokio::spawn(watch(
                 self.clone(),
@@ -827,7 +870,7 @@ impl Orchestrator {
             }
             WatchTarget::Lead(issue_id) => {
                 if is_error {
-                    events::emit("lead.attention", json!({ "issueId": issue_id }));
+                    self.flag_lead(issue_id, Self::LEAD_TURN_ERROR).await;
                 }
             }
         }

@@ -26,6 +26,22 @@ export interface WorkActions {
   onContinueTask: (direction: Direction) => void
 }
 
+/**
+ * Failure reasons arrive as stable codes so the daemon never ships user-facing
+ * prose. An unrecognised code still has to say something useful — a newer
+ * daemon must not render a blank card against an older UI.
+ */
+const LEAD_FAILURE_KEYS = {
+  "start-failed": "lead.startFailed",
+  "resume-failed": "lead.resumeFailed",
+  "turn-error": "lead.turnError",
+} as const
+
+function leadFailureText(reason: string, t: (key: never, values?: never) => string): string {
+  const key = LEAD_FAILURE_KEYS[reason as keyof typeof LEAD_FAILURE_KEYS] ?? "lead.failed"
+  return t(key as never)
+}
+
 export function directionMeta(
   direction: Direction,
   repos: Repo[],
@@ -138,17 +154,19 @@ function IssueBoardCardView({
   onError: (error: unknown) => void
 }) {
   const { t } = useI18n()
-  const { entry, status, totalTasks, doneTasks, attentionCount, hasLead } = card
-  const signal = attentionCount
-    ? t("kanban.issueNeedsYou", { done: doneTasks, total: totalTasks })
-    : t("kanban.issueProgress", {
-      status: t(`status.${status}`),
-      done: doneTasks,
-      total: totalTasks,
-    })
+  const { entry, status, totalTasks, doneTasks, attentionCount, hasLead, leadAttention } = card
+  // A lead that failed outranks task attention: nothing else on this issue can
+  // move until it is running again. One discriminated value, mapped once.
+  let signal = t("kanban.issueProgress", {
+    status: t(`status.${status}`),
+    done: doneTasks,
+    total: totalTasks,
+  })
+  if (leadAttention) signal = leadFailureText(entry.issue.lead_attention_reason, t)
+  else if (attentionCount) signal = t("kanban.issueNeedsYou", { done: doneTasks, total: totalTasks })
   return (
     <article
-      className={`kanban-card issue-board-card${attentionCount ? " attention" : ""}`}
+      className={`kanban-card issue-board-card${attentionCount || leadAttention ? " attention" : ""}`}
       aria-label={t("kanban.issueCardLabel", { title: entry.issue.title })}
     >
       <button

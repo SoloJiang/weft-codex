@@ -597,17 +597,27 @@ struct CreateIssue {
 }
 
 async fn create_issue(State(state): State<ApiState>, Json(body): Json<CreateIssue>) -> Response {
-    match state
+    let id = match state
         .store
         .create_issue_with_kind(body.workspace_id, &body.title, &body.slug, &body.kind)
         .await
     {
-        Ok(id) => {
-            events::emit("issue.updated", json!({ "id": id }));
-            ok(json!({ "id": id }))
-        }
-        Err(e) => fail(e),
-    }
+        Ok(id) => id,
+        Err(e) => return fail(e),
+    };
+    events::emit("issue.updated", json!({ "id": id }));
+
+    // Start the lead here rather than leaving it to the caller. Doing it client
+    // side meant every new issue existed without a lead for as long as the
+    // round trip took, and an issue created through the API or MCP never got
+    // one at all — three different situations that looked identical on the
+    // board. Now "no lead" means exactly one thing: starting it failed.
+    //
+    // A failed start does not fail the issue: the issue is real and the lead is
+    // retryable, so the failure is recorded as attention (spawn_lead flags it)
+    // and surfaced, not thrown away.
+    let lead = state.orch.spawn_lead(id).await.ok();
+    ok(json!({ "id": id, "codexThreadId": lead }))
 }
 
 #[derive(Deserialize)]

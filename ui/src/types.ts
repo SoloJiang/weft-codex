@@ -52,6 +52,8 @@ export interface Issue {
   slug: string
   kind: IssueKind
   lead_codex_thread_id: string
+  lead_attention: number
+  lead_attention_reason: string
   created_at: string
 }
 

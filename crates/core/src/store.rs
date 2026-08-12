@@ -461,6 +461,11 @@ pub struct IssueRow {
     pub slug: String,
     pub kind: String,
     pub lead_codex_thread_id: String,
+    /// The lead failed to start, resume, or completed a turn in error. Held on
+    /// the issue rather than emitted and forgotten: the failures that matter
+    /// most happen at daemon boot, before any UI is listening.
+    pub lead_attention: i64,
+    pub lead_attention_reason: String,
     pub created_at: String,
 }
 
@@ -592,6 +597,14 @@ impl Store {
         .await?;
         ensure_column(&pool, "workspace", "repo_map", "TEXT NOT NULL DEFAULT ''").await?;
         ensure_column(&pool, "issue", "kind", "TEXT NOT NULL DEFAULT 'feature'").await?;
+        ensure_column(&pool, "issue", "lead_attention", "INTEGER NOT NULL DEFAULT 0").await?;
+        ensure_column(
+            &pool,
+            "issue",
+            "lead_attention_reason",
+            "TEXT NOT NULL DEFAULT ''",
+        )
+        .await?;
         ensure_column(&pool, "repo_ref", "remote_url", "TEXT NOT NULL DEFAULT ''").await?;
         ensure_column(
             &pool,
@@ -881,7 +894,8 @@ impl Store {
 
     pub async fn get_issue(&self, id: i64) -> anyhow::Result<Option<IssueRow>> {
         sqlx::query_as::<_, IssueRow>(
-            "SELECT id, workspace_id, title, slug, kind, lead_codex_thread_id, created_at
+            "SELECT id, workspace_id, title, slug, kind, lead_codex_thread_id,
+                    lead_attention, lead_attention_reason, created_at
              FROM issue WHERE id = ?",
         )
         .bind(id)
@@ -1414,7 +1428,8 @@ impl Store {
     /// Issues with a live lead thread (boot re-attach source).
     pub async fn list_live_leads(&self) -> anyhow::Result<Vec<IssueRow>> {
         sqlx::query_as::<_, IssueRow>(
-            "SELECT id, workspace_id, title, slug, kind, lead_codex_thread_id, created_at
+            "SELECT id, workspace_id, title, slug, kind, lead_codex_thread_id,
+                    lead_attention, lead_attention_reason, created_at
              FROM issue WHERE lead_codex_thread_id != '' ORDER BY id",
         )
         .fetch_all(&self.pool)
@@ -1516,6 +1531,21 @@ impl Store {
         Ok(())
     }
 
+    /// Flag or clear the issue's lead. `None` clears, mirroring
+    /// `set_direction_attention` so both levels behave the same way.
+    pub async fn set_lead_attention(&self, id: i64, reason: Option<&str>) -> anyhow::Result<()> {
+        sqlx::query(
+            "UPDATE issue SET lead_attention = ?, lead_attention_reason = ? WHERE id = ?",
+        )
+        .bind(i64::from(reason.is_some()))
+        .bind(reason.unwrap_or(""))
+        .bind(id)
+        .execute(&self.pool)
+        .await
+        .context("set_lead_attention")?;
+        Ok(())
+    }
+
     pub async fn set_direction_attention(
         &self,
         id: i64,
@@ -1537,7 +1567,8 @@ impl Store {
         workspace_id: i64,
     ) -> anyhow::Result<Vec<(IssueRow, Vec<DirectionRow>)>> {
         let issues = sqlx::query_as::<_, IssueRow>(
-            "SELECT id, workspace_id, title, slug, kind, lead_codex_thread_id, created_at
+            "SELECT id, workspace_id, title, slug, kind, lead_codex_thread_id,
+                    lead_attention, lead_attention_reason, created_at
              FROM issue WHERE workspace_id = ? ORDER BY id",
         )
         .bind(workspace_id)
@@ -2710,6 +2741,34 @@ mod tests {
         assert!(
             upgraded.get_issue(issue).await.expect("issue").is_some(),
             "the rest of the database must survive the upgrade"
+        );
+    }
+
+    // The failures worth surfacing happen at daemon boot, before any UI is
+    // listening, so the flag has to outlive the event that announced it.
+    #[tokio::test]
+    async fn lead_attention_persists_and_clears() {
+        let (store, _dir) = fixture().await;
+        let ws = store.create_workspace("W", "w").await.expect("ws");
+        let issue = store.create_issue(ws, "one", "one").await.expect("i");
+
+        let fresh = store.get_issue(issue).await.expect("get").expect("issue");
+        assert_eq!(fresh.lead_attention, 0, "a new issue starts unflagged");
+
+        store
+            .set_lead_attention(issue, Some("start-failed"))
+            .await
+            .expect("flag");
+        let flagged = store.get_issue(issue).await.expect("get").expect("issue");
+        assert_eq!(flagged.lead_attention, 1);
+        assert_eq!(flagged.lead_attention_reason, "start-failed");
+
+        store.set_lead_attention(issue, None).await.expect("clear");
+        let cleared = store.get_issue(issue).await.expect("get").expect("issue");
+        assert_eq!(cleared.lead_attention, 0);
+        assert_eq!(
+            cleared.lead_attention_reason, "",
+            "clearing must drop the reason too, or a stale one outlives the failure"
         );
     }
 
