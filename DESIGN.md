@@ -9,6 +9,7 @@ rounded:
   md: 10px
   lg: 12.5px
   xl: 15px
+  full: 999px
 spacing:
   xs: 4px
   sm: 8px
@@ -19,6 +20,10 @@ typography:
   root:
     fontSize: 13px
     lineHeight: 1.45
+  title:
+    fontSize: 16px
+  subtitle:
+    fontSize: 14px
   heading:
     fontSize: 18px
     lineHeight: 1.35
@@ -112,12 +117,14 @@ token，由 `ui/src/index.css` 统一声明；**组件中不出现字面颜色�
 | 角色 | 字号 | 行高 | 用途 |
 |---|---|---|---|
 | `heading` | 18px | 1.35 | 视图标题 |
+| `title` | 16px | — | 详情页、产物、弹窗标题 |
+| `subtitle` | 14px | — | 仓库名、弹窗正文等需要高于正文的一档 |
 | `body` | 12px | 1.45 | 正文、行标题、控件文本 |
 | `label` | 11px | — | 分区标题、计数、字段标签 |
 | `meta` | 10.5px | 1.35 | 次要说明、产物元信息 |
 | `micro-caps` | 9.5px | — | 全大写类型徽标，字距 0.03em |
 
-新增文本从上表取值。当前代码尚存 14 个字号，上表是收敛目标而非现状。
+新增文本从上表取值，**不要新增第八档**。
 
 ## Layout
 
@@ -139,15 +146,24 @@ token，由 `ui/src/index.css` 统一声明；**组件中不出现字面颜色�
 `border: 0` 配 `0 0 0 0.5px` 描边环加柔和投影，浮层为同一构造的更低 alpha。1px 实线
 边在其旁明显更重。
 
+ring 的**颜色**区分可交互与否，**投影的深度**区分贴在页面上还是浮在其上：
+
 | 层级 | 构造 | 用于 |
 |---|---|---|
+| 内联表面 | `0 0 0 0.5px var(--border)` | 看板列、任务列表、仓库块、详情头、代码区 |
+| 抬升表面 | 内联 + `0 3px 7.5px rgb(0 0 0/.04)` | 看板卡片 |
 | 字段 | `0 0 0 0.5px var(--border-strong)` + `0 3px 7.5px rgb(0 0 0/.04)` | input、textarea |
 | 字段·悬停 | ring 提至 `color-mix(in srgb, var(--text) 26%, transparent)` | input、textarea |
 | 字段·错误 | `0 0 0 1px var(--danger)` + 同上投影 | `aria-invalid` |
-| 浮层 | `0 0 0 0.5px var(--border)` + `0 3px 7.5px rgb(0 0 0/.04)` + `0 12px 32px rgb(0 0 0/.12)` | select-content |
+| 浮层 | 抬升 + `0 12px 32px rgb(0 0 0/.12)` | select-content、toast |
+| 模态 | `0 0 0 0.5px var(--border)` + `0 24px 64px rgb(0 0 0/.18)` | 宿主级弹窗 |
 
-保留 `border` 的唯一情形是透明控件的 `1px solid transparent`——占位以避免悬停时
-尺寸跳动。
+**语义状态改 ring 的颜色，不要退回 `border-color`。** 卡片的 attention、toast 的
+成败、告警块的边都走同一条 ring，换的只是颜色。
+
+`border` 只在两种情形保留：透明控件的 `1px solid transparent`（占位以免悬停时尺寸
+跳动），以及 chip / tag / 徽标这类**本身就是一圈描边**的小元件——它们不是表面，
+宿主也没有对应物。
 
 ### 焦点环
 
@@ -168,10 +184,11 @@ outline-offset: 2px;
 
 | 级别 | 值 | 用于 |
 |---|---|---|
-| `sm` | 7.5px | 树行等低于宿主最小控件高度的紧凑行 |
+| `sm` | 7.5px | 树行、chip、徽标等低于宿主最小控件高度的元件 |
 | `md` | 10px | 单行控件、图标按钮、结果行 |
 | `lg` | 12.5px | 列表行、菜单项、多行控件 |
-| `xl` | 15px | 浮层 |
+| `xl` | 15px | 浮层、模态 |
+| `full` | 999px | 胶囊：状态 chip、计数徽标 |
 
 `sm` 之下宿主没有对应物——它承接的是比 26px 更矮的行，取值继续沿这条斜坡下延，
 而非套用一个在该高度会被钳成胶囊的更大值。
