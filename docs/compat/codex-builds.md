@@ -503,3 +503,21 @@ tier 已回到基线；但中途崩溃会留下被改过的 renderer，重新加
   可选文档，而是构建的一部分。
 - spec `docs/specs/2026-08-08-codex-desktop-migration-design.md` 中的 build / 协议版本
   断言，在重大版本变更后应指回本文件，而不是在 spec 正文里继续累积日期戳。
+
+### 7.1 采集样式数值的四条纪律
+
+`DESIGN.md` 的每个数值都出自这里，重测时按这四条来——它们分别对应 §5.1、§5.10、
+§2.4 记录过的一次误判。
+
+1. **测伪类状态用 `CSS.forcePseudoState`，不要用 `.focus()`。** 程序化 focus 不匹配
+   `:focus-visible`，据此得出的「没有 focus 环」是假阴性。
+2. **先确认 daemon 服务的是哪份 bundle。** `ensureWeftd()` 会复用默认 URL 上**任何**
+   健康的 daemon。跑私有实例三个参数一起给：
+   `--weftd-url=<空闲端口>`、`--weft-home=<私有目录>`、`--profile-dir=<私有目录>`；
+   只给 `--weft-home` 而默认 URL 上已有 daemon 时它完全不生效。采集前
+   `curl <weftd>/ | grep assets/` 对一下 hash。
+3. **无宿主路径这样测**：剥掉 sidebar iframe `documentElement` 上宿主写入的全部 inline
+   自定义属性，同一张样式表即落到 `--fb-*`，等价于标准的无宿主状态，且保证是同一份
+   构建。
+4. **null 结果不是结论。** 合成事件没反应可能是事件没送达（`⌘K` 被 OS 菜单层拦下
+   即此例）。先用已知为真的目标验证探针本身有效，再解读 null。
