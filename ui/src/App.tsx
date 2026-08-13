@@ -330,13 +330,26 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
   const workActions = React.useMemo<WorkActions>(() => ({
     onError: notifyError,
     onOpenChat: async (issueId: number) => launchLead(issueId),
-    onRetryTask: async (direction: Direction) => {
+    // Dispatch then open: the caller's concept is "go to this task's chat",
+    // and starting the worker is what that means when none is running.
+    onOpenTaskChat: async (directionId: number) => {
+      let started: { codexThreadId?: string }
       try {
-        await api(`/api/directions/${direction.id}/spawn`, jsonRequest("POST"))
+        started = await api<{ codexThreadId?: string }>(
+          `/api/directions/${directionId}/spawn`,
+          jsonRequest("POST"),
+        )
       } catch {
         throw new Error(t("err.taskStart"))
       }
       await refreshCurrent()
+      if (started.codexThreadId) {
+        window.setTimeout(() => {
+          void openCodexThread(started.codexThreadId as string).catch(() => {
+            notifyError(new Error(t("err.threadOpen")))
+          })
+        }, 0)
+      }
     },
     onCompleteTask: completeTask,
     onClearAttention: async (direction: Direction) => {

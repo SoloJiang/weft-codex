@@ -6,7 +6,7 @@ import { useI18n, type MessageKey } from "@/i18n"
 import { hasHostBridge, requestThreadOpen } from "@/host-context"
 import { cn } from "@/lib/utils"
 import type { VariantProps } from "class-variance-authority"
-import type { Issue, RepoComponent } from "@/types"
+import type { Direction, Issue, RepoComponent } from "@/types"
 
 interface AsyncButtonProps
   extends Omit<React.ComponentProps<typeof Button>, "onClick">,
@@ -131,37 +131,38 @@ export function ThreadLink({
 }
 
 /**
- * The one way to reach an issue's lead chat.
+ * The one way to reach a conversation, whatever owns it.
  *
  * Whether the thread already exists is a mechanism detail: the user has a
- * single concept — go to this issue's chat — and starting the lead when it is
- * not running yet happens on the way there. Both branches render the same icon
- * and the same label, so nothing about the lifecycle reaches the interface.
+ * single concept — go to this thing's chat — and starting the agent when it is
+ * not running yet happens on the way there. Both branches take the same label
+ * and the same icon, so consistency is structural rather than two look-alikes
+ * kept in sync by hand.
  */
-export function LeadChatLink({
-  issue,
-  onOpen,
+export function ChatLink({
+  threadId,
+  label,
+  pendingLabel,
+  onStart,
   onError,
   className,
   iconOnly = false,
 }: {
-  issue: Pick<Issue, "id" | "title" | "lead_codex_thread_id">
-  /** Opens the chat, starting the lead first when there is none yet. */
-  onOpen: (issueId: number) => Promise<void>
+  threadId: string
+  label: string
+  pendingLabel: string
+  /** Called only when there is no thread yet: start it, then open it. */
+  onStart: () => Promise<void>
   onError?: (error: unknown) => void
   className?: string
   iconOnly?: boolean
 }) {
-  const { t } = useI18n()
-  const label = t("issue.openChat", { title: issue.title })
-  const pendingLabel = t("loading.openingChat")
-
   // An existing thread keeps the anchor, so the standalone browser path still
   // has a real codex:// href to fall back on.
-  if (issue.lead_codex_thread_id) {
+  if (threadId) {
     return (
       <ThreadLink
-        threadId={issue.lead_codex_thread_id}
+        threadId={threadId}
         onError={onError}
         label={label}
         pendingLabel={pendingLabel}
@@ -176,12 +177,66 @@ export function LeadChatLink({
       className={cn("thread-link", iconOnly && "thread-link-icon", className)}
       label={label}
       pendingLabel={pendingLabel}
-      onAction={() => onOpen(issue.id)}
+      onAction={onStart}
       onError={onError ?? (() => {})}
       iconOnly={iconOnly}
     >
       <MessageCircle aria-hidden="true" />
     </AsyncButton>
+  )
+}
+
+export function LeadChatLink({
+  issue,
+  onOpen,
+  onError,
+  className,
+  iconOnly = false,
+}: {
+  issue: Pick<Issue, "id" | "title" | "lead_codex_thread_id">
+  onOpen: (issueId: number) => Promise<void>
+  onError?: (error: unknown) => void
+  className?: string
+  iconOnly?: boolean
+}) {
+  const { t } = useI18n()
+  return (
+    <ChatLink
+      threadId={issue.lead_codex_thread_id}
+      label={t("issue.openChat", { title: issue.title })}
+      pendingLabel={t("loading.openingChat")}
+      onStart={() => onOpen(issue.id)}
+      onError={onError}
+      className={className}
+      iconOnly={iconOnly}
+    />
+  )
+}
+
+export function TaskChatLink({
+  direction,
+  onOpen,
+  onError,
+  className,
+  iconOnly = false,
+}: {
+  direction: Pick<Direction, "id" | "name" | "codex_thread_id">
+  onOpen: (directionId: number) => Promise<void>
+  onError?: (error: unknown) => void
+  className?: string
+  iconOnly?: boolean
+}) {
+  const { t } = useI18n()
+  return (
+    <ChatLink
+      threadId={direction.codex_thread_id}
+      label={t("dir.openChat", { name: direction.name })}
+      pendingLabel={t("loading.openingChat")}
+      onStart={() => onOpen(direction.id)}
+      onError={onError}
+      className={className}
+      iconOnly={iconOnly}
+    />
   )
 }
 

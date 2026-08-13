@@ -61,6 +61,7 @@ const en = {
   "kanban.issueNeedsYou": "Needs you",
   "kanban.openLead": "Open the primary lead chat for {title}",
   "issue.openChat": "Open the chat for {title}",
+  "dir.openChat": "Open the chat for {name}",
   "kanban.moreActions": "More task actions",
 
   "issue.create": "Create issue",
@@ -84,7 +85,6 @@ const en = {
   "dir.openThread": "Open chat",
   "dir.continue": "Continue",
   "dir.complete": "Accept result",
-  "dir.retryStart": "Retry start",
   "dir.startFailed": "Start failed",
   "dir.clearAttention": "Clear flag",
   "dir.attention": "Needs attention",
@@ -202,7 +202,6 @@ const en = {
   "loading.creatingWorkspace": "Creating…",
   "loading.sendingMessage": "Sending…",
   "loading.completingTask": "Accepting…",
-  "loading.retryingTask": "Retrying…",
   "loading.openingChat": "Opening chat…",
   "loading.clearingFlag": "Clearing…",
   "loading.creatingIssue": "Creating…",

@@ -2,7 +2,6 @@ import * as React from "react"
 import {
   Check,
   Flag,
-  RotateCcw,
   Search,
   Send,
 } from "lucide-react"
@@ -14,12 +13,12 @@ import type { BoardEntry, Direction, DirectionStatus, Issue, Repo } from "@/type
 import { STATUSES } from "@/types"
 import { buildIssueBoard, groupIssueBoard, type IssueBoardCard } from "@/lib/issue-board"
 import { isTypingTarget } from "@/lib/utils"
-import { AsyncButton, EmptyState, LeadChatLink, ThreadLink } from "./shared"
+import { AsyncButton, EmptyState, LeadChatLink, TaskChatLink } from "./shared"
 
 export interface WorkActions {
   onError: (error: unknown) => void
   onOpenChat: (issueId: number) => Promise<void>
-  onRetryTask: (direction: Direction) => Promise<void>
+  onOpenTaskChat: (directionId: number) => Promise<void>
   onCompleteTask: (direction: Direction) => Promise<void>
   onClearAttention: (direction: Direction) => Promise<void>
   onContinueTask: (direction: Direction) => void
@@ -62,33 +61,19 @@ export function DirectionActions({
 }) {
   const { t } = useI18n()
   const canContinue = direction.status === "review" || direction.status === "done"
-  const canRetryStart = !direction.codex_thread_id && Boolean(direction.attention)
-  let threadActions: React.ReactNode = null
-  if (canRetryStart) {
-    threadActions = (
-      <AsyncButton
-        variant="ghost"
-        label={t("dir.retryStart")}
-        pendingLabel={t("loading.retryingTask")}
-        onAction={() => actions.onRetryTask(direction)}
-        onError={actions.onError}
-      >
-        <RotateCcw aria-hidden="true" />
-      </AsyncButton>
-    )
-  } else if (direction.codex_thread_id) {
-    threadActions = (
-      <>
-        <ThreadLink threadId={direction.codex_thread_id} onError={actions.onError} />
-        {canContinue ? (
-          <Button variant="ghost" onClick={() => actions.onContinueTask(direction)}>
-            <Send aria-hidden="true" />
-            {t("dir.continue")}
-          </Button>
-        ) : null}
-      </>
-    )
-  }
+  // Same single concept as the lead: one way in, and dispatching the worker
+  // when it has not started yet is part of getting there.
+  const threadActions = (
+    <>
+      <TaskChatLink direction={direction} onOpen={actions.onOpenTaskChat} onError={actions.onError} />
+      {canContinue && direction.codex_thread_id ? (
+        <Button variant="ghost" onClick={() => actions.onContinueTask(direction)}>
+          <Send aria-hidden="true" />
+          {t("dir.continue")}
+        </Button>
+      ) : null}
+    </>
+  )
   return (
     <div className="btns">
       {threadActions}
@@ -103,7 +88,10 @@ export function DirectionActions({
           <Check aria-hidden="true" />
         </AsyncButton>
       ) : null}
-      {Boolean(direction.attention) && !canRetryStart ? (
+      {/* Not offered while the task has no thread: dismissing the flag there
+          hides the problem without dispatching anything, leaving a task that is
+          both unflagged and not running. Opening the chat is the way out. */}
+      {Boolean(direction.attention) && direction.codex_thread_id ? (
         <AsyncButton
           variant="ghost"
           label={t("dir.clearAttention")}

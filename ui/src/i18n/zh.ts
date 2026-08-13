@@ -63,6 +63,7 @@ const zh = {
   "kanban.issueNeedsYou": "需要你",
   "kanban.openLead": "打开 {title} 的 Lead 主会话",
   "issue.openChat": "打开 {title} 的对话",
+  "dir.openChat": "打开 {name} 的对话",
   "kanban.moreActions": "更多任务操作",
 
   "issue.create": "新建 issue",
@@ -86,7 +87,6 @@ const zh = {
   "dir.openThread": "打开对话",
   "dir.continue": "继续处理",
   "dir.complete": "验收完成",
-  "dir.retryStart": "重试启动",
   "dir.startFailed": "启动失败",
   "dir.clearAttention": "清除标记",
   "dir.attention": "需要处理",
@@ -204,7 +204,6 @@ const zh = {
   "loading.creatingWorkspace": "正在创建…",
   "loading.sendingMessage": "正在发送…",
   "loading.completingTask": "正在完成…",
-  "loading.retryingTask": "正在重试…",
   "loading.openingChat": "正在打开对话…",
   "loading.clearingFlag": "正在清除…",
   "loading.creatingIssue": "正在创建…",
