@@ -27,7 +27,6 @@ import type {
   DialogState,
   DialogSubmission,
   Direction,
-  Issue,
   IssueKind,
   MessageIntent,
   Repo,
@@ -330,7 +329,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
 
   const workActions = React.useMemo<WorkActions>(() => ({
     onError: notifyError,
-    onStartLead: async (issue: Issue) => launchLead(issue.id),
+    onOpenChat: async (issueId: number) => launchLead(issueId),
     onRetryTask: async (direction: Direction) => {
       try {
         await api(`/api/directions/${direction.id}/spawn`, jsonRequest("POST"))

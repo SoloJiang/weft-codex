@@ -6,7 +6,7 @@ import { useI18n, type MessageKey } from "@/i18n"
 import { hasHostBridge, requestThreadOpen } from "@/host-context"
 import { cn } from "@/lib/utils"
 import type { VariantProps } from "class-variance-authority"
-import type { RepoComponent } from "@/types"
+import type { Issue, RepoComponent } from "@/types"
 
 interface AsyncButtonProps
   extends Omit<React.ComponentProps<typeof Button>, "onClick">,
@@ -127,6 +127,61 @@ export function ThreadLink({
         {iconOnly ? <span className="sr-only">{resolvedLabel}</span> : resolvedLabel}
       </a>
     </Button>
+  )
+}
+
+/**
+ * The one way to reach an issue's lead chat.
+ *
+ * Whether the thread already exists is a mechanism detail: the user has a
+ * single concept — go to this issue's chat — and starting the lead when it is
+ * not running yet happens on the way there. Both branches render the same icon
+ * and the same label, so nothing about the lifecycle reaches the interface.
+ */
+export function LeadChatLink({
+  issue,
+  onOpen,
+  onError,
+  className,
+  iconOnly = false,
+}: {
+  issue: Pick<Issue, "id" | "title" | "lead_codex_thread_id">
+  /** Opens the chat, starting the lead first when there is none yet. */
+  onOpen: (issueId: number) => Promise<void>
+  onError?: (error: unknown) => void
+  className?: string
+  iconOnly?: boolean
+}) {
+  const { t } = useI18n()
+  const label = t("issue.openChat", { title: issue.title })
+  const pendingLabel = t("loading.openingChat")
+
+  // An existing thread keeps the anchor, so the standalone browser path still
+  // has a real codex:// href to fall back on.
+  if (issue.lead_codex_thread_id) {
+    return (
+      <ThreadLink
+        threadId={issue.lead_codex_thread_id}
+        onError={onError}
+        label={label}
+        pendingLabel={pendingLabel}
+        className={className}
+        iconOnly={iconOnly}
+      />
+    )
+  }
+  return (
+    <AsyncButton
+      variant="ghost"
+      className={cn("thread-link", iconOnly && "thread-link-icon", className)}
+      label={label}
+      pendingLabel={pendingLabel}
+      onAction={() => onOpen(issue.id)}
+      onError={onError ?? (() => {})}
+      iconOnly={iconOnly}
+    >
+      <MessageCircle aria-hidden="true" />
+    </AsyncButton>
   )
 }
 

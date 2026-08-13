@@ -1231,23 +1231,10 @@ main {
   white-space: nowrap;
 }
 
-.issue-board-card-meta .issue-board-lead-link,
-.issue-board-card-meta .issue-board-start-lead {
+.issue-board-card-meta .issue-board-lead-link {
   flex: none;
   margin-inline-start: auto;
 }
-
-/* This only appears when the lead failed to start, so it carries the failure
-   as well as the remedy — at this column width a separate reason line would be
-   truncated to nothing. */
-.issue-board-start-lead {
-  height: 20px;
-  padding-inline: 6px;
-  color: var(--warn);
-  font-size: 11px;
-}
-
-.issue-board-start-lead:hover { color: var(--text); }
 
 .issue-board-lead-link {
   color: var(--dim);
