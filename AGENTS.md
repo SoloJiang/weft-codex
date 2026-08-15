@@ -3,8 +3,8 @@
 ## What you're working on
 
 weft-codex: Weft 的编排能力移植到 Codex Desktop 的独立项目。Rust workspace
-（`crates/`）+ 未来的 TS launcher 与 React UI。创始设计文档在
-`docs/specs/2026-08-08-codex-desktop-migration-design.md`，先读它再动手。
+（`crates/`）+ 未来的 TS launcher 与 React UI。设计宪法在 `DESIGN.md`，先读它再动手。容器几何与日期规格在
+`docs/specs/`，与 DESIGN.md 冲突时以 DESIGN.md 为准。
 
 ## Hard constraints
 

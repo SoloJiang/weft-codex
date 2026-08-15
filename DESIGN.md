@@ -305,3 +305,138 @@ Weft 搜索使用 `/`，无修饰键，需守卫输入类元素。
 
 **Do** 修改样式前用真机计算值确认目标规则生效。
 **Don't** 依据阅读推断——无人引用的类名与被整段覆盖的声明都能长期存活。
+
+## Container architecture
+
+weft-codex 的容器宪法。新界面、容器改动、宿主注入，先对照本节与上文视觉系统，再看日期规格。
+
+关联：
+
+- 产品目的与反例：[PRODUCT.md](PRODUCT.md)
+- 容器几何与 action：[docs/specs/2026-08-13-host-slot-layout.md](docs/specs/2026-08-13-host-slot-layout.md)
+- Chats 状态机：[docs/specs/2026-08-13-lead-chat-conversation-popover.md](docs/specs/2026-08-13-lead-chat-conversation-popover.md)
+
+本节记录 2026-08-14 / 08-15 在 Codex Desktop 真机（profile CDP）验证后仍然成立的判断。日期规格里若与本文冲突，以本文为准。视觉 token、控件构造仍以上文为准。
+
+### 1. 产品是什么
+
+用户始终待在官方 Codex Desktop 里。Weft 不是第三个对等模式，也不是罩在 Codex 上的管理后台。
+
+Work / Codex 仍是 Codex 自己的模式。Weft 是一层 **filter**：打开后，左侧导航、看板、issue 详情、会话树归 Weft；聊天、标题栏、底栏、Diff、拉伸条仍归 Codex。
+
+成功标准不是「Weft 看起来完整」，而是「人感觉自己还在用 Codex，只是多了一套 issue 驱动的工程编排」。
+
+### 2. 不可妥协的原则
+
+1. **扩展宿主，不替换宿主。** 左侧栏、右侧栏、标题栏按钮、底栏都先找 Codex 已有槽位。Weft 只填内容或让位，不另画一套平行 chrome。
+2. **槽位有且只有一个 owner。** `nav` / `stage` / `right-panel` / `dock` 同一时刻不能既给 Weft 又给 Codex 正文。层（modal）可以盖住 stage，但不能改 chrome / dock 的几何。
+3. **隐藏不是架构。** 用 CSS 把原生列表藏掉、再用 iframe 全铺 `main`，必然把标题、底栏、Diff、拉伸条一起弄乱。先指定 owner，再挂载或让位。
+4. **对话属于 Codex，交付上下文属于 Weft。** Lead / Worker 是原生 Thread。看板、详情、会话树只提供归属与进度，不复制一套聊天客户端。
+5. **点击契约比组件路由更稳。** 业务组件不得私自改 `stage`。谁打开 Lead、谁打开详情、谁占用右侧槽，只走 host action。
+6. **真机优先。** 容器结论必须在 Codex Desktop + profile CDP 上复验。静态预览、规格段落、旧注入截图都不是交付证明。
+
+### 3. 窗口怎么拆
+
+```text
+chrome     标题栏 / 红绿灯 / 模式开关 / Toggle side panel / Toggle bottom panel
+nav        左侧栏。Weft filter 开时改写成 Create issue / workspace / Kanban / Repos / Issues
+stage      主区。workspace = Kanban 或仓库；thread = 原生 Lead / Worker 聊天
+right      原生 [data-app-shell-focus-area="right-panel"]。Weft 详情、Chats、Diff 互斥共用
+dock       原生底栏 / 源目录。Weft 只观察并让位
+modal      host 级创建弹层。不进 workspace / sidebar iframe
+```
+
+含义：
+
+- workspace iframe 的矩形 = stage 的矩形。禁止再写成从标题栏铺到窗口底。
+- 打开右侧槽时，stage 被挤窄，而不是被盖住。
+- dock 打开时，stage / 右侧槽底边上移。测不到高度就当 0，fail-open。
+- sidebar iframe 在 Weft 模式下是隐藏控制器（0×0），可见行是改写后的原生 sidebar。
+
+### 4. 点击契约
+
+这是容器层对外的唯一交互合同。
+
+| 用户动作 | 结果 |
+|---|---|
+| 点左侧 issue 行，且已有 Lead | `stage=thread`，打开 Primary Lead；Chats 默认打开（`open-auto`） |
+| 点左侧 issue 行，尚无 Lead | 先 spawn Lead，成功后同上；失败则留在 workspace，打开该 issue 详情 |
+| 点看板卡片 | 留在 Kanban，打开 Weft 详情；不跳聊天，不弹 Chats |
+| 点标题栏 Toggle side panel | 开关当前右侧槽。workspace 下是上次的 Weft 详情；thread 下先是 Chats |
+| 点 Chats 里的「详情」 | 关掉 Chats，同一 `right-panel` 切到 Weft 详情；人仍留在当前 Lead |
+| 关详情 / 再点 side panel | 右侧槽还给 Codex，stage 回到全宽 |
+| 点侧栏 Kanban / 仓库 | `stage=workspace`，Chats 关闭 |
+| 切出 Weft | 拆掉所有 Weft 表面，恢复原生 nav / 会话列表 |
+
+看板卡片不再带跳会话按钮。Lead 的入口只有左侧 issue 列表，以及详情里的显式「打开主会话」。
+
+从 sidebar 进 Lead 时：若详情已为同一 issue 打开，先清详情再开 Chats，但 **不要顺手关掉原生 `right-panel`**，否则 Chats 会找不到槽。
+
+### 5. 右侧槽：详情、Chats、Diff
+
+Weft 详情和 Chats 都挂进原生 `right-panel`，入口就是标题栏那颗 `Toggle side panel`。不要在主区自绘抽屉，也不要再做左侧 Chats 胶囊。
+
+互斥：
+
+- workspace + 看板卡片 → Weft 详情占用 `right-panel`
+- thread + sidebar issue → Chats 占用 `right-panel`
+- thread + Chats「详情」 → 同一槽切到 Weft 详情，Chats 关
+- 用户关 side panel → Weft 状态清掉，槽还给 Codex
+
+实现上必须记住三件事：
+
+1. **不要程序化地点 workspace 下的 side panel 去“借”Diff。** 那会把 Electron `webview` 和底栏一起打开，详情被盖住，只剩 icon 亮着。
+2. **不要 `display:none` 掉整个 Diff 骨架。** 原生面板宽度来自 React 状态和内部 `width/min-width`。藏掉骨架，`right-panel` 会收成 0。只藏 Diff 正文，保留宽度壳。
+3. **拉伸条是原生 chrome，不是 Weft 控件。** 详情 / Chats 内容相对 `right-panel` 左缘内收 8px，把 `[role=separator]` 露出来。拖拽时把宽度写回面板，并让 stage 跟着让位。默认约 420px，可拖范围约 280–720px。
+
+标题栏 side panel 的点击要让原生 toggle 自己完成，再同步 Weft 内容。捕获阶段拦截再 `preventDefault`，会把面板关不掉，或关了状态还停在 `inspector=N`。
+
+### 6. 左侧栏
+
+Weft 不替换 sidebar，只改写原生滚动区：
+
+- Create issue 拦截原生 New chat
+- workspace 名、Kanban、Repositories、Issues 都是原生行
+- Weft sidebar iframe 只做控制器，不画可见导航
+- issue 行没有展开箭头，也没有常驻会话树
+
+会话树只活在 thread 的 Chats 面板里。把它放回左侧，会和 Codex「当前聊天」抢扫描对象。
+
+### 7. Host context 必须够用
+
+iframe 不能靠猜当前 issue。host 至少发布：
+
+- `filter` / `stage` / `inspector` / `conversation`
+- `threadId`：同时认 `data-app-action-sidebar-thread-active` 与 `thread-selected`
+- `issueId`：当前焦点 issue，供 Chats 在 thread 绑定尚未对上时回退
+- `workspaceId`：当前 workspace，供 popover / inspector 拉看板
+
+只传原生 thread id 不够。Desktop 里选中的 Lead 行 id 可能和 `issue.lead_codex_thread_id` 不是同一个字符串，Chats 会永远停在「正在载入工作区」。
+
+### 8. 看板上的布局
+
+- 五列固定 272px，列间距 20px，`width: max-content`，横向滚动。
+- 不要在 iframe 变窄时改走 720px 移动端堆叠。那会让列叠在一起。
+- workspace 自己的「Kanban」标题留在 stage 里。标题栏残留的 Lead 文案用 `visibility: hidden` 藏掉，不要拆 header 拖拽区。
+
+### 9. 验证标准
+
+容器改动未完成，除非 Codex Desktop + profile CDP 上能逐条看到：
+
+1. 看板点卡片：人仍在 Kanban，右侧出现该 issue 详情；无 Diff webview，底栏不跟着开。
+2. 再点 Toggle side panel：详情和 `right-panel` 一起关掉，看板回全宽。
+3. 再开 side panel：回到上次的 Weft 详情，不是 Diff / New tab / Annotating。
+4. 点左侧 issue：进入 Lead，Chats 自动出现在同一右侧槽，能看到 Main chat / Details。
+5. 点 Chats「详情」：同一槽切到 Weft 详情，人还在 Lead，底栏仍关。
+6. 拖右侧分隔条：详情变宽或变窄，看板同步让位。
+7. 窗口缩窄：五列仍是 272px，不重叠，出现横向滚动。
+
+规格、截图、旧 bridge id 的注入结果，都不能代替这一轮。
+
+### 10. 明确不做
+
+- 不把 Weft 做成和 Work / Codex 对等的第三产品模式。
+- 不在 workspace iframe 里做弹层、详情整页或平行 sidebar。
+- 不把 agent profile / 跨 workspace 编排塞进当前容器。具名 agent 仍强绑定某个 workspace；没有绑定的 engine 是以后的事。
+- 不暴露 direction、bus 等内部名词。
+- 不为了“看起来像原生”去复制一套 sidebar / header / splitter。要用 Codex 自己的。

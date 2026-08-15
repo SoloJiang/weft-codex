@@ -264,6 +264,11 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
     Primary Lead；右侧 chevron 只负责展开/收起，不改变当前线程。会话树按
     Lead / Tasks 分组，fork 归入其逻辑 Lead 或 Task 下；打开任何原生线程时，
     sidebar 自动切到对应 workspace、展开 issue 并精确高亮该线程；
+    **（2026-08-13 修订，已实现）**：会话树不再常驻 sidebar——chevron 与
+    常驻展开区已移除，会话切换收进 Lead 聊天标题栏「会话」按钮的悬浮
+    浮层（renderer-agent 第四块宿主表面），到达 Lead 时默认打开。交互
+    细节与已实现形态见
+    `docs/specs/2026-08-13-lead-chat-conversation-popover.md`。
   - `workspace`：Codex 主区域，只渲染 Kanban / 仓库 / issue detail，移除重复
     topbar 和重复的新建 issue 表单。Issue 详情不提供手工新建任务，任务由 lead
     chat 调用 `task_create` 产生并自动调度；lead / worker 沟通仍进入原生线程。
@@ -304,12 +309,17 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
 
 入口级模式开关，挂载到应用既有的顶层模式切换上：应用本身已有
 Work（everyday work）/ Codex 双模式（bundle 实证：`isEverydayWorkMode`、
-跨模式 handoff 链接），Weft 作为**第三个并列模式**加入，而不是自造一套
-独立开关：
-
+跨模式 handoff 链接），菜单里仍提供 **Weft** 一项。内部不再把 Weft 当作
+与 Work/Codex 对等的第三产品模式，而是罩在 Codex 底座上的 `filter`。
+容器、槽位所有权与点击契约以仓库根目录 `DESIGN.md` 为准，细节见
+`docs/specs/2026-08-13-host-slot-layout.md`。本节只保留注入分层
+与开关形态：
 - Weft 模式下隐藏 Codex 常规会话列表与无关聊天入口，只保留 workspace /
   issue / kanban / repo map 表面；线程聊天仍使用原生线程视图（唯一不隐藏
   的原生表面）。
+- filter=weft 时，左侧导航槽归 Weft，主区按 `stage` 在 workspace 与
+  原生 thread 之间切换；不再用 workspace iframe 全铺 `main`。详情与
+  Chats 共用原生 `right-panel`，见仓库根目录 `DESIGN.md`。
 - 侧边栏头部的两个原生 action（搜索 = Command menu、铃铛 = activity view）
   同属"无关聊天入口"，但**不是删掉了事，而是同位换语义**：隐藏原生两个，
   在同一槽位放 Weft 自己的搜索与收件箱，按钮克隆自原生控件以继承宿主样式。
@@ -340,8 +350,8 @@ Work（everyday work）/ Codex 双模式（bundle 实证：`isEverydayWorkMode`�
     workspace 导航。按版本做结构 probe，不匹配时 **fail-open 回 Tier 1**
     （宁可露出原生 UI，不可藏错或藏坏）。
 - 开关形态（优先级从高到低）：
-  1. 既有模式切换器加第三项 Work / Codex / **Weft**——用户已理解的模式
-     语义，一等 UI 锚点也比侧边栏内部结构更稳定；
+  1. 既有模式切换器加 Weft 一项——菜单里仍叫模式，内部只是罩在 Codex
+     底座上的 filter，不是第三个对等产品；
   2. launcher flag 决定启动默认模式；
   3. 自有 toggle（持久化在 weftd 侧）——模式切换器结构 probe 失败时的
      回退，保证 Weft mode 永远可达。
@@ -415,9 +425,12 @@ interface HostContextV1 {
   UI 写入自己的根节点。宿主主题或圆角变化后重新发布快照。
 - `locale` 由宿主明确传递，iframe 不使用自己的 `navigator.language` 猜测宿主
   语言；独立浏览器才回退到系统语言。
-- `view` 明确区分 Weft workspace overlay 与 Codex 原生 thread surface。
-  `threadId` 只有在 `view === "thread"` 时参与 sidebar 选中态；返回 Kanban / 仓库
-  后即使原生 DOM 仍暂时保留 active thread，也不能残留错误高亮。
+- `view` 继续发布，语义等于新容器的 `stage`（见
+  `2026-08-13-host-slot-layout.md`）。`threadId` 只有在
+  `stage === "thread"` 时参与 sidebar 选中态；回到 workspace 后即使原生
+  DOM 仍暂时保留 active thread，也不能残留错误高亮。workspace iframe
+  只占据 stage 矩形。详情 / Chats 挂进原生 `right-panel`，不要再做全窗口 overlay。
+  host context 还需发布 `issueId` 与 `workspaceId`，不能只靠原生 thread id。
 - 所有 frame → host 请求使用固定 origin、版本、action allowlist 与 payload
   schema；禁止 `postMessage("*")` 执行高权限动作。
 - 注入使用独立 profile、loopback-only CDP、document-start 脚本与 ready
@@ -549,7 +562,7 @@ Desktop 相关（1、3）仍需运行时闭环；app-server 相关（2、4、5�
   投影、SSE 自刷新、亮/暗主题、host context 模拟、桌面/手机断点与原生线程深链）。
 - Stage 3.5：Desktop adapter（**已完成 2026-08-09**）：安装检测、语义 probe、
   三档兼容分类、专用 profile Launcher、document-start 重挂载、CSP bypass 显示与
-  恢复、原生第三模式、双 Surface、Host Context、原生 Thread 切换均已真机闭环。
+  恢复、Weft filter、双 Surface、Host Context、原生 Thread 切换均已真机闭环。
 - Stage 4：独立交付（**已完成 2026-08-09**）——用户入口收敛为无窗口
   `weft-codex` 命令，不发布第二个 App；单命令已从最终 archive 真机启动官方
   Codex、weftd 并完成 `tier=weft-mode` 双 surface 注入。`--safe-mode` 实测只启动

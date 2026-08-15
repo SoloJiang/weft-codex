@@ -5,6 +5,8 @@ export type HostMode = "work" | "codex" | "weft"
 const SIDEBAR_ROOT_ID = "weft-codex-sidebar-root"
 const WORKSPACE_ROOT_ID = "weft-codex-workspace-root"
 const MODAL_ROOT_ID = "weft-codex-modal-root"
+const POPOVER_ROOT_ID = "weft-codex-popover-root"
+const INSPECTOR_ROOT_ID = "weft-codex-inspector-root"
 const NATIVE_CHECK_ATTR = "data-weft-codex-native-mode-check"
 const HEADER_ACTION_ATTR = "data-weft-codex-header-action"
 const HEADER_BADGE_ATTR = "data-weft-codex-header-badge"
@@ -66,6 +68,8 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
     const SIDEBAR_ROOT_ID = "weft-codex-sidebar-root";
     const WORKSPACE_ROOT_ID = "weft-codex-workspace-root";
     const MODAL_ROOT_ID = "weft-codex-modal-root";
+    const POPOVER_ROOT_ID = "weft-codex-popover-root";
+    const INSPECTOR_ROOT_ID = "weft-codex-inspector-root";
     const STYLE_ID = "weft-codex-host-style";
     const MODE_ITEM_ATTR = "data-weft-codex-mode-item";
     const NATIVE_CHECK_ATTR = "data-weft-codex-native-mode-check";
@@ -90,6 +94,20 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       dialogState: null,
       modalVisible: false,
       modalBackground: new Map(),
+      popoverRoot: null,
+      popoverFrame: null,
+      popoverButton: null,
+      popoverState: "closed",
+      pendingThreadTitle: "",
+      focusIssueId: null,
+      sidePanelProgrammatic: false,
+      inspectorRoot: null,
+      inspectorFrame: null,
+      inspectorIssueId: null,
+      lastInspectorIssueId: null,
+      lastRightPanelWidth: 0,
+      nativeAdapter: null,
+      sidebarModel: null,
       modeButton: null,
       savedModeButton: null,
       headerActionsMounted: false,
@@ -219,6 +237,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       modeRow.dataset.weftCodexModeHeader = "";
       for (const child of header.children) {
         if (!(child instanceof HTMLElement) || child === modeRow) continue;
+        if (/new chat/i.test(child.textContent || "")) continue;
         child.dataset.weftCodexNativeHeaderAction = "";
       }
       // The action slot lives *inside* the mode row, so the loop above never
@@ -395,6 +414,8 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       const values = {
         weftCodexMode: state.mode,
         weftCodexView: state.view,
+        weftCodexInspector: state.inspectorIssueId ? String(state.inspectorIssueId) : "closed",
+        weftCodexRight: weftRightPanelOccupied() ? "weft" : "native",
         // Spec §7.5 splits mounting into Tier 1 (additive, native UI untouched)
         // and Tier 2 (weft-mode, subtractive). Publishing the tier here is what
         // lets the stylesheet fail open: every subtractive rule is scoped to
@@ -419,15 +440,23 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         state.view = "workspace";
         state.mode = "weft";
         if (state.modeButton) applyWeftModeButton(state.modeButton);
+        syncPopoverRoot();
+        syncPopoverButton();
+        syncInspectorRoot();
+        syncNativeChrome();
       } else {
         dismissDialog();
+        dismissPopover();
+        closeInspector();
         state.mode = nextMode;
         state.nativeMode = nextMode;
         state.view = "workspace";
         restoreModeButton();
+        restoreNativeSidebar();
       }
       setDocumentState();
       syncModeMenus();
+      syncSlotGeometry();
       publishContextSoon();
       if (changed && persist) notifyHost("mode.changed", { mode: nextMode });
     }
@@ -436,6 +465,17 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       if (nextView !== "workspace" && nextView !== "thread") return;
       if (state.view === nextView) return;
       state.view = nextView;
+      if (nextView !== "thread") dismissPopover();
+      else {
+        ensurePopoverRoot();
+        ensurePopoverButton();
+      }
+      /* Leaving the thread view must hide Weft chats immediately, not on the
+         next MutationObserver pass. */
+      syncPopoverRoot();
+      syncPopoverButton();
+      syncNativeChrome();
+      syncSlotGeometry();
       setDocumentState();
       publishContextSoon();
     }
@@ -580,6 +620,536 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       postDialogState();
     }
 
+    /* ── conversation popover (spec 2026-08-13-lead-chat-conversation-popover)
+       One discriminated state drives the panel; every transition is explicit. */
+
+    function isWeftThreadContext() {
+      return conversationAllowed();
+    }
+
+    function syncPopoverRoot() {
+      const root = state.popoverRoot;
+      if (!(root instanceof HTMLElement)) return;
+      const open = state.popoverState !== "closed" && isWeftThreadContext();
+      const openValue = open ? "true" : "false";
+      if (root.dataset.open !== openValue) root.dataset.open = openValue;
+    }
+
+    function syncPopoverButton() {
+      const button = nativeSidePanelButton();
+      if (!(button instanceof HTMLElement)) return;
+      state.popoverButton = button;
+      const expanded = state.popoverState !== "closed" ? "true" : "false";
+      if (button.getAttribute("aria-expanded") !== expanded) {
+        button.setAttribute("aria-expanded", expanded);
+      }
+    }
+
+    function setPopoverState(next) {
+      if (next !== "closed" && next !== "open-auto" && next !== "open-pinned") return;
+      if (state.popoverState === next) return;
+      state.popoverState = next;
+      syncPopoverRoot();
+      syncPopoverButton();
+      if (next !== "closed") ensurePopoverRoot();
+      else {
+        syncNativeRightPanelContent();
+      }
+      syncNativeSidePanelForConversation();
+      syncSlotGeometry();
+      publishContextSoon();
+    }
+
+    function ensurePopoverRoot() {
+      let root = state.popoverRoot;
+      if (!(root instanceof HTMLElement)) {
+        root = document.createElement("div");
+        root.id = POPOVER_ROOT_ID;
+        root.dataset.weftCodexHostSurface = "popover";
+        root.dataset.open = "false";
+        const frame = createFrame("popover");
+        root.append(frame);
+        state.popoverRoot = root;
+        state.popoverFrame = frame;
+      }
+      const parent = nativeRightPanelHost();
+      if (parent && root.parentElement !== parent) parent.append(root);
+      syncPopoverRoot();
+      syncNativeRightPanelContent();
+      return true;
+    }
+
+    function onWeftChatsClick(event) {
+      if (state.mode !== "weft") return;
+      if (state.sidePanelProgrammatic) return;
+      /* Let the native toggle finish. onNativeSidePanelClick syncs Weft
+         content afterwards so a user click cannot double-toggle Diff. */
+    }
+
+    function ensurePopoverButton() {
+      const side = nativeSidePanelButton();
+      if (!(side instanceof HTMLElement)) return false;
+      state.popoverButton = side;
+      if (side.dataset.weftCodexChatsBound !== "true") {
+        side.dataset.weftCodexChatsBound = "true";
+        side.addEventListener("click", onWeftChatsClick, true);
+      }
+      syncPopoverButton();
+      return true;
+    }
+
+    function dismissPopover() {
+      setPopoverState("closed");
+    }
+
+    function nativeRightPanel() {
+      return document.querySelector('[data-app-shell-focus-area="right-panel"]');
+    }
+
+    function nativeRightPanelHost() {
+      const panel = nativeRightPanel();
+      if (!(panel instanceof HTMLElement)) return null;
+      return panel.querySelector(":scope > .absolute.inset-0") || panel;
+    }
+
+    function syncNativeRightPanelContent() {
+      const panel = nativeRightPanel();
+      if (!(panel instanceof HTMLElement)) return;
+      if (weftRightPanelOccupied()) bindNativeRightPanelResize();
+      const occupy = weftRightPanelOccupied();
+      const host = nativeRightPanelHost();
+      if (!(host instanceof HTMLElement)) return;
+      for (const child of host.children) {
+        if (!(child instanceof HTMLElement)) continue;
+        if (child.id === POPOVER_ROOT_ID || child.id === INSPECTOR_ROOT_ID) continue;
+        /* Keep the native width skeleton visible so the Diff splitter can
+           still size the panel. Only hide the inner Diff chrome. */
+        if (occupy) {
+          child.setAttribute("data-weft-codex-native-diff-shell", "");
+          child.removeAttribute("data-weft-codex-hide-native-diff");
+          for (const inner of child.querySelectorAll(":scope > *")) {
+            if (inner instanceof HTMLElement) inner.setAttribute("data-weft-codex-hide-native-diff", "");
+          }
+        } else {
+          child.removeAttribute("data-weft-codex-native-diff-shell");
+          child.removeAttribute("data-weft-codex-hide-native-diff");
+          for (const inner of child.querySelectorAll("[data-weft-codex-hide-native-diff]")) {
+            inner.removeAttribute("data-weft-codex-hide-native-diff");
+          }
+        }
+      }
+      syncNativeDiffWebview();
+    }
+
+    function syncNativeDiffWebview() {
+      const occupy = weftRightPanelOccupied();
+      for (const webview of document.querySelectorAll("webview")) {
+        if (!(webview instanceof HTMLElement)) continue;
+        if (webview.closest("#" + POPOVER_ROOT_ID + ", #" + INSPECTOR_ROOT_ID + ", #" + WORKSPACE_ROOT_ID)) continue;
+        if (occupy) webview.setAttribute("data-weft-codex-hide-native-diff", "");
+        else webview.removeAttribute("data-weft-codex-hide-native-diff");
+      }
+    }
+
+    function suppressNativeDiffChrome() {
+      if (!weftRightPanelOccupied()) return;
+      syncNativeDiffWebview();
+      const dock = nativeBottomPanelButton();
+      if (dock instanceof HTMLElement && dock.getAttribute("aria-pressed") === "true") {
+        dock.click();
+      }
+    }
+
+    function syncNativeSidePanelForConversation() {
+      setDocumentState();
+      const wantOpen = state.mode === "weft" && weftRightPanelOccupied();
+      if (wantOpen === nativeInspectorOpen()) {
+        if (wantOpen) {
+          ensurePopoverRoot();
+          ensureInspectorRoot();
+          syncNativeRightPanelContent();
+          suppressNativeDiffChrome();
+        }
+        return;
+      }
+      const button = nativeSidePanelButton();
+      if (!(button instanceof HTMLElement)) return;
+      state.sidePanelProgrammatic = true;
+      button.click();
+      const finish = (attempt) => {
+        if (state.disposed) return;
+        const host = nativeRightPanelHost();
+        if (!host && attempt < 12) {
+          window.setTimeout(() => finish(attempt + 1), 32);
+          return;
+        }
+        state.sidePanelProgrammatic = false;
+        if (wantOpen) {
+          ensurePopoverRoot();
+          ensureInspectorRoot();
+          suppressNativeDiffChrome();
+        }
+        syncNativeRightPanelContent();
+        syncSlotGeometry();
+      };
+      window.setTimeout(() => finish(0), 0);
+    }
+
+    function validIssueId(value) {
+      return Number.isInteger(value) && value > 0;
+    }
+
+    function nativeRightHeaderSlot() {
+      const slots = [...document.querySelectorAll('[data-test-id="header-shell-slot"]')];
+      return slots.length ? slots[slots.length - 1] : null;
+    }
+
+    function nativeTitlebarButton(label) {
+      const slot = nativeRightHeaderSlot();
+      const scope = slot instanceof HTMLElement ? slot : document;
+      const matches = [...scope.querySelectorAll("button")].filter((button) => {
+        return (button.getAttribute("aria-label") || "") === label;
+      });
+      return matches.find((button) => {
+        const style = getComputedStyle(button);
+        const rect = button.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.x > 200;
+      }) || null;
+    }
+
+    function nativeSidePanelButton() {
+      return nativeTitlebarButton("Toggle side panel");
+    }
+
+    function nativeBottomPanelButton() {
+      return nativeTitlebarButton("Toggle bottom panel");
+    }
+
+    function nativeInspectorOpen() {
+      const button = nativeSidePanelButton();
+      if (button && button.getAttribute("aria-pressed") === "true") return true;
+      const panel = nativeRightPanel();
+      if (!(panel instanceof HTMLElement)) return false;
+      const rect = panel.getBoundingClientRect();
+      return rect.width > 40;
+    }
+
+    function nativeDockOpen() {
+      const button = nativeBottomPanelButton();
+      return Boolean(button && button.getAttribute("aria-pressed") === "true");
+    }
+
+    function closeNativeInspector() {
+      const button = nativeSidePanelButton();
+      if (button instanceof HTMLElement && button.getAttribute("aria-pressed") === "true") {
+        button.click();
+      }
+    }
+
+    function weftInspectorOpen() {
+      return state.mode === "weft" && validIssueId(state.inspectorIssueId);
+    }
+
+    function weftRightPanelOccupied() {
+      if (state.mode !== "weft") return false;
+      return weftInspectorOpen() || (state.view === "thread" && state.popoverState !== "closed");
+    }
+
+    function conversationAllowed() {
+      return state.mode === "weft" && state.view === "thread";
+    }
+
+    function syncInspectorRoot() {
+      const root = state.inspectorRoot;
+      if (!(root instanceof HTMLElement)) return;
+      const open = weftInspectorOpen();
+      const openValue = open ? "true" : "false";
+      if (root.dataset.open !== openValue) root.dataset.open = openValue;
+      const hiddenValue = open ? "false" : "true";
+      if (root.getAttribute("aria-hidden") !== hiddenValue) {
+        root.setAttribute("aria-hidden", hiddenValue);
+      }
+    }
+
+    function ensureInspectorRoot() {
+      let root = state.inspectorRoot;
+      if (!(root instanceof HTMLElement)) {
+        root = document.createElement("div");
+        root.id = INSPECTOR_ROOT_ID;
+        root.dataset.weftCodexHostSurface = "inspector";
+        root.dataset.open = "false";
+        root.setAttribute("aria-hidden", "true");
+        const frame = createFrame("inspector");
+        root.append(frame);
+        state.inspectorRoot = root;
+        state.inspectorFrame = frame;
+      }
+      const parent = nativeRightPanelHost();
+      if (parent && root.parentElement !== parent) parent.append(root);
+      syncInspectorRoot();
+      syncNativeRightPanelContent();
+      return Boolean(parent);
+    }
+
+    function openInspector(issueId) {
+      if (!validIssueId(issueId) || state.mode !== "weft") return false;
+      const changed = state.inspectorIssueId !== issueId;
+      state.inspectorIssueId = issueId;
+      state.lastInspectorIssueId = issueId;
+      dismissPopover();
+      ensureInspectorRoot();
+      syncInspectorRoot();
+      syncNativeSidePanelForConversation();
+      syncNativeChrome();
+      syncSlotGeometry();
+      setDocumentState();
+      if (changed) publishContextSoon();
+      return true;
+    }
+
+    function closeInspector(options) {
+      const keepNative = Boolean(options && options.keepNative);
+      if (state.inspectorIssueId == null) {
+        syncInspectorRoot();
+        return;
+      }
+      state.inspectorIssueId = null;
+      syncInspectorRoot();
+      syncNativeRightPanelContent();
+      if (!keepNative) syncNativeSidePanelForConversation();
+      syncNativeChrome();
+      syncSlotGeometry();
+      setDocumentState();
+      publishContextSoon();
+    }
+
+    function measureDockHeight(mainRoute) {
+      const button = nativeBottomPanelButton();
+      if (!(button instanceof HTMLElement) || button.getAttribute("aria-pressed") !== "true") return 0;
+      const mainRect = mainRoute.getBoundingClientRect();
+      let height = 0;
+      for (const candidate of document.querySelectorAll("aside, section, div")) {
+        if (!(candidate instanceof HTMLElement)) continue;
+        if (state.workspaceRoot && (candidate === state.workspaceRoot || state.workspaceRoot.contains(candidate))) continue;
+        if (state.inspectorRoot && (candidate === state.inspectorRoot || state.inspectorRoot.contains(candidate))) continue;
+        const rect = candidate.getBoundingClientRect();
+        if (rect.width < 120 || rect.height < 72 || rect.height > mainRect.height * 0.55) continue;
+        if (rect.bottom < mainRect.bottom - 8 || rect.top < mainRect.top + 80) continue;
+        if (rect.left > mainRect.left + 40) continue;
+        height = Math.max(height, Math.round(mainRect.bottom - rect.top));
+      }
+      return height;
+    }
+
+    function rememberRightPanelWidth(width) {
+      if (!Number.isFinite(width) || width < 240) return;
+      state.lastRightPanelWidth = Math.round(width);
+    }
+
+    function applyWeftRightPanelWidth(width) {
+      const panel = nativeRightPanel();
+      if (!(panel instanceof HTMLElement)) return 0;
+      const next = Math.max(280, Math.min(720, Math.round(width)));
+      rememberRightPanelWidth(next);
+      const sized = next + "px";
+      if (panel.style.width !== sized) panel.style.width = sized;
+      if (panel.style.flexBasis !== sized) panel.style.flexBasis = sized;
+      if (panel.style.flexGrow !== "0") panel.style.flexGrow = "0";
+      if (panel.style.flexShrink !== "0") panel.style.flexShrink = "0";
+      const shell = panel.querySelector("[data-weft-codex-native-diff-shell]");
+      if (shell instanceof HTMLElement) {
+        shell.style.width = sized;
+        shell.style.minWidth = sized;
+      }
+      return next;
+    }
+
+    function bindNativeRightPanelResize() {
+      const handle = document.querySelector('[data-app-shell-focus-area="right-panel"] > [role="separator"]');
+      if (!(handle instanceof HTMLElement) || handle.dataset.weftCodexResizeBound === "true") return;
+      handle.dataset.weftCodexResizeBound = "true";
+      let dragging = false;
+      const onMove = (event) => {
+        if (!dragging || !weftRightPanelOccupied()) return;
+        const mainRoute = visibleMainRoute();
+        if (!(mainRoute instanceof HTMLElement)) return;
+        const right = mainRoute.getBoundingClientRect().right;
+        applyWeftRightPanelWidth(right - event.clientX);
+        syncSlotGeometry();
+      };
+      const onUp = () => {
+        if (!dragging) return;
+        dragging = false;
+        window.removeEventListener("pointermove", onMove, true);
+        window.removeEventListener("pointerup", onUp, true);
+      };
+      handle.addEventListener("pointerdown", (event) => {
+        if (!weftRightPanelOccupied()) return;
+        dragging = true;
+        event.preventDefault();
+        event.stopPropagation();
+        window.addEventListener("pointermove", onMove, true);
+        window.addEventListener("pointerup", onUp, true);
+      }, true);
+    }
+
+    function measureNativeInspectorWidth(mainRoute) {
+      if (!nativeInspectorOpen()) return 0;
+      if (weftRightPanelOccupied()) {
+        const preferred = state.lastRightPanelWidth || 420;
+        return applyWeftRightPanelWidth(preferred);
+      }
+      const mainRect = mainRoute.getBoundingClientRect();
+      const panel = nativeRightPanel();
+      if (panel instanceof HTMLElement) {
+        const rect = panel.getBoundingClientRect();
+        if (rect.width > 80 && rect.right > mainRect.right - 24) {
+          return Math.round(mainRect.right - rect.left);
+        }
+      }
+      let width = 0;
+      for (const candidate of document.querySelectorAll("aside")) {
+        if (!(candidate instanceof HTMLElement)) continue;
+        if (state.inspectorRoot && (candidate === state.inspectorRoot || state.inspectorRoot.contains(candidate))) continue;
+        const rect = candidate.getBoundingClientRect();
+        if (rect.width < 220 || rect.height < mainRect.height * 0.5) continue;
+        if (rect.right < mainRect.right - 16 || rect.left < mainRect.left + 80) continue;
+        width = Math.max(width, Math.round(mainRect.right - rect.left));
+      }
+      return width;
+    }
+
+    function applySlotBox(element, box) {
+      if (!(element instanceof HTMLElement)) return;
+      const next = {
+        top: box.top + "px",
+        right: box.right + "px",
+        bottom: box.bottom + "px",
+        left: box.left + "px",
+      };
+      for (const [key, value] of Object.entries(next)) {
+        if (element.style[key] !== value) element.style[key] = value;
+      }
+    }
+
+    function observeRightPanelResize() {
+      const panel = nativeRightPanel();
+      if (!(panel instanceof HTMLElement) || !state.resizeObserver) return;
+      if (panel.dataset.weftCodexResizeObserved === "true") return;
+      panel.dataset.weftCodexResizeObserved = "true";
+      state.resizeObserver.observe(panel);
+    }
+
+    function syncSlotGeometry() {
+      observeRightPanelResize();
+      const mainRoute = visibleMainRoute();
+      if (!(mainRoute instanceof HTMLElement)) return;
+      const mainRect = mainRoute.getBoundingClientRect();
+      const dragRegions = [...mainRoute.querySelectorAll("header, header *")].filter((element) =>
+        getComputedStyle(element).getPropertyValue("-webkit-app-region") === "drag"
+      );
+      let top = 0;
+      for (const region of dragRegions) {
+        const rect = region.getBoundingClientRect();
+        top = Math.max(top, rect.bottom - mainRect.top);
+      }
+      top = Math.max(0, Math.round(top));
+      const dock = measureDockHeight(mainRoute);
+      const nativeRight = measureNativeInspectorWidth(mainRoute);
+      if (state.workspaceRoot) {
+        applySlotBox(state.workspaceRoot, {
+          top: state.mode === "weft" && state.view === "workspace" ? 0 : top,
+          right: nativeRight,
+          bottom: dock,
+          left: 0,
+        });
+      }
+
+    }
+
+    function releaseWeftRightPanel() {
+      if (state.popoverState !== "closed") dismissPopover();
+      if (!weftInspectorOpen()) {
+        setDocumentState();
+        return;
+      }
+      state.inspectorIssueId = null;
+      syncInspectorRoot();
+      setDocumentState();
+      publishContextSoon();
+    }
+
+    function onNativeSidePanelClick() {
+      if (state.sidePanelProgrammatic) return;
+      const wasOpen = nativeInspectorOpen();
+      const settle = (attempt) => {
+        if (state.disposed) return;
+        const pressed = (() => {
+          const button = nativeSidePanelButton();
+          return Boolean(button && button.getAttribute("aria-pressed") === "true");
+        })();
+        const visible = (() => {
+          const panel = nativeRightPanel();
+          if (!(panel instanceof HTMLElement)) return false;
+          return panel.getBoundingClientRect().width > 40;
+        })();
+        const open = pressed || visible;
+        if (state.sidePanelProgrammatic) {
+          if (open) suppressNativeDiffChrome();
+          syncSlotGeometry();
+          return;
+        }
+        if (wasOpen) {
+          if (open && attempt < 20) {
+            window.setTimeout(() => settle(attempt + 1), 16);
+            return;
+          }
+          releaseWeftRightPanel();
+          syncSlotGeometry();
+          return;
+        }
+        if (!open && attempt < 20) {
+          window.setTimeout(() => settle(attempt + 1), 16);
+          return;
+        }
+        if (!open) {
+          releaseWeftRightPanel();
+          syncSlotGeometry();
+          return;
+        }
+        suppressNativeDiffChrome();
+        if (weftInspectorOpen()) ensureInspectorRoot();
+        else if (state.view === "thread") {
+          if (state.popoverState === "closed") setPopoverState("open-pinned");
+          else ensurePopoverRoot();
+        } else if (validIssueId(state.lastInspectorIssueId)) {
+          openInspector(state.lastInspectorIssueId);
+        } else {
+          closeNativeInspector();
+        }
+        syncNativeRightPanelContent();
+        syncSlotGeometry();
+      };
+      window.setTimeout(() => settle(0), 0);
+    }
+
+    function syncNativeChrome() {
+      const side = nativeSidePanelButton();
+      if (side instanceof HTMLElement) {
+        side.removeAttribute("data-weft-codex-hide-side-panel");
+        if (side.getAttribute("data-weft-codex-side-panel-bound") !== "true") {
+          side.setAttribute("data-weft-codex-side-panel-bound", "true");
+          side.addEventListener("click", onNativeSidePanelClick, true);
+        }
+      }
+      const title = document.querySelector("[data-testid='app-shell-header-context-menu-surface']");
+      if (title instanceof HTMLElement) {
+        const hideTitle = state.mode === "weft" && state.view === "workspace";
+        if (hideTitle) title.setAttribute("data-weft-codex-hide-thread-title", "");
+        else title.removeAttribute("data-weft-codex-hide-thread-title");
+      }
+    }
+
     function createFallbackButton() {
       const button = document.createElement("button");
       button.type = "button";
@@ -605,7 +1175,249 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         state.sidebarFrame = frame;
       }
       if (root.parentElement !== sidebar) sidebar.append(root);
+      syncNativeSidebar();
       return true;
+    }
+
+    function sidebarLocale() {
+      const locale = (document.documentElement.lang || navigator.language || "en").toLowerCase();
+      return locale.startsWith("zh") ? "zh" : "en";
+    }
+
+    function postSidebarCommand(payload) {
+      if (!state.sidebarFrame || !state.sidebarFrame.contentWindow || !payload) return;
+      state.sidebarFrame.contentWindow.postMessage({
+        source: "weft-codex-host",
+        type: "weft:sidebar-command",
+        payload,
+      }, childOrigin);
+    }
+
+    function isSidebarItem(value) {
+      if (!value || typeof value !== "object") return false;
+      if (typeof value.key !== "string" || !value.key || value.key.length > 160) return false;
+      if (typeof value.title !== "string" || !value.title || value.title.length > 200) return false;
+      if (value.kind === "kanban" || value.kind === "repos") return true;
+      if (value.kind === "workspace") {
+        return Number.isInteger(value.workspaceId) && value.workspaceId > 0;
+      }
+      if (value.kind !== "issue") return false;
+      if (!Number.isInteger(value.issueId) || value.issueId <= 0) return false;
+      if (value.threadId !== undefined && (typeof value.threadId !== "string" || !value.threadId)) return false;
+      return true;
+    }
+
+    function normalizeSidebarModel(value) {
+      if (!value || typeof value !== "object" || !Array.isArray(value.items)) return null;
+      const items = value.items.filter(isSidebarItem).slice(0, 80);
+      return {
+        workspaceLabel: typeof value.workspaceLabel === "string" ? value.workspaceLabel.slice(0, 80) : "",
+        issuesLabel: typeof value.issuesLabel === "string" ? value.issuesLabel.slice(0, 80) : "",
+        createLabel: typeof value.createLabel === "string" ? value.createLabel.slice(0, 80) : "",
+        workspaceId: Number.isInteger(value.workspaceId) && value.workspaceId > 0 ? value.workspaceId : null,
+        items,
+      };
+    }
+
+    function sectionBody(section) {
+      if (!(section instanceof HTMLElement)) return section;
+      const overflow = section.querySelector(":scope > div > .overflow-hidden")
+        || section.querySelector(".overflow-hidden");
+      if (!(overflow instanceof HTMLElement)) return section;
+      const list = overflow.querySelector(":scope > div") || overflow.firstElementChild;
+      return list instanceof HTMLElement ? list : overflow;
+    }
+
+    function setSectionLabel(section, label) {
+      if (!(section instanceof HTMLElement) || !label) return;
+      section.setAttribute("data-app-action-sidebar-section-heading", label);
+      const toggle = section.querySelector("[data-app-action-sidebar-section-toggle] span.min-w-0.truncate")
+        || section.querySelector("[data-app-action-sidebar-section-toggle] span.min-w-0")
+        || section.querySelector("[data-app-action-sidebar-section-toggle] span");
+      if (!(toggle instanceof HTMLElement)) return;
+      if (!toggle.dataset.weftCodexSavedLabel) toggle.dataset.weftCodexSavedLabel = toggle.textContent || "";
+      if (toggle.textContent !== label) toggle.textContent = label;
+    }
+
+    function setNativeRowTitle(row, title) {
+      if (!(row instanceof HTMLElement) || !title) return;
+      row.setAttribute("data-app-action-sidebar-thread-title", title);
+      if (row.getAttribute("aria-label") !== title) row.setAttribute("aria-label", title);
+      const label = [...row.querySelectorAll("span, p, div")].find((node) => {
+        if (!(node instanceof HTMLElement) || node.children.length) return false;
+        const text = (node.textContent || "").trim();
+        return Boolean(text) && text.length < 160;
+      });
+      if (label && label.textContent !== title) label.textContent = title;
+    }
+
+    function bindNativeRow(row, item) {
+      if (!(row instanceof HTMLElement) || !item) return;
+      row.dataset.weftCodexNativeRow = item.kind;
+      row.dataset.weftCodexNativeKey = item.key;
+      row.removeAttribute("data-app-action-sidebar-thread-id");
+      row.removeAttribute("data-app-action-sidebar-thread-host-id");
+      if (Number.isInteger(item.issueId)) row.dataset.weftCodexIssueId = String(item.issueId);
+      else delete row.dataset.weftCodexIssueId;
+      setNativeRowTitle(row, item.title);
+      const selected = Boolean(item.selected);
+      row.setAttribute("data-app-action-sidebar-thread-selected", selected ? "true" : "false");
+      row.setAttribute("data-app-action-sidebar-thread-active", selected ? "true" : "false");
+      stripNativeRowChrome(row);
+    }
+
+    function stripNativeRowChrome(row) {
+      if (!(row instanceof HTMLElement)) return;
+      for (const extra of [...row.querySelectorAll("button, [role='button'], [data-hover-card-open-immediately], svg, [data-state]")]) {
+        extra.remove();
+      }
+      for (const extra of [...row.children]) {
+        if (!(extra instanceof HTMLElement)) continue;
+        const cls = extra.className || "";
+        if (extra.classList.contains("contents")) extra.remove();
+        else if (/absolute/.test(cls) && /end-0|justify-end|min-w-/.test(cls)) extra.remove();
+        else if (/shrink-0/.test(cls) && /absolute|end-0|justify-end|min-w-|w-\[52px\]/.test(cls)) extra.remove();
+      }
+    }
+
+    function cloneNativeRow(source, item) {
+      if (!(source instanceof HTMLElement)) return null;
+      const row = source.cloneNode(true);
+      if (!(row instanceof HTMLElement)) return null;
+      row.removeAttribute("data-weft-codex-native-bound");
+      row.removeAttribute("data-weft-codex-native-thread");
+      row.removeAttribute("data-app-action-sidebar-thread-id");
+      stripNativeRowChrome(row);
+      bindNativeRow(row, item);
+      return row;
+    }
+
+    function relabelNewChat(model) {
+      const locale = sidebarLocale();
+      const label = model && typeof model.createLabel === "string" && model.createLabel
+        ? model.createLabel
+        : (locale === "zh" ? "新建 issue" : "Create issue");
+      const wrap = document.querySelector("[data-weft-codex-native-header-action]")
+        || [...document.querySelectorAll("button")].find((button) => /new chat|新对话|新聊天/i.test(button.textContent || ""));
+      const button = wrap instanceof HTMLElement
+        ? (wrap.matches("button") ? wrap : wrap.querySelector("button"))
+        : wrap;
+      if (!(button instanceof HTMLElement)) return;
+      const title = [...button.querySelectorAll("span, div")].find((node) => {
+        const text = (node.textContent || "").trim();
+        return /new chat|新对话|新聊天|create issue|新建 issue/i.test(text) && !node.querySelector("span, div");
+      });
+      const labelNode = title instanceof HTMLElement ? title : null;
+      if (labelNode && !labelNode.dataset.weftCodexSavedLabel) {
+        labelNode.dataset.weftCodexSavedLabel = labelNode.textContent || "";
+      }
+      if (labelNode && labelNode.textContent !== label) labelNode.textContent = label;
+      else if (/new chat|新对话|新聊天/i.test(button.textContent || "") && button.childElementCount === 0) {
+        if (!button.dataset.weftCodexSavedLabel) button.dataset.weftCodexSavedLabel = button.textContent || "";
+        button.textContent = label;
+      }
+    }
+
+    function hideNativeUtilityRows(scroll) {
+      for (const button of scroll.querySelectorAll("button, [role='button']")) {
+        if (!(button instanceof HTMLElement)) continue;
+        if (button.closest("#" + SIDEBAR_ROOT_ID)) continue;
+        if (button.hasAttribute("data-app-action-sidebar-thread-row")) continue;
+        if (button.hasAttribute("data-app-action-sidebar-section-toggle")) continue;
+        const text = (button.textContent || button.getAttribute("aria-label") || "").trim();
+        if (/^(Pull requests|Sites|Scheduled|Plugins|拉取请求|站点|定时|插件)$/i.test(text)) {
+          const row = button.closest("div");
+          if (row instanceof HTMLElement) row.dataset.weftCodexNativeUtility = "";
+        }
+        if (/project sidebar options|add new project|chat sidebar options|^new chat$|start new chat/i.test(text)) {
+          button.dataset.weftCodexNativeUtility = "";
+        }
+      }
+      for (const child of scroll.children) {
+        if (!(child instanceof HTMLElement) || child.id === SIDEBAR_ROOT_ID) continue;
+        if (child.hasAttribute("data-app-action-sidebar-section")) continue;
+        if (child.querySelector("[data-app-action-sidebar-section]")) continue;
+        child.dataset.weftCodexNativeUtility = "";
+      }
+    }
+
+    function syncNativeSidebar() {
+      const scroll = document.querySelector("[data-app-action-sidebar-scroll]");
+      if (!(scroll instanceof HTMLElement) || state.mode !== "weft") return;
+      const model = state.sidebarModel;
+      const items = model && Array.isArray(model.items) ? model.items : [];
+      const sections = [...scroll.querySelectorAll("[data-app-action-sidebar-section]")];
+      const templates = [...scroll.querySelectorAll("[data-app-action-sidebar-thread-row]")];
+      const template = templates.find((row) => !row.closest("#" + SIDEBAR_ROOT_ID)) || templates[0];
+      hideNativeUtilityRows(scroll);
+      relabelNewChat(model);
+
+      if (sections[0] && model && model.workspaceLabel) setSectionLabel(sections[0], model.workspaceLabel);
+      if (sections[1] && model && model.issuesLabel) setSectionLabel(sections[1], model.issuesLabel);
+
+      const workspaceItems = items.filter((item) => item && (item.kind === "workspace" || item.kind === "kanban" || item.kind === "repos"));
+      const issueItems = items.filter((item) => item && item.kind === "issue");
+      if (template && sections[0]) {
+        const body = sectionBody(sections[0]);
+        const existing = [...body.querySelectorAll("[data-weft-codex-native-row]")];
+        workspaceItems.forEach((item, index) => {
+          let row = existing[index];
+          if (!(row instanceof HTMLElement)) {
+            row = cloneNativeRow(template, item);
+            if (row) body.append(row);
+          } else {
+            bindNativeRow(row, item);
+          }
+        });
+        existing.slice(workspaceItems.length).forEach((row) => row.remove());
+      }
+      if (template && sections[1]) {
+        const body = sectionBody(sections[1]);
+        const existing = [...body.querySelectorAll("[data-weft-codex-native-row]")];
+        issueItems.forEach((item, index) => {
+          let row = existing[index];
+          if (!(row instanceof HTMLElement)) {
+            row = cloneNativeRow(template, item);
+            if (row) body.append(row);
+          } else {
+            bindNativeRow(row, item);
+          }
+        });
+        existing.slice(issueItems.length).forEach((row) => row.remove());
+      }
+
+      for (const section of sections) {
+        const body = sectionBody(section);
+        if (!(body instanceof HTMLElement)) continue;
+        for (const child of body.children) {
+          if (!(child instanceof HTMLElement) || child.dataset.weftCodexNativeRow) continue;
+          child.dataset.weftCodexNativeThread = "";
+        }
+      }
+    }
+
+    function restoreNativeSidebar() {
+      for (const element of document.querySelectorAll("[data-weft-codex-saved-label]")) {
+        if (!(element instanceof HTMLElement)) continue;
+        const saved = element.dataset.weftCodexSavedLabel;
+        if (saved !== undefined && element.textContent !== saved) element.textContent = saved;
+        delete element.dataset.weftCodexSavedLabel;
+      }
+      for (const section of document.querySelectorAll("[data-app-action-sidebar-section]")) {
+        const toggle = section.querySelector("[data-app-action-sidebar-section-toggle] span.min-w-0.truncate")
+          || section.querySelector("[data-app-action-sidebar-section-toggle] span.min-w-0");
+        if (toggle instanceof HTMLElement && toggle.textContent) {
+          section.setAttribute("data-app-action-sidebar-section-heading", toggle.textContent);
+        }
+      }
+      for (const element of document.querySelectorAll("[data-weft-codex-native-row],[data-weft-codex-native-thread],[data-weft-codex-native-utility]")) {
+        if (!(element instanceof HTMLElement)) continue;
+        if (element.hasAttribute("data-weft-codex-native-row")) element.remove();
+        else {
+          element.removeAttribute("data-weft-codex-native-thread");
+          element.removeAttribute("data-weft-codex-native-utility");
+        }
+      }
     }
 
     ${VISIBLE_MAIN_HELPERS_SOURCE}
@@ -624,17 +1436,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         state.workspaceFrame = frame;
       }
       if (root.parentElement !== mainRoute) mainRoute.append(root);
-      const mainRect = mainRoute.getBoundingClientRect();
-      const dragRegions = [...mainRoute.querySelectorAll("header, header *")].filter((element) =>
-        getComputedStyle(element).getPropertyValue("-webkit-app-region") === "drag"
-      );
-      let top = 0;
-      for (const region of dragRegions) {
-        const rect = region.getBoundingClientRect();
-        top = Math.max(top, rect.bottom - mainRect.top);
-      }
-      const topValue = Math.max(0, Math.round(top)) + "px";
-      if (root.style.top !== topValue) root.style.top = topValue;
+      syncSlotGeometry();
       return true;
     }
 
@@ -651,7 +1453,8 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         }
         #${SIDEBAR_ROOT_ID} > iframe,
         #${WORKSPACE_ROOT_ID} > iframe,
-        #${MODAL_ROOT_ID} > iframe {
+        #${MODAL_ROOT_ID} > iframe,
+        #${INSPECTOR_ROOT_ID} > iframe {
           width: 100%;
           height: 100%;
           min-width: 0;
@@ -663,14 +1466,32 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         #${SIDEBAR_ROOT_ID} > iframe { display: none; }
         #${WORKSPACE_ROOT_ID} {
           position: absolute;
-          inset-inline: 0;
-          bottom: 0;
           z-index: 20;
           display: none;
           min-width: 0;
           min-height: 0;
           overflow: hidden;
           background: var(--color-token-main-surface-primary);
+        }
+        #${INSPECTOR_ROOT_ID} {
+          position: absolute;
+          inset: 0 0 0 8px;
+          z-index: 3;
+          display: none;
+          min-width: 0;
+          min-height: 0;
+          overflow: hidden;
+          background: var(--color-token-main-surface-primary);
+          pointer-events: auto;
+        }
+        #${INSPECTOR_ROOT_ID}[data-open="true"] {
+          display: block;
+        }
+        html[data-weft-codex-mode="weft"][data-weft-codex-view="workspace"] [data-weft-codex-hide-side-panel] {
+          display: none !important;
+        }
+        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"][data-weft-codex-view="workspace"] [data-weft-codex-hide-thread-title] {
+          visibility: hidden !important;
         }
         /* Dialogs live in a third host-level surface. Sidebar and workspace
            never move or change opacity, so the scrim covers the real complete
@@ -692,31 +1513,61 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
           color-scheme: normal !important;
         }
         /* Tier 2 only. Every rule that hides or reflows native chrome is gated
+        /* Conversation popover: host-level panel anchored under the title
+           bar, top-right of the thread view (spec §2.3). */
+        #${POPOVER_ROOT_ID} {
+          position: absolute;
+          inset: 0 0 0 8px;
+          z-index: 2;
+          width: auto;
+          height: auto;
+          visibility: hidden;
+          pointer-events: none;
+        }
+        #${POPOVER_ROOT_ID}[data-open="true"] {
+          visibility: visible;
+          pointer-events: auto;
+        }
+        #${POPOVER_ROOT_ID} > iframe {
+          width: 100%;
+          height: 100%;
+          min-width: 0;
+          min-height: 0;
+          border: 0;
+          background: transparent;
+          color-scheme: inherit;
+        }
+        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] [data-app-shell-focus-area="right-panel"] > [role="separator"] {
+          pointer-events: auto !important;
+        }
+        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] [data-weft-codex-native-diff-shell] {
+          background: transparent !important;
+          border-color: transparent !important;
+          pointer-events: none !important;
+        }
+        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] [data-weft-codex-hide-native-diff] {
+          visibility: hidden !important;
+          pointer-events: none !important;
+        }
+        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"][data-weft-codex-right="weft"] webview,
+        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"][data-weft-codex-right="weft"] [data-app-shell-focus-area="bottom-panel"] {
+          display: none !important;
+        }
            on tier="weft-mode"; a failed subtractive probe leaves the host UI
            untouched instead of hiding it (spec §7.5 fail-open). */
         html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] [data-app-action-sidebar-scroll] {
-          gap: 0 !important;
-          overflow: hidden !important;
           background: transparent !important;
-        }
-        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] #${SIDEBAR_ROOT_ID},
-        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] #${SIDEBAR_ROOT_ID} > iframe {
-          background: transparent !important;
-        }
-        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] [data-weft-codex-native-header-action] {
-          display: none !important;
-        }
-        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] [data-app-action-sidebar-scroll] > :not(#${SIDEBAR_ROOT_ID}) {
-          display: none !important;
         }
         html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] #${SIDEBAR_ROOT_ID} {
-          display: flex;
-          flex: 1 1 auto;
-          height: 100%;
+          position: absolute;
+          width: 0;
+          height: 0;
+          overflow: hidden;
+          pointer-events: none;
         }
-        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] #${SIDEBAR_ROOT_ID} > iframe {
-          display: block;
-          flex: 1 1 auto;
+        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] [data-weft-codex-native-utility],
+        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] [data-weft-codex-native-thread] {
+          display: none !important;
         }
         /* Tier 1: native sidebar keeps every row; Weft only appends an entry
            that opens the workspace overlay. */
@@ -906,7 +1757,8 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
     }
 
     function activeThreadId() {
-      const active = document.querySelector('[data-app-action-sidebar-thread-active="true"][data-app-action-sidebar-thread-id]');
+      const active = document.querySelector('[data-app-action-sidebar-thread-active="true"][data-app-action-sidebar-thread-id]')
+        || document.querySelector('[data-app-action-sidebar-thread-selected="true"][data-app-action-sidebar-thread-id]');
       const value = active && active.getAttribute("data-app-action-sidebar-thread-id");
       if (!value) return undefined;
       const separator = value.indexOf(":");
@@ -969,6 +1821,14 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         tokens,
         mode: state.mode,
         view: state.view,
+        filter: state.mode === "weft" ? "weft" : "off",
+        stage: state.view,
+        inspector: weftInspectorOpen() ? { issueId: state.inspectorIssueId } : null,
+        conversation: conversationAllowed() ? state.popoverState : "closed",
+        issueId: validIssueId(state.focusIssueId) ? state.focusIssueId : undefined,
+        workspaceId: state.sidebarModel && validIssueId(state.sidebarModel.workspaceId) ? state.sidebarModel.workspaceId : undefined,
+        dock: nativeDockOpen() ? "open" : "closed",
+        rightOwner: weftInspectorOpen() ? "weft-inspector" : (nativeInspectorOpen() ? "native-inspector" : "none"),
         sidebarCollapsed,
         // "fallback" tells the sidebar to draw the search and inbox entries in
         // its own header: the capability must survive a host that no longer
@@ -985,6 +1845,8 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       if (state.sidebarFrame && source === state.sidebarFrame.contentWindow) return state.sidebarFrame;
       if (state.workspaceFrame && source === state.workspaceFrame.contentWindow) return state.workspaceFrame;
       if (state.modalFrame && source === state.modalFrame.contentWindow) return state.modalFrame;
+      if (state.popoverFrame && source === state.popoverFrame.contentWindow) return state.popoverFrame;
+      if (state.inspectorFrame && source === state.inspectorFrame.contentWindow) return state.inspectorFrame;
       return null;
     }
 
@@ -1002,6 +1864,8 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       postContext(state.sidebarFrame);
       postContext(state.workspaceFrame);
       postContext(state.modalFrame);
+      postContext(state.popoverFrame);
+      postContext(state.inspectorFrame);
     }
 
     /**
@@ -1054,18 +1918,34 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
     function nativeThreadRow(threadId) {
       const rows = [...document.querySelectorAll("[data-app-action-sidebar-thread-id]")];
       return rows.find((candidate) => {
+        if (candidate.hasAttribute("data-weft-codex-native-row")) return false;
         const value = candidate.getAttribute("data-app-action-sidebar-thread-id") || "";
         return value === threadId || value.endsWith(":" + threadId);
       });
+    }
+
+    function nativeThreadRowByTitle(title) {
+      const needle = typeof title === "string" ? title.trim() : "";
+      if (!needle) return null;
+      const rows = [...document.querySelectorAll("[data-app-action-sidebar-thread-id]")];
+      return rows.find((candidate) => {
+        if (candidate.hasAttribute("data-weft-codex-native-row")) return false;
+        const value = (candidate.getAttribute("data-app-action-sidebar-thread-title") || candidate.textContent || "").trim();
+        if (value === needle) return true;
+        return value.includes(needle) || /lead on issue:\s*/i.test(value) && value.includes(needle);
+      }) || null;
     }
 
     async function openNativeThread(threadId) {
       for (const delay of THREAD_OPEN_RETRY_DELAYS) {
         if (delay) await new Promise((resolve) => window.setTimeout(resolve, delay));
         if (state.disposed) return false;
-        const row = nativeThreadRow(threadId);
+        const row = nativeThreadRow(threadId) || nativeThreadRowByTitle(state.pendingThreadTitle);
         if (!(row instanceof HTMLElement)) continue;
+        const hidden = row.hasAttribute("data-weft-codex-native-thread");
+        if (hidden) row.removeAttribute("data-weft-codex-native-thread");
         row.click();
+        if (hidden) row.setAttribute("data-weft-codex-native-thread", "");
         setView("thread");
         return true;
       }
@@ -1101,6 +1981,17 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         actionResult(frame, message.requestId, true);
         return;
       }
+      if (message.action === "sidebar.sync") {
+        const model = normalizeSidebarModel(message.model);
+        if (!model) {
+          actionResult(frame, message.requestId, false, "invalid-sidebar-model");
+          return;
+        }
+        state.sidebarModel = model;
+        syncNativeSidebar();
+        actionResult(frame, message.requestId, true);
+        return;
+      }
       if (message.action === "dialog.present") {
         const accepted = presentDialog(message.dialog);
         actionResult(frame, message.requestId, accepted, accepted ? undefined : "invalid-dialog");
@@ -1116,15 +2007,46 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         actionResult(frame, message.requestId, true);
         return;
       }
+      if (message.action === "popover.dismiss") {
+        dismissPopover();
+        actionResult(frame, message.requestId, true);
+        return;
+      }
+      if (message.action === "inspector.open") {
+        const accepted = openInspector(message.issueId);
+        actionResult(frame, message.requestId, accepted, accepted ? undefined : "invalid-inspector");
+        return;
+      }
+      if (message.action === "inspector.close") {
+        closeInspector();
+        actionResult(frame, message.requestId, true);
+        return;
+      }
+      if (message.action === "inspector.mounted") {
+        const accepted = frame === state.inspectorFrame && weftInspectorOpen();
+        actionResult(frame, message.requestId, accepted, accepted ? undefined : "invalid-inspector-surface");
+        return;
+      }
       if (message.action === "thread.open") {
         if (!validThreadId(message.threadId)) {
           actionResult(frame, message.requestId, false, "invalid-thread-id");
           return;
         }
+        const model = state.sidebarModel;
+        const matched = model && Array.isArray(model.items)
+          ? model.items.find((item) => item && item.threadId === message.threadId)
+          : null;
+        if (matched && matched.title) state.pendingThreadTitle = matched.title;
         void openNativeThread(message.threadId).then((opened) => {
           if (state.disposed) return;
           actionResult(frame, message.requestId, opened, opened ? undefined : "thread-not-in-native-sidebar");
           if (!opened) notifyHost("thread.open.missing", { threadId: message.threadId });
+          // A conversation picked inside the panel navigates away from the
+          // current thread; the panel has done its job (spec §3).
+          if (opened && frame === state.popoverFrame) dismissPopover();
+          // Arriving at a lead chat from the sidebar issue list is the one
+          // context where the panel opens by default (spec §2.4).
+          if (opened && frame === state.sidebarFrame && conversationAllowed()) setPopoverState("open-auto");
         }).catch(() => {
           if (!state.disposed) actionResult(frame, message.requestId, false, "thread-open-failed");
         });
@@ -1152,6 +2074,63 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
     }
 
     function onDocumentClick(event) {
+      if (state.mode === "weft" && event.target instanceof Element) {
+        const createWrap = event.target.closest("[data-weft-codex-native-header-action]");
+        const createButton = event.target.closest("button");
+        if (
+          createWrap instanceof HTMLElement
+          && createButton instanceof HTMLElement
+          && createWrap.contains(createButton)
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+          setView("workspace");
+          postSidebarCommand({ command: "issue.create" });
+          return;
+        }
+        const row = event.target.closest("[data-weft-codex-native-row]");
+        if (row instanceof HTMLElement) {
+          event.preventDefault();
+          event.stopPropagation();
+          if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+          const key = row.dataset.weftCodexNativeKey;
+          const model = state.sidebarModel;
+          const next = model && Array.isArray(model.items)
+            ? model.items.find((candidate) => candidate && candidate.key === key)
+            : null;
+          if (!next) return;
+         if (next.kind === "issue") {
+            if (weftInspectorOpen()) closeInspector({ keepNative: true });
+            if (next.threadId) {
+              state.pendingThreadTitle = next.title || "";
+              if (validIssueId(next.issueId)) state.focusIssueId = next.issueId;
+              void openNativeThread(next.threadId).then((opened) => {
+                if (opened && conversationAllowed()) setPopoverState("open-auto");
+                else postSidebarCommand({ command: "issue.open", issueId: next.issueId });
+              });
+              return;
+            }
+            state.pendingThreadTitle = next.title || "";
+            if (validIssueId(next.issueId)) state.focusIssueId = next.issueId;
+            postSidebarCommand({ command: "issue.open", issueId: next.issueId });
+            return;
+          }
+          setView("workspace");
+          if (next.kind === "workspace") {
+            if (validIssueId(next.workspaceId)) {
+              state.focusIssueId = null;
+              if (weftInspectorOpen()) closeInspector();
+              if (state.popoverState !== "closed") dismissPopover();
+              setView("workspace");
+              postSidebarCommand({ command: "workspace.select", workspaceId: next.workspaceId });
+            }
+            return;
+          }
+          postSidebarCommand({ command: next.kind === "kanban" ? "kanban.show" : "repos.show" });
+          return;
+        }
+      }
       const target = event.target instanceof Element ? event.target.closest('[role="menuitem"]') : null;
       if (!(target instanceof HTMLElement) || target.hasAttribute(MODE_ITEM_ATTR)) return;
       const menu = target.closest('[role="menu"]');
@@ -1172,8 +2151,14 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       if (state.disposed || !document.documentElement) return;
       installStyles();
       ensureSidebarRoot();
+      syncNativeSidebar();
       ensureWorkspaceRoot();
       ensureModalRoot();
+      ensurePopoverRoot();
+      ensureInspectorRoot();
+      if (state.mode === "weft") ensurePopoverButton();
+      syncNativeChrome();
+      syncSlotGeometry();
       const nextModeButton = modeButton();
       if (state.modeButton !== nextModeButton) {
         restoreModeButton();
@@ -1221,8 +2206,13 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         childList: true,
         subtree: true,
       });
-      state.resizeObserver = new ResizeObserver(() => publishContextSoon());
+      state.resizeObserver = new ResizeObserver(() => {
+        syncSlotGeometry();
+        publishContextSoon();
+      });
       state.resizeObserver.observe(document.documentElement);
+      const rightPanel = nativeRightPanel();
+      if (rightPanel instanceof HTMLElement) state.resizeObserver.observe(rightPanel);
       state.mediaQuery = matchMedia("(prefers-color-scheme: dark)");
       state.mediaListener = () => publishContextSoon();
       state.mediaQuery.addEventListener("change", state.mediaListener);
@@ -1237,6 +2227,8 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       if (state.sidebarFrame) state.sidebarFrame.src = surfaceUrl("sidebar");
       if (state.workspaceFrame) state.workspaceFrame.src = surfaceUrl("workspace");
       if (state.modalFrame) state.modalFrame.src = surfaceUrl("modal");
+      if (state.popoverFrame) state.popoverFrame.src = surfaceUrl("popover");
+      if (state.inspectorFrame) state.inspectorFrame.src = surfaceUrl("inspector");
     }
 
     function setCspBypass(enabled) {
@@ -1259,6 +2251,10 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         sidebarReady: state.readyFrames.has("sidebar"),
         workspaceReady: state.readyFrames.has("workspace"),
         modalReady: state.readyFrames.has("modal"),
+        popoverMounted: Boolean(state.popoverRoot && state.popoverRoot.isConnected),
+        popoverReady: state.readyFrames.has("popover"),
+        inspectorMounted: Boolean(state.inspectorRoot && state.inspectorRoot.isConnected),
+        inspectorReady: state.readyFrames.has("inspector"),
         nativeModeSwitcher: Boolean(state.modeButton),
         headerActions: state.headerActionsMounted ? "native" : "fallback",
         inboxCount: state.inboxCount,
@@ -1282,6 +2278,35 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       if (state.sidebarRoot) state.sidebarRoot.remove();
       if (state.workspaceRoot) state.workspaceRoot.remove();
       if (state.modalRoot) state.modalRoot.remove();
+      if (state.popoverRoot) state.popoverRoot.remove();
+      for (const element of document.querySelectorAll("[data-weft-codex-chats-bound]")) {
+        element.removeEventListener("click", onWeftChatsClick, true);
+        element.removeAttribute("data-weft-codex-chats-bound");
+        element.removeAttribute("aria-expanded");
+      }
+      for (const element of document.querySelectorAll("[data-weft-codex-side-panel-bound]")) {
+        element.removeEventListener("click", onNativeSidePanelClick, true);
+        element.removeAttribute("data-weft-codex-side-panel-bound");
+      }
+
+      if (state.inspectorRoot) state.inspectorRoot.remove();
+      for (const element of document.querySelectorAll("[data-weft-codex-hide-side-panel]")) {
+        element.removeAttribute("data-weft-codex-hide-side-panel");
+      }
+      for (const element of document.querySelectorAll("[data-weft-codex-hide-native-diff]")) {
+        element.removeAttribute("data-weft-codex-hide-native-diff");
+      }
+      const panel = document.querySelector('[data-app-shell-focus-area="right-panel"]');
+      if (panel instanceof HTMLElement) {
+        panel.style.removeProperty("width");
+        panel.style.removeProperty("flex-basis");
+        panel.style.removeProperty("flex-grow");
+        panel.style.removeProperty("flex-shrink");
+        panel.removeAttribute("data-weft-codex-resize-observed");
+      }
+      for (const element of document.querySelectorAll("[data-weft-codex-hide-thread-title]")) {
+        element.removeAttribute("data-weft-codex-hide-thread-title");
+      }
       const style = document.getElementById(STYLE_ID);
       if (style) style.remove();
       const root = document.documentElement;
@@ -1291,12 +2316,15 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       delete root.dataset.weftCodexModeCapability;
       delete root.dataset.weftCodexHeaderActions;
       delete root.dataset.weftCodexCspBypass;
+      delete root.dataset.weftCodexInspector;
+      delete root.dataset.weftCodexRight;
       for (const element of document.querySelectorAll("[data-weft-codex-mode-header]")) {
         element.removeAttribute("data-weft-codex-mode-header");
       }
       for (const element of document.querySelectorAll("[data-weft-codex-native-header-action]")) {
         element.removeAttribute("data-weft-codex-native-header-action");
       }
+      restoreNativeSidebar();
     }
 
     window[GLOBAL_KEY] = {

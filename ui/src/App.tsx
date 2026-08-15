@@ -17,7 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { useI18n } from "@/i18n"
-import { presentHostDialog } from "@/host-context"
+import { presentHostDialog, requestInspectorOpen } from "@/host-context"
 import { readInitialRoute, readInitialWorkspaceId } from "@/surface"
 import { createSurfaceChannel, type SurfaceMessage } from "@/surface-channel"
 import type {
@@ -195,13 +195,20 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
     }
     const receive = (message: SurfaceMessage) => {
       if (message.type === "workspace.select") {
-        loadSequence.current += 1
-        setRepos([])
-        setBoard([])
-        setRepoMap(null)
+        const nextId = message.workspaceId
         setDetailIssueId(null)
         setView("kanban")
-        setWorkspaceId(message.workspaceId)
+        setWorkspaceId((current) => {
+          if (current === nextId) {
+            void refreshWorkspace(nextId).catch(notifyError)
+            return current
+          }
+          loadSequence.current += 1
+          setRepos([])
+          setBoard([])
+          setRepoMap(null)
+          return nextId
+        })
         return
       }
       if (message.type === "navigate") {
@@ -254,7 +261,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
     const unsubscribe = channel.subscribe(receive)
     channel.post({ type: "surface.ready", surface: embedded ? "workspace" : "standalone" })
     return unsubscribe
-  }, [channel, embedded, openDialog, t])
+  }, [channel, embedded, notifyError, openDialog, refreshWorkspace, t])
 
   React.useEffect(() => {
     return () => channel?.close()
@@ -301,7 +308,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
     }))
     await refreshCurrent()
     setDetailIssueId(created.id)
-    setView("issue")
+    if (!(embedded && requestInspectorOpen(created.id))) setView("issue")
     notify(t("success.issueCreated"), "success")
     // The lead is started server side with the issue, so there is no second
     // call to race here. A start that failed is recorded on the issue and shows
@@ -434,7 +441,11 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
         actions={workActions}
         onOpenCreateIssue={() => openDialog({ type: "issue" })}
         onCreateWorkspace={() => openDialog({ type: "workspace" })}
-        onOpenIssue={(id) => { setDetailIssueId(id); setView("issue") }}
+        onOpenIssue={(id) => {
+          if (embedded && requestInspectorOpen(id)) return
+          setDetailIssueId(id)
+          setView("issue")
+        }}
       />
     )
   }

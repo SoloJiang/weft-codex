@@ -48,9 +48,9 @@ test("builds an idempotent document-start script without raw tag injection", () 
 // Tier 1. Before this, `compatibilityTier` was only ever reported, so Weft mode
 // hid the native sidebar at every tier.
 const SUBTRACTIVE_RULES = [
-  /\[data-weft-codex-tier="weft-mode"\]\[data-weft-codex-mode="weft"\] \[data-app-action-sidebar-scroll\] > :not\(#weft-codex-sidebar-root\)/,
   /\[data-weft-codex-tier="weft-mode"\]\[data-weft-codex-mode="weft"\] \[data-app-action-sidebar-scroll\] \{/,
-  /\[data-weft-codex-tier="weft-mode"\]\[data-weft-codex-mode="weft"\] \[data-weft-codex-native-header-action\]/,
+  /\[data-weft-codex-tier="weft-mode"\]\[data-weft-codex-mode="weft"\] \[data-weft-codex-native-utility\]/,
+  /\[data-weft-codex-tier="weft-mode"\]\[data-weft-codex-mode="weft"\] \[data-weft-codex-native-thread\]/,
 ]
 
 test("the agent publishes its compatibility tier on the document", () => {
@@ -235,4 +235,139 @@ test("dialog presentation never reparents or restyles the workspace surface", ()
     source,
     /#weft-codex-workspace-root\s*\{[^}]*position:\s*fixed/s,
   )
+})
+
+test("conversation popover is a dedicated host-level surface with one state", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  // The panel and its title-bar button are separate host-owned anchors.
+  assert.match(source, /root\.id = POPOVER_ROOT_ID/)
+  assert.match(source, /function onWeftChatsClick\(event\)/)
+  assert.match(source, /createFrame\("popover"\)/)
+  // One discriminated visibility value — never a pile of booleans (spec §3).
+  assert.match(source, /popoverState: "closed"/)
+  assert.match(source, /function setPopoverState\(next\)/)
+  assert.match(source, /next !== "closed" && next !== "open-auto" && next !== "open-pinned"/)
+  // The panel occupies the native right-panel slot, same architecture as Diff.
+  assert.match(source, /state\.mode === "weft" && state\.view === "thread"/)
+  assert.match(source, /data-app-shell-focus-area="right-panel"/)
+  assert.match(source, /function syncNativeSidePanelForConversation\(\)/)
+})
+
+test("conversation popover opens by default when a sidebar issue opens its lead", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  // Arriving from the sidebar issue list is the only auto-open context (§2.4).
+  assert.match(source, /if \(opened && frame === state\.sidebarFrame && conversationAllowed\(\)\) setPopoverState\("open-auto"\)/)
+  // Picking a conversation inside the panel closes it (§3).
+  assert.match(source, /if \(opened && frame === state\.popoverFrame\) dismissPopover\(\)/)
+  // Leaving the thread view always closes the panel.
+  assert.match(source, /if \(nextView !== "thread"\) dismissPopover\(\)/)
+  // The UI can close the panel through its own host action.
+  assert.match(source, /message\.action === "popover\.dismiss"/)
+})
+
+test("conversation popover joins the context and teardown lifecycle", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  // The frame receives host context like every other surface.
+  assert.match(source, /postContext\(state\.popoverFrame\)/)
+  assert.match(source, /source === state\.popoverFrame\.contentWindow/)
+  // Reload and dispose cover the panel and button roots.
+  assert.match(source, /state\.popoverFrame\.src = surfaceUrl\("popover"\)/)
+  assert.match(source, /if \(state\.popoverRoot\) state\.popoverRoot\.remove\(\)/)
+  assert.match(source, /data-weft-codex-chats-bound/)
+  // Status reports mount and handshake state for readiness probes.
+  assert.match(source, /popoverMounted: Boolean\(state\.popoverRoot/)
+  assert.match(source, /popoverReady: state\.readyFrames\.has\("popover"\)/)
+})
+
+test("host slot layout owns workspace geometry and a dedicated inspector surface", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(source, /function syncSlotGeometry\(\)/)
+  assert.match(source, /function openInspector\(issueId\)/)
+  assert.match(source, /function closeInspector\(options\)/)
+  assert.match(source, /createFrame\("inspector"\)/)
+  assert.match(source, /root\.id = INSPECTOR_ROOT_ID/)
+  assert.match(source, /const parent = nativeRightPanelHost\(\)/)
+  assert.match(source, /message\.action === "inspector\.open"/)
+  assert.match(source, /message\.action === "inspector\.close"/)
+  assert.match(source, /weftCodexInspector: state\.inspectorIssueId/)
+  assert.doesNotMatch(
+    source,
+    /#weft-codex-workspace-root\s*\{[\s\S]*?inset-inline:\s*0;[\s\S]*?bottom:\s*0;/s,
+  )
+  assert.match(source, /data-weft-codex-hide-side-panel/)
+  assert.match(source, /postContext\(state\.inspectorFrame\)/)
+  assert.match(source, /if \(state\.inspectorRoot\) state\.inspectorRoot\.remove\(\)/)
+  assert.match(source, /inspectorMounted: Boolean\(state\.inspectorRoot/)
+})
+
+test("opening the inspector closes the conversation layer", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(source, /function conversationAllowed\(\)/)
+  assert.match(source, /return conversationAllowed\(\)/)
+  assert.match(source, /dismissPopover\(\);/)
+  assert.match(source, /state\.lastInspectorIssueId = issueId/)
+  assert.match(source, /syncNativeSidePanelForConversation\(\);/)
+  assert.match(source, /ensureInspectorRoot\(\);/)
+  assert.match(source, /const parent = nativeRightPanelHost\(\);/)
+})
+
+test("native side panel yields the inspector slot", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(source, /function onNativeSidePanelClick\(\)/)
+  assert.match(source, /function suppressNativeDiffChrome\(\)/)
+  assert.match(source, /function weftRightPanelOccupied\(\)/)
+  assert.match(source, /weftInspectorOpen\(\) \|\| \(state\.view === "thread" && state\.popoverState !== "closed"\)/)
+  assert.match(source, /data-app-shell-focus-area="right-panel"/)
+  assert.match(source, /closeInspector\(\{ keepNative: true \}\)/)
+})
+
+test("weft mode extends the native sidebar instead of replacing it", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(source, /message\.action === "sidebar\.sync"/)
+  assert.match(source, /function syncNativeSidebar\(\)/)
+  assert.match(source, /function postSidebarCommand\(payload\)/)
+  assert.match(source, /command: "workspace.select"/)
+  assert.match(source, /type: "weft:sidebar-command"/)
+  assert.match(source, /width: 0;/)
+  assert.match(source, /pointer-events: none;/)
+  assert.doesNotMatch(
+    source,
+    /\[data-app-action-sidebar-scroll\] > :not\(#weft-codex-sidebar-root\)/,
+  )
+  assert.doesNotMatch(
+    source,
+    /html\[data-weft-codex-tier="weft-mode"\]\[data-weft-codex-mode="weft"\] \[data-weft-codex-native-header-action\]/,
+  )
+})
+
+test("workspace stage hides leftover native thread title", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(source, /data-weft-codex-hide-thread-title/)
+  assert.match(source, /app-shell-header-context-menu-surface/)
+  assert.match(
+    source,
+    /html\[data-weft-codex-tier="weft-mode"\]\[data-weft-codex-mode="weft"\]\[data-weft-codex-view="workspace"\] \[data-weft-codex-hide-thread-title\]/,
+  )
+})
+
+test("conversation entry lives in the native titlebar action cluster", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(source, /function nativeTitlebarButton\(label\)/)
+  assert.match(source, /function nativeRightHeaderSlot\(\)/)
+  assert.match(source, /data-test-id="header-shell-slot"/)
+  assert.match(source, /function onWeftChatsClick\(event\)/)
+  assert.match(source, /dataset.weftCodexChatsBound/)
+  assert.doesNotMatch(source, /mode switcher 旁/)
+  assert.doesNotMatch(source, /border-radius: 999px/)
+  assert.doesNotMatch(source, /weft-codex-popover-button/)
+  assert.match(source, /position: absolute;\s*inset: 0 0 0 8px;/s)
+})
+
+test("weft right-panel content leaves the native Diff splitter hittable", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(source, /inset: 0 0 0 8px/)
+  assert.match(source, /observeRightPanelResize/)
+  assert.match(source, /function applyWeftRightPanelWidth/)
+  assert.match(source, /function bindNativeRightPanelResize/)
+  assert.match(source, /\[data-app-shell-focus-area="right-panel"\] > \[role="separator"\]/)
 })

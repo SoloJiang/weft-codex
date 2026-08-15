@@ -34,7 +34,7 @@ function isRoute(value: unknown): value is AppView {
 }
 
 function isSurface(value: unknown): value is UiSurface {
-  return value === "standalone" || value === "sidebar" || value === "workspace" || value === "modal"
+  return value === "standalone" || value === "sidebar" || value === "workspace" || value === "modal" || value === "popover" || value === "inspector"
 }
 
 function isRequestId(value: unknown): value is string {

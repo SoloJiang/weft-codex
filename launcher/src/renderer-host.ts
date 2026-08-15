@@ -35,6 +35,10 @@ export interface RendererAgentStatus {
   workspaceReady: boolean
   modalReady: boolean
   nativeModeSwitcher: boolean
+  popoverMounted?: boolean
+  popoverReady?: boolean
+  inspectorMounted?: boolean
+  inspectorReady?: boolean
 }
 
 export interface RendererHostEvent {
@@ -196,6 +200,23 @@ export async function waitForSurfaces(
     await poll()
   }
   return latest
+}
+
+async function waitForNativeSidebar(session: CdpSession, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      const ready = await evaluateValue(
+        session,
+        'Boolean(document.querySelector("[data-app-action-sidebar-scroll]"))',
+      )
+      if (ready === true) return true
+    } catch {
+      // The Codex splash replaces the execution context once the shell hydrates.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150))
+  }
+  return false
 }
 
 interface ClickPoint {

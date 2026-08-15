@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react"
 import { api } from "@/api"
 import { Button } from "@/components/ui/button"
 import { useI18n } from "@/i18n"
+import type { MessageKey } from "@/i18n"
 import type { BoardEntry, BusMessage, Direction, Repo } from "@/types"
 import { EmptyState } from "./shared"
 import { DirectionActions, directionMeta, IssueActions, type WorkActions } from "./kanban-view"
@@ -70,12 +71,14 @@ export function IssueDetailView({
   revision,
   actions,
   onBack,
+  closeLabelKey,
 }: {
   entry?: BoardEntry
   repos: Repo[]
   revision: number
   actions: WorkActions
   onBack: () => void
+  closeLabelKey?: MessageKey
 }) {
   const { t } = useI18n()
   const [rows, setRows] = React.useState<BusMessage[]>([])
@@ -98,7 +101,7 @@ export function IssueDetailView({
       <div className="actions detail-nav">
         <Button variant="ghost" onClick={onBack}>
           <ArrowLeft aria-hidden="true" />
-          {t("detail.back")}
+          {t(closeLabelKey ?? "detail.back")}
         </Button>
       </div>
       {!entry ? (

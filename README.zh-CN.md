@@ -34,6 +34,8 @@ worktree 隔离、状态、通信和重启恢复。
 这里没有第二套聊天客户端，也没有让用户手工创建 Task 的表单。对话属于 Codex，
 交付上下文属于 weft-codex。
 
+界面与容器原则见 [DESIGN.md](DESIGN.md)。
+
 ## 产品体验
 
 1. **创建 Workspace。** 一次加入一个或多个本地 Git 仓库。weft-codex 自动规范化
@@ -92,13 +94,13 @@ weft-codex 会恢复已知 Codex Thread、重新挂载 watcher，并继续投递
 ## 当前可用能力
 
 - **全局 CLI：** 从任意目录运行 `weft-codex` 即可启动完整体验。
-- **原生 Weft Mode：** 作为 Codex 第三种模式提供 Workspace、Issue、Kanban 和
-  Repository，同时把聊天保留在原生 Codex Thread。
+- **Weft filter：** 菜单里仍叫 Weft，但不是与 Work / Codex 对等的第三产品模式。
+  它给 Codex 加上 Workspace、Issue、Kanban 与仓库导航，聊天仍是原生 Thread。
 - **多仓库录入：** 一次加入多个本地仓库，自动完成仓库画像与关系分析。
 - **Lead 负责拆解：** 用户只创建 Issue，Task 由 Lead 创建和调度。
 - **Worker 隔离：** 每个 Task 使用独立仓库 worktree 和 Codex Thread。
 - **持久化协同：** Task 状态、Thread 身份、活动和 Bus 消息均可跨 daemon 重启恢复。
-- **原生外观：** Weft Mode 消费 Codex 语义主题和语言上下文，不维护额外主题开关。
+- **原生外观：** Weft 消费 Codex 语义主题和语言上下文，不维护额外主题开关。
 - **Safe Mode：** `weft-codex --safe-mode` 只启动官方 Codex，不启动 weftd，
   也不注入 renderer。
 
@@ -154,7 +156,7 @@ weft-codex
 weft-codex CLI
 ├── 官方 Codex Desktop
 │   ├── 原生 Lead / Worker Thread
-│   └── 注入的 Weft Mode 表面
+│   └── 注入的 Weft 表面（导航 / 看板 / 详情 / Chats）
 └── weftd
     ├── Workspace / Issue / Kanban API
     ├── Codex app-server 编排

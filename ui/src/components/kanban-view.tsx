@@ -145,16 +145,12 @@ export function IssueActions({ issue, actions }: { issue: Issue; actions: WorkAc
 function IssueBoardCardView({
   card,
   onOpenIssue,
-  onOpenLead,
-  onError,
 }: {
   card: IssueBoardCard
   onOpenIssue: (id: number) => void
-  onOpenLead: (entry: BoardEntry) => Promise<void>
-  onError: (error: unknown) => void
 }) {
   const { t } = useI18n()
-  const { entry, totalTasks, doneTasks, attentionCount, hasLead, leadAttention } = card
+  const { entry, totalTasks, doneTasks, attentionCount, leadAttention } = card
   // The column heading already states the status, so repeating it on every card
   // spends the one line of meta on something the reader just read. Only what is
   // specific to this card goes here. A failed lead outranks task attention:
@@ -163,7 +159,6 @@ function IssueBoardCardView({
   if (leadAttention) signal = leadFailureText(entry.issue.lead_attention_reason, t)
   else if (attentionCount) signal = t("kanban.issueNeedsYou")
   else if (totalTasks) signal = t("kanban.issueProgress", { done: doneTasks, total: totalTasks })
-
   return (
     <article
       className={`kanban-card issue-board-card${attentionCount || leadAttention ? " attention" : ""}`}
@@ -179,38 +174,11 @@ function IssueBoardCardView({
       </button>
       <div className="issue-board-card-meta">
         <span className="issue-board-card-number">#{entry.issue.id}</span>
-        {/* With no lead the reason and the retry say the same thing, and at
-            ~122px they cannot both fit — showing both truncated the reason to a
-            single letter. The retry carries the failure itself, in warn. */}
-        {hasLead && signal ? (
+        {signal ? (
           // Long reasons must not push the row wider than the column; the full
           // text stays reachable on hover rather than being lost.
           <span className="issue-board-card-signal" title={signal}>{signal}</span>
         ) : null}
-        {hasLead ? (
-          <ThreadLink
-            threadId={entry.issue.lead_codex_thread_id}
-            onError={onError}
-            label={t("kanban.openLead", { title: entry.issue.title })}
-            pendingLabel={t("loading.openingThread")}
-            className="issue-board-lead-link"
-            iconOnly
-          />
-        ) : (
-          // Starting a lead is a different capability from opening one, so it
-          // does not borrow the chat icon — the board is its only entry point
-          // (App wires onStartLead nowhere else), and a lead that never started
-          // is an exception worth naming in words.
-          <AsyncButton
-            variant="ghost"
-            className="issue-board-start-lead"
-            label={t("kanban.startLeadShort")}
-            pendingLabel={t("loading.startingLead")}
-            aria-label={t("kanban.startLead", { title: entry.issue.title })}
-            onAction={() => onOpenLead(entry)}
-            onError={onError}
-          />
-        )}
       </div>
     </article>
   )
@@ -220,14 +188,10 @@ function IssueBoardColumn({
   status,
   cards,
   onOpenIssue,
-  onOpenLead,
-  onError,
 }: {
   status: DirectionStatus
   cards: IssueBoardCard[]
   onOpenIssue: (id: number) => void
-  onOpenLead: (entry: BoardEntry) => Promise<void>
-  onError: (error: unknown) => void
 }) {
   const { t } = useI18n()
   const headingId = `kanban-status-${status}`
@@ -245,8 +209,6 @@ function IssueBoardColumn({
             key={card.entry.issue.id}
             card={card}
             onOpenIssue={onOpenIssue}
-            onOpenLead={onOpenLead}
-            onError={onError}
           />
         ))}
       </div>
@@ -277,7 +239,6 @@ export function KanbanView({
   workspaceId,
   repos,
   board,
-  actions,
   onOpenCreateIssue,
   onCreateWorkspace,
   onOpenIssue,
@@ -300,11 +261,6 @@ export function KanbanView({
     return cards.filter((card) => issueMatches(card, normalizedQuery, repos))
   }, [cards, deferredQuery, repos])
   const grouped = React.useMemo(() => groupIssueBoard(visibleCards), [visibleCards])
-
-  const startLead = React.useCallback(async (entry: BoardEntry) => {
-    await actions.onStartLead(entry.issue)
-  }, [actions])
-
   // Not ⌘K: Codex Desktop binds that (and ⇧⌘P) to its own command menu, at the
   // Electron menu-accelerator level, so the keypress may never reach this frame
   // — and the hint we used to print promised something the host would take.
@@ -354,8 +310,6 @@ export function KanbanView({
                 status={status}
                 cards={grouped[status]}
                 onOpenIssue={onOpenIssue}
-                onOpenLead={startLead}
-                onError={actions.onError}
               />
             ))}
           </div>

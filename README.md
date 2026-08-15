@@ -67,12 +67,14 @@ conversations; weft-codex owns the delivery context around them.
 | **Worker** | A native Codex thread executing one task in an isolated Git worktree. |
 | **Thread Bus** | Durable, issue-scoped communication between the lead and workers. |
 
+UI and container rules live in [DESIGN.md](DESIGN.md).
+
 ## Why weft-codex
 
 ### It feels like Codex
 
 The visible application is the official Codex Desktop app. Lead and worker
-conversations are native Codex threads, Weft Mode uses Codex theme and locale
+conversations are native Codex threads, Weft uses Codex theme and locale
 context, and opening a task switches directly to its native conversation. The
 Host has no window, Dock icon, or parallel chat surface.
 
@@ -104,8 +106,9 @@ reattaches watchers, and restores pending bus delivery.
 
 - **Global CLI:** `weft-codex` launches the complete managed experience from any
   directory.
-- **Native Weft Mode:** a third Codex mode exposes Workspace, Issues, Kanban, and
-  Repositories while keeping chat in native Codex threads.
+- **Weft filter:** the menu still says Weft, but it is not a third product mode
+  beside Work / Codex. It adds Workspace, Issues, Kanban, and repository navigation
+  while chat stays in native Codex threads.
 - **Multi-repository intake:** add several local repositories in one step and let
   repository profiling and relationship analysis run automatically.
 - **Lead-owned decomposition:** users create Issues; the lead creates and
@@ -114,7 +117,7 @@ reattaches watchers, and restores pending bus delivery.
   thread.
 - **Durable coordination:** task state, thread identities, activity, and bus
   messages survive daemon restarts.
-- **Native appearance:** Weft Mode consumes Codex semantic theme and locale
+- **Native appearance:** Weft consumes Codex semantic theme and locale
   context rather than maintaining a separate theme switcher.
 - **Safe Mode:** `weft-codex --safe-mode` starts the official Codex experience
   without weftd or renderer injection.
@@ -175,7 +178,7 @@ confirmation for a browser-downloaded archive.
 weft-codex CLI
 ├── Official Codex Desktop
 │   ├── native Lead and Worker threads
-│   └── injected Weft Mode surfaces
+│   └── injected Weft surfaces (nav / kanban / details / Chats)
 └── weftd
     ├── Workspace / Issue / Kanban API
     ├── Codex app-server orchestration

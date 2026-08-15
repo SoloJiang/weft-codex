@@ -49,8 +49,16 @@ export interface HostContextV1 {
   tokens: Record<string, string>
   mode: "work" | "codex" | "weft"
   view?: "workspace" | "thread"
+  filter?: "off" | "weft"
+  stage?: "workspace" | "thread"
+  inspector?: { issueId: number } | null
+  conversation?: "closed" | "open-auto" | "open-pinned"
+  dock?: "closed" | "open"
+  rightOwner?: "none" | "weft-inspector" | "native-inspector"
   projectId?: string
   threadId?: string
+  issueId?: number
+  workspaceId?: number
   sidebarCollapsed: boolean
   /**
    * Where the search and inbox entries render. "native" means the host put them
@@ -64,6 +72,34 @@ export interface HostContextV1 {
   }
 }
 
+export type SidebarItemKind = "kanban" | "repos" | "issue" | "workspace"
+
+export interface SidebarItem {
+  key: string
+  kind: SidebarItemKind
+  title: string
+  issueId?: number
+  workspaceId?: number
+  threadId?: string
+  selected?: boolean
+}
+
+export interface SidebarModel {
+  workspaceLabel: string
+  issuesLabel: string
+  createLabel: string
+  workspaceId?: number
+  items: SidebarItem[]
+}
+
+export type SidebarCommand =
+  | { command: "kanban.show" }
+  | { command: "repos.show" }
+  | { command: "workspace.select"; workspaceId: number }
+  | { command: "issue.create" }
+  | { command: "workspace.create" }
+  | { command: "issue.open"; issueId: number }
+
 export type HostAction =
   | { action: "surface.label"; label: string }
   | { action: "workspace.show" }
@@ -73,6 +109,11 @@ export type HostAction =
   | { action: "dialog.present"; dialog: ActiveDialogState }
   | { action: "dialog.mounted" }
   | { action: "dialog.dismiss" }
+  | { action: "popover.dismiss" }
+  | { action: "inspector.open"; issueId: number }
+  | { action: "inspector.close" }
+  | { action: "inspector.mounted" }
+  | { action: "sidebar.sync"; model: SidebarModel }
 
 /** Host → UI, the opposite direction from HostAction: a trigger, not a request. */
 export type HostCommand = "search.open" | "inbox.open"
@@ -137,6 +178,15 @@ function isHostContext(value: unknown): value is HostContextV1 {
   if (!Object.values(candidate.tokens).every((token) => typeof token === "string")) return false
   if (candidate.mode !== "work" && candidate.mode !== "codex" && candidate.mode !== "weft") return false
   if (candidate.view !== undefined && candidate.view !== "workspace" && candidate.view !== "thread") return false
+  if (candidate.filter !== undefined && candidate.filter !== "off" && candidate.filter !== "weft") return false
+  if (candidate.stage !== undefined && candidate.stage !== "workspace" && candidate.stage !== "thread") return false
+  if (candidate.inspector !== undefined && candidate.inspector !== null) {
+    if (!candidate.inspector || typeof candidate.inspector !== "object") return false
+    if (!Number.isInteger(candidate.inspector.issueId) || candidate.inspector.issueId <= 0) return false
+  }
+  if (candidate.conversation !== undefined && candidate.conversation !== "closed" && candidate.conversation !== "open-auto" && candidate.conversation !== "open-pinned") return false
+  if (candidate.dock !== undefined && candidate.dock !== "closed" && candidate.dock !== "open") return false
+  if (candidate.rightOwner !== undefined && candidate.rightOwner !== "none" && candidate.rightOwner !== "weft-inspector" && candidate.rightOwner !== "native-inspector") return false
   if (candidate.projectId !== undefined && typeof candidate.projectId !== "string") return false
   if (candidate.threadId !== undefined && typeof candidate.threadId !== "string") return false
   if (
@@ -144,6 +194,8 @@ function isHostContext(value: unknown): value is HostContextV1 {
     candidate.headerActions !== "native" &&
     candidate.headerActions !== "fallback"
   ) return false
+  if (candidate.issueId !== undefined && (!Number.isInteger(candidate.issueId) || candidate.issueId <= 0)) return false
+  if (candidate.workspaceId !== undefined && (!Number.isInteger(candidate.workspaceId) || candidate.workspaceId <= 0)) return false
   if (candidate.security !== undefined) {
     if (!candidate.security || typeof candidate.security !== "object") return false
     if (typeof candidate.security.cspBypass !== "boolean") return false
@@ -214,6 +266,51 @@ export function requestHostAction(action: HostAction): boolean {
     ...action,
   }, hostOrigin)
   return true
+}
+
+export function requestInspectorOpen(issueId: number): boolean {
+  return requestHostAction({ action: "inspector.open", issueId })
+}
+
+export function requestSidebarSync(model: SidebarModel): boolean {
+  return requestHostAction({ action: "sidebar.sync", model })
+}
+
+function isSidebarCommand(value: unknown): value is SidebarCommand {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const candidate = value as Record<string, unknown>
+  if (candidate.command === "kanban.show") return true
+  if (candidate.command === "repos.show") return true
+  if (candidate.command === "issue.create") return true
+  if (candidate.command === "workspace.create") return true
+  if (candidate.command === "workspace.select") {
+    return typeof candidate.workspaceId === "number" && Number.isInteger(candidate.workspaceId) && candidate.workspaceId > 0
+  }
+  if (candidate.command !== "issue.open") return false
+  return typeof candidate.issueId === "number" && Number.isInteger(candidate.issueId) && candidate.issueId > 0
+}
+
+export function useSidebarCommand(onCommand: (command: SidebarCommand) => void): void {
+  const handlerRef = React.useRef(onCommand)
+  handlerRef.current = onCommand
+
+  React.useEffect(() => {
+    const hostOrigin = expectedHostOrigin()
+    const onMessage = (event: MessageEvent<unknown>) => {
+      if (!hostOrigin || event.source !== window.parent || event.origin !== hostOrigin) return
+      if (!event.data || typeof event.data !== "object" || Array.isArray(event.data)) return
+      const message = event.data as Record<string, unknown>
+      if (message.source !== "weft-codex-host" || message.type !== "weft:sidebar-command") return
+      if (!isSidebarCommand(message.payload)) return
+      handlerRef.current(message.payload)
+    }
+    window.addEventListener("message", onMessage)
+    return () => window.removeEventListener("message", onMessage)
+  }, [])
+}
+
+export function requestInspectorClose(): boolean {
+  return requestHostAction({ action: "inspector.close" })
 }
 
 export function presentHostDialog(dialog: ActiveDialogState): boolean {

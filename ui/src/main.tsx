@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client"
 
 import App from "@/App"
 import ModalApp from "@/ModalApp"
+import InspectorApp from "@/InspectorApp"
+import PopoverApp from "@/PopoverApp"
 import SidebarApp from "@/SidebarApp"
 import { hasRequiredHostTokens, requestHostAction, useHostContext } from "@/host-context"
 import { I18nProvider, useI18n } from "@/i18n"
@@ -17,6 +19,8 @@ function SurfaceFrameTitle({ surface }: { surface: UiSurface }) {
   let title = t("surface.workspaceTitle")
   if (surface === "sidebar") title = t("surface.sidebarTitle")
   else if (surface === "modal") title = t("surface.modalTitle")
+  else if (surface === "popover") title = t("surface.popoverTitle")
+  else if (surface === "inspector") title = t("surface.inspectorTitle")
 
   React.useEffect(() => {
     document.title = title
@@ -32,6 +36,8 @@ function Root() {
   if (surface === "sidebar") content = <SidebarApp hostContext={context} />
   if (surface === "workspace") content = <App embedded />
   if (surface === "modal") content = <ModalApp hostContextReady={hasRequiredHostTokens(context)} />
+  if (surface === "popover") content = <PopoverApp hostContext={context} />
+  if (surface === "inspector") content = <InspectorApp hostContext={context} />
   return (
     <I18nProvider lang={lang}>
       <SurfaceFrameTitle surface={surface} />
