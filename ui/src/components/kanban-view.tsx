@@ -13,7 +13,6 @@ import type { BoardEntry, Direction, DirectionStatus, Issue, Repo } from "@/type
 import { STATUSES } from "@/types"
 import { issueBoardSignalKey, issueBoardSignalReason } from "@/lib/attention-reason"
 import { buildIssueBoard, groupIssueBoard, type IssueBoardCard } from "@/lib/issue-board"
-import { isTypingTarget } from "@/lib/utils"
 import { AsyncButton, EmptyState, LeadChatLink, TaskChatLink } from "./shared"
 
 export interface WorkActions {
@@ -249,28 +248,12 @@ export function KanbanView({
   const { t } = useI18n()
   const [query, setQuery] = React.useState("")
   const deferredQuery = React.useDeferredValue(query)
-  const searchRef = React.useRef<HTMLInputElement>(null)
   const cards = React.useMemo(() => buildIssueBoard(board), [board])
   const visibleCards = React.useMemo(() => {
     const normalizedQuery = normalizedSearchValue(deferredQuery)
     return cards.filter((card) => issueMatches(card, normalizedQuery, repos))
   }, [cards, deferredQuery, repos])
   const grouped = React.useMemo(() => groupIssueBoard(visibleCards), [visibleCards])
-
-  // Not ⌘K: Codex Desktop binds that (and ⇧⌘P) to its own command menu, at the
-  // Electron menu-accelerator level, so the keypress may never reach this frame
-  // — and the hint we used to print promised something the host would take.
-  // See docs/compat/codex-builds.md §5.10.
-  React.useEffect(() => {
-    const focusSearch = (event: KeyboardEvent) => {
-      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return
-      if (isTypingTarget(event.target)) return
-      event.preventDefault()
-      searchRef.current?.focus()
-    }
-    window.addEventListener("keydown", focusSearch)
-    return () => window.removeEventListener("keydown", focusSearch)
-  }, [])
 
   let content: React.ReactNode
   if (!workspaceId) {
@@ -281,18 +264,15 @@ export function KanbanView({
     content = (
       <>
         <header className="kanban-toolbar">
-          <h1 id="kanban-heading">{t("nav.kanban")}</h1>
           <div className="kanban-search">
             <Search aria-hidden="true" />
             <Input
-              ref={searchRef}
               type="search"
               value={query}
               aria-label={t("kanban.searchLabel")}
               placeholder={t("kanban.searchPlaceholder")}
               onChange={(event) => setQuery(event.target.value)}
             />
-            <kbd aria-hidden="true">/</kbd>
           </div>
         </header>
         {cards.length && !visibleCards.length ? (
