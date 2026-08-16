@@ -609,6 +609,29 @@ Codex 的 `--color-token-*` 本就是架在 `--vscode-*` 上的一层别名，�
 上。`ui/src/index.css` 的 5 处消费点都带 `--fb-*` 兜底，因此只损失宿主保真度
 （`--fb-on-accent: #ffffff` vs 宿主 `#fafafa`），不影响可用性。
 
+**收缩的不止这两个。** 2026-08-16 把 UI 消费的 15 个 `--color-token-*` 与 6662
+实测清单逐个对账，共 **6 个**已不存在——除探针那两个外，还有三条语义色和占位符色，
+它们一直在静默走 `--fb-*`，也就是说 Weft 的成败/警告/占位符颜色早已与宿主脱钩：
+
+| UI 变量 | 失效的别名 | 6662 仍在的底层 |
+|---|---|---|
+| `--on-accent` | `--color-token-button-foreground` | `--vscode-button-foreground` |
+| 字段底（4 处） | `--color-token-input-background` | `--vscode-input-background` |
+| `--danger` | `--color-token-charts-red` | `--vscode-charts-red` |
+| `--ok` | `--color-token-charts-green` | `--vscode-charts-green` |
+| `--warn` | `--color-token-charts-yellow` | `--vscode-charts-yellow` |
+| `--placeholder` | `--color-token-input-placeholder-foreground` | `--vscode-input-placeholderForeground` |
+
+`--color-token-charts-blue` 反而还在，说明这不是整族下线而是逐个收缩，**下次升级
+仍需逐名对账**，不能按族推断。
+
+消费点改为三段兜底链：别名（旧构建）→ `--vscode-*`（6662）→ `--fb-*`（无宿主）。
+链尾不变，所以这个改动只可能提高保真度、不可能比原状更差。
+
+采集说明：`button-foreground` / `input-background` 在明暗两套主题下都实测过；
+三条 charts 与 placeholder 只在暗色主题实测。它们是 VS Code 标准色注册表里的名字，
+但本文件不据此推断——**未实测就是未记录**，明色一栏留待下次采集。
+
 ### 8.2 token 分级收回 spec 的核心档
 
 真正让两个配色别名足以杀死整个产品的，是 `tokenProbe()` 把 18 个 token **一律**

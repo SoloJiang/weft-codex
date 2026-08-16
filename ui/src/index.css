@@ -120,14 +120,27 @@
   --border-strong: var(--color-token-border-heavy, var(--fb-border-strong));
   --text: var(--color-token-foreground, var(--fb-text));
   --dim: var(--color-token-text-secondary, var(--fb-dim));
-  --placeholder: var(--color-token-input-placeholder-foreground, var(--fb-placeholder));
+  /**
+   * Six of these read through a `--vscode-*` middle link.
+   *
+   * Codex publishes `--color-token-*` as an alias layer over its `--vscode-*`
+   * theme variables, and build 6662 shrank that layer: `button-foreground`,
+   * `input-background`, `input-placeholder-foreground` and the three
+   * `charts-*` names resolve to nothing there, so `--danger` / `--ok` /
+   * `--warn` / `--placeholder` were quietly falling all the way through to
+   * `--fb-*` and no longer matched the host at all. The variables behind them
+   * are still published, so the alias stays first for older builds, the
+   * `--vscode-*` name catches 6662, and `--fb-*` stays last for no host.
+   * See docs/compat/codex-builds.md §8.1.
+   */
+  --placeholder: var(--color-token-input-placeholder-foreground, var(--vscode-input-placeholderForeground, var(--fb-placeholder)));
   --accent: var(--color-token-primary, var(--fb-accent));
   --accent-hover: var(--vscode-button-hoverBackground, var(--fb-accent-hover));
-  --on-accent: var(--color-token-button-foreground, var(--fb-on-accent));
+  --on-accent: var(--color-token-button-foreground, var(--vscode-button-foreground, var(--fb-on-accent)));
   --link: var(--color-token-text-link-foreground, var(--fb-link));
-  --warn: var(--color-token-charts-yellow, var(--fb-warn));
-  --danger: var(--color-token-charts-red, var(--fb-danger));
-  --ok: var(--color-token-charts-green, var(--fb-ok));
+  --warn: var(--color-token-charts-yellow, var(--vscode-charts-yellow, var(--fb-warn)));
+  --danger: var(--color-token-charts-red, var(--vscode-charts-red, var(--fb-danger)));
+  --ok: var(--color-token-charts-green, var(--vscode-charts-green, var(--fb-ok)));
   --hover: var(--color-token-list-hover-background, var(--fb-hover));
   /**
    * The host's own focus colour, read off its Tailwind classes:
@@ -244,7 +257,7 @@ textarea {
   padding: 6px 9px;
   border: 0;
   border-radius: var(--r-md);
-  background: var(--color-token-input-background, var(--panel-2));
+  background: var(--color-token-input-background, var(--vscode-input-background, var(--panel-2)));
   box-shadow: 0 0 0 0.5px var(--border-strong), 0 3px 7.5px rgb(0 0 0 / 0.04);
   color: var(--text);
   transition: box-shadow 120ms ease, background-color 120ms ease;
@@ -1156,7 +1169,7 @@ main {
   height: 40px;
   padding-inline: 34px var(--space-3);
   border-radius: var(--r-md);
-  background: var(--color-token-input-background, var(--panel));
+  background: var(--color-token-input-background, var(--vscode-input-background, var(--panel)));
 }
 
 .kanban-issue-filter {
@@ -1167,7 +1180,7 @@ main {
 .kanban-issue-filter select {
   height: 40px;
   border-radius: var(--r-md);
-  background: var(--color-token-input-background, var(--panel));
+  background: var(--color-token-input-background, var(--vscode-input-background, var(--panel)));
 }
 
 .kanban-filter-empty {
@@ -1613,7 +1626,7 @@ main {
   border: 0;
   box-shadow: 0 0 0 0.5px var(--border);
   border-radius: var(--r-md);
-  background: var(--color-token-input-background, transparent);
+  background: var(--color-token-input-background, var(--vscode-input-background, transparent));
   color: var(--text);
   font-family: var(--mono);
   font-size: 12px;
