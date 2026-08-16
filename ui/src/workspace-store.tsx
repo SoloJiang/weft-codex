@@ -139,7 +139,7 @@ export function WeftWorkspaceProvider({ children }: { children: React.ReactNode 
   const loadWorkspaces = React.useCallback(async (preferredId?: number) => {
     const [rows, uiState] = await Promise.all([
       api<Workspace[]>("/api/workspaces"),
-      api<UiState>("/api/ui-state").catch(() => ({ lastWorkspaceId: null })),
+      api<UiState>("/api/ui-state").catch(() => ({ lastWorkspaceId: null, detailPaneWidth: null })),
     ])
     setWorkspaces(rows)
     const nextId = pickWorkspaceId(

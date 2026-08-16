@@ -413,24 +413,61 @@ async fn list_workspaces(State(state): State<ApiState>) -> Response {
     }
 }
 
+/// Every field is optional and absent means "leave it alone".
+///
+/// The UI writes these from different places at different times — the
+/// workspace on selection, the pane width on drag end — so a POST that carried
+/// only the field it knows about must not clear the other one.
+/// Distinguishes an absent key from an explicit `null`.
+///
+/// `Option<Option<T>>` alone does not: serde lets the outer `Option` swallow a
+/// JSON `null`, so both cases arrive as `None` and an explicit clear becomes a
+/// no-op. Going through the inner `Option` and wrapping the result keeps them
+/// apart — absent falls to `default` (`None`), `null` becomes `Some(None)`.
+fn explicit_option<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
+/// Absent leaves the stored value alone; `null` clears it.
 #[derive(Deserialize)]
 struct SetUiState {
-    #[serde(rename = "lastWorkspaceId")]
-    last_workspace_id: Option<i64>,
+    #[serde(rename = "lastWorkspaceId", default, deserialize_with = "explicit_option")]
+    last_workspace_id: Option<Option<i64>>,
+    #[serde(rename = "detailPaneWidth", default, deserialize_with = "explicit_option")]
+    detail_pane_width: Option<Option<i64>>,
 }
 
 async fn get_ui_state(State(state): State<ApiState>) -> Response {
-    match state.store.last_workspace_id().await {
-        Ok(last_workspace_id) => ok(json!({ "lastWorkspaceId": last_workspace_id })),
-        Err(e) => fail(e),
-    }
+    let last_workspace_id = match state.store.last_workspace_id().await {
+        Ok(value) => value,
+        Err(e) => return fail(e),
+    };
+    let detail_pane_width = match state.store.detail_pane_width().await {
+        Ok(value) => value,
+        Err(e) => return fail(e),
+    };
+    ok(json!({
+        "lastWorkspaceId": last_workspace_id,
+        "detailPaneWidth": detail_pane_width,
+    }))
 }
 
 async fn set_ui_state(State(state): State<ApiState>, Json(body): Json<SetUiState>) -> Response {
-    match state.store.set_last_workspace_id(body.last_workspace_id).await {
-        Ok(()) => ok(json!({ "lastWorkspaceId": body.last_workspace_id })),
-        Err(e) => fail(e),
+    if let Some(width) = body.detail_pane_width {
+        if let Err(e) = state.store.set_detail_pane_width(width).await {
+            return fail(e);
+        }
     }
+    if let Some(workspace_id) = body.last_workspace_id {
+        if let Err(e) = state.store.set_last_workspace_id(workspace_id).await {
+            return fail(e);
+        }
+    }
+    get_ui_state(State(state)).await
 }
 
 #[derive(Deserialize)]

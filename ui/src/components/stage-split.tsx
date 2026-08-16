@@ -1,6 +1,8 @@
 import * as React from "react"
 
+import { api, jsonRequest } from "@/api"
 import { useI18n } from "@/i18n"
+import type { UiState } from "@/types"
 
 /**
  * Weft's own two-pane stage: board on the left, issue detail on the right.
@@ -51,6 +53,24 @@ export function StageSplit({
   const [width, setWidth] = React.useState(DEFAULT_WIDTH)
   const [stageWidth, setStageWidth] = React.useState(0)
 
+  // Persisted server-side rather than in the browser: this UI runs inside a
+  // shadow root in Codex's document and keeps no client storage of its own.
+  React.useEffect(() => {
+    let active = true
+    api<UiState>("/api/ui-state")
+      .then((state) => {
+        if (active && state.detailPaneWidth) setWidth(state.detailPaneWidth)
+      })
+      .catch(() => {
+        // A width is a preference, not state worth reporting a failure over.
+      })
+    return () => { active = false }
+  }, [])
+
+  const rememberWidth = React.useCallback((next: number) => {
+    void api("/api/ui-state", jsonRequest("POST", { detailPaneWidth: next })).catch(() => {})
+  }, [])
+
   React.useEffect(() => {
     const root = rootRef.current
     if (!root) return
@@ -81,11 +101,13 @@ export function StageSplit({
       handle.removeEventListener("pointermove", move)
       handle.removeEventListener("pointerup", stop)
       handle.removeEventListener("pointercancel", stop)
+      // Written once on release, not on every frame of the drag.
+      setWidth((current) => { rememberWidth(current); return current })
     }
     handle.addEventListener("pointermove", move)
     handle.addEventListener("pointerup", stop)
     handle.addEventListener("pointercancel", stop)
-  }, [])
+  }, [rememberWidth])
 
   const detailWidth = shared ? clampWidth(width, stageWidth) : 0
 
