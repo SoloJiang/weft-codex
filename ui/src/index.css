@@ -1039,6 +1039,76 @@ a { color: var(--link); }
 
 .embedded-main { padding: var(--space-4); }
 
+/**
+ * Weft's own two-pane stage.
+ *
+ * The panes carry the padding, not `main`, so the detail's edge can reach the
+ * stage's real edges — a drawer that stops short of them reads as a floating
+ * card, which is not what the host does.
+ */
+.embedded-main:has(> .stage-split:not([data-detail="closed"])) { padding: 0; }
+
+.stage-split {
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: stretch;
+}
+
+.stage-split > .stage-board {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+}
+
+.stage-split:not([data-detail="closed"]) > .stage-board { padding: var(--space-4); }
+
+/* Taking over rather than vanishing: the detail is what the card click asked
+   for, so a stage too narrow to share gives it everything. */
+.stage-split[data-detail="full"] > .stage-board { display: none; }
+
+.stage-detail {
+  min-width: 0;
+  flex: 0 0 auto;
+  width: var(--stage-detail-w, 100%);
+  padding: var(--space-4);
+  overflow: auto;
+  background: var(--panel);
+  /* Boundary is the shadow alone — the host draws no line here either. */
+  box-shadow: -8px 0 16px -8px rgb(0 0 0 / 0.18);
+}
+
+.stage-split[data-detail="full"] > .stage-detail {
+  width: 100%;
+  box-shadow: none;
+}
+
+/* Close sits at the drawer's outer edge; the slot was left-aligned back when a
+   back arrow lived in it. */
+.stage-detail .detail-nav {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.stage-detail .detail-nav > :first-child {
+  margin-inline-start: 0;
+  padding-inline: 6px;
+}
+
+/**
+ * A 16px grab area straddling the edge, with nothing drawn in it. Same shape
+ * the host gives its own panel divider (`w-4 -translate-x-2`).
+ */
+.stage-divider {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  width: 16px;
+  margin-inline: -8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
 #topbar {
   min-height: 52px;
   position: sticky;

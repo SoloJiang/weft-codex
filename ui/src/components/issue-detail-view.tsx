@@ -1,5 +1,5 @@
 import * as React from "react"
-import { ArrowLeft } from "lucide-react"
+import { X } from "lucide-react"
 
 import { api } from "@/api"
 import { Button } from "@/components/ui/button"
@@ -79,13 +79,13 @@ export function IssueDetailView({
   repos,
   revision,
   actions,
-  onBack,
+  onClose,
 }: {
   entry?: BoardEntry
   repos: Repo[]
   revision: number
   actions: WorkActions
-  onBack: () => void
+  onClose: () => void
 }) {
   const { t } = useI18n()
   const [rows, setRows] = React.useState<BusMessage[]>([])
@@ -105,14 +105,14 @@ export function IssueDetailView({
   return (
     <section className="view active" aria-labelledby="issue-detail-heading">
       <h1 id="issue-detail-heading" className="sr-only">{entry?.issue.title ?? t("detail.title")}</h1>
+      {/* Close, not back: the board never went away. */}
       <div className="actions detail-nav">
-        <Button variant="ghost" onClick={onBack}>
-          <ArrowLeft aria-hidden="true" />
-          {t("detail.back")}
+        <Button variant="ghost" aria-label={t("detail.close")} onClick={onClose}>
+          <X aria-hidden="true" />
         </Button>
       </div>
       {!entry ? (
-        <EmptyState titleKey="detail.notFoundTitle" bodyKey="detail.notFoundBody" actionKey="detail.back" onAction={onBack} />
+        <EmptyState titleKey="detail.notFoundTitle" bodyKey="detail.notFoundBody" actionKey="detail.close" onAction={onClose} />
       ) : (
         <div id="issue-detail">
           <header className="issue-head detail-head">
