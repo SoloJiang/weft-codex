@@ -10,7 +10,6 @@ import { useWeftWorkspace } from "@/workspace-store"
 import type {
   DialogSubmission,
   Direction,
-  Issue,
   IssueKind,
   MessageIntent,
   RepoImportResponse,
@@ -82,14 +81,27 @@ export default function App() {
 
   const workActions = React.useMemo<WorkActions>(() => ({
     onError: notifyError,
-    onStartLead: async (issue: Issue) => launchLead(issue.id),
-    onRetryTask: async (direction: Direction) => {
+    onOpenChat: async (issueId: number) => launchLead(issueId),
+    // Dispatch then open: the caller's concept is "go to this task's chat",
+    // and starting the worker is what that means when none is running.
+    onOpenTaskChat: async (directionId: number) => {
+      let started: { codexThreadId?: string }
       try {
-        await api(`/api/directions/${direction.id}/spawn`, jsonRequest("POST"))
+        started = await api<{ codexThreadId?: string }>(
+          `/api/directions/${directionId}/spawn`,
+          jsonRequest("POST"),
+        )
       } catch {
         throw new Error(t("err.taskStart"))
       }
       await store.refreshCurrent()
+      if (started.codexThreadId) {
+        window.setTimeout(() => {
+          void session.openThread(started.codexThreadId as string).catch(() => {
+            notifyError(new Error(t("err.threadOpen")))
+          })
+        }, 0)
+      }
     },
     onCompleteTask: completeTask,
     onClearAttention: async (direction: Direction) => {
@@ -97,7 +109,7 @@ export default function App() {
       await store.refreshCurrent()
     },
     onContinueTask: (direction: Direction) => openDialog({ type: "message", target: "task", id: direction.id, intent: "continue" }),
-  }), [notifyError, store, completeTask, launchLead, openDialog, t])
+  }), [notifyError, session, store, completeTask, launchLead, openDialog, t])
 
   const importRepositories = async (paths: string[]): Promise<RepoImportResponse> => {
     if (!workspaceId) throw new Error(t("err.unknown"))
