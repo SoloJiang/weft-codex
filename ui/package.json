@@ -7,7 +7,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && vite build && vite build --config vite.config.embed.ts",
     "typecheck": "tsc -b --pretty false",
-    "test": "node --test --experimental-strip-types src/**/*.test.ts",
+    "test": "node --test --experimental-strip-types \"src/**/*.test.ts\"",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
