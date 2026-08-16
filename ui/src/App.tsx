@@ -1,30 +1,14 @@
 import * as React from "react"
-import { FolderGit2, KanbanSquare, Plus, SquarePen } from "lucide-react"
-
-import { api, jsonRequest, slugify } from "@/api"
-import { DialogLayer } from "@/components/dialogs"
+import { api, apiUrl, jsonRequest, slugify } from "@/api"
 import { IssueDetailView } from "@/components/issue-detail-view"
 import { ArtifactView } from "@/components/artifact-view"
 import { KanbanView, type WorkActions } from "@/components/kanban-view"
 import { RepositoriesView } from "@/components/repositories-view"
 import { openCodexThread } from "@/components/shared"
-import { Button } from "@/components/ui/button"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { useI18n } from "@/i18n"
-import { presentHostDialog } from "@/host-context"
-import { readInitialRoute, readInitialWorkspaceId } from "@/surface"
-import { createSurfaceChannel, type SurfaceMessage } from "@/surface-channel"
+import { useWeftSession } from "@/session"
 import type {
-  AppView,
   BoardEntry,
-  ActiveDialogState,
-  DialogState,
   DialogSubmission,
   Direction,
   Issue,
@@ -64,39 +48,23 @@ function errorText(error: unknown, network: string, unknown: string): string {
   return unknown
 }
 
-export default function App({ embedded = false }: { embedded?: boolean }) {
-  const { t, lang } = useI18n()
-  const initialRoute = React.useMemo(readInitialRoute, [])
+export default function App() {
+  const { t } = useI18n()
+  const session = useWeftSession()
+  const workspaceId = session.workspaceId
+  const view = session.route.view
+  const detailIssueId = session.route.issueId
+  const artifactId = session.route.artifactId ?? null
   const [workspaces, setWorkspaces] = React.useState<Workspace[]>([])
-  const [workspaceId, setWorkspaceId] = React.useState<number | null>(readInitialWorkspaceId)
   const [repos, setRepos] = React.useState<Repo[]>([])
   const [board, setBoard] = React.useState<BoardEntry[]>([])
   const [repoMap, setRepoMap] = React.useState<RepoMap | null>(null)
-  const [view, setView] = React.useState<AppView>(initialRoute.view)
-  const [detailIssueId, setDetailIssueId] = React.useState<number | null>(initialRoute.issueId)
-  const [artifactId, setArtifactId] = React.useState<number | null>(initialRoute.artifactId ?? null)
-  const [dialog, setDialog] = React.useState<DialogState>(null)
   const [loading, setLoading] = React.useState(true)
   const [revision, setRevision] = React.useState(0)
   const [toasts, setToasts] = React.useState<ToastMessage[]>([])
   const loadSequence = React.useRef(0)
   const toastSequence = React.useRef(0)
-  const surfaceState = React.useRef({ workspaceId, view, detailIssueId })
-  const dialogSubmitHandler = React.useRef<(
-    (submission: DialogSubmission) => Promise<RepoImportResponse | undefined>
-  ) | null>(null)
-  const channel = React.useMemo(createSurfaceChannel, [])
-  surfaceState.current = { workspaceId, view, detailIssueId }
-
-  const openDialog = React.useCallback((next: ActiveDialogState) => {
-    if (embedded && presentHostDialog(next)) return
-    setDialog(next)
-  }, [embedded])
-
-  React.useEffect(() => {
-    document.documentElement.lang = lang
-    document.title = t("app.title")
-  }, [lang, t])
+  const openDialog = session.openDialog
 
   const notify = React.useCallback((message: string, kind: ToastKind = "info") => {
     toastSequence.current += 1
@@ -129,13 +97,13 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
   const loadWorkspaces = React.useCallback(async (preferredId?: number) => {
     const rows = await api<Workspace[]>("/api/workspaces")
     setWorkspaces(rows)
-    setWorkspaceId((current) => {
-      if (preferredId && rows.some((workspace) => workspace.id === preferredId)) return preferredId
-      if (current && rows.some((workspace) => workspace.id === current)) return current
-      return rows[0]?.id ?? null
-    })
+    let nextId: number | null = null
+    if (preferredId && rows.some((workspace) => workspace.id === preferredId)) nextId = preferredId
+    else if (workspaceId && rows.some((workspace) => workspace.id === workspaceId)) nextId = workspaceId
+    else nextId = rows[0]?.id ?? null
+    session.setWorkspaceId(nextId)
     return rows
-  }, [])
+  }, [session, workspaceId])
 
   React.useEffect(() => {
     let active = true
@@ -160,7 +128,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
   }, [workspaceId, refreshWorkspace, notifyError])
 
   React.useEffect(() => {
-    const source = new EventSource("/api/events")
+    const source = new EventSource(apiUrl("/api/events"))
     let timer: number | undefined
     let refreshWorkspaceList = false
 
@@ -186,88 +154,6 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
     }
   }, [workspaceId, refreshWorkspace, loadWorkspaces, notifyError])
 
-  React.useEffect(() => {
-    if (!channel) return
-    const publishState = () => {
-      const current = surfaceState.current
-      channel.post({ type: "workspace.changed", workspaceId: current.workspaceId })
-      channel.post({ type: "route.changed", view: current.view, issueId: current.detailIssueId })
-    }
-    const receive = (message: SurfaceMessage) => {
-      if (message.type === "workspace.select") {
-        loadSequence.current += 1
-        setRepos([])
-        setBoard([])
-        setRepoMap(null)
-        setDetailIssueId(null)
-        setView("kanban")
-        setWorkspaceId(message.workspaceId)
-        return
-      }
-      if (message.type === "navigate") {
-        setDetailIssueId(message.issueId)
-        setArtifactId(message.artifactId ?? null)
-        setView(message.view)
-        return
-      }
-      if (message.type === "command" && message.command === "workspace.create") {
-        openDialog({ type: "workspace" })
-        return
-      }
-      if (message.type === "command" && message.command === "issue.create") {
-        openDialog({ type: "issue" })
-        return
-      }
-      if (message.type === "dialog.submit") {
-        const handler = dialogSubmitHandler.current
-        if (!handler) {
-          channel.post({
-            type: "dialog.result",
-            requestId: message.requestId,
-            ok: false,
-            error: t("err.unknown"),
-          })
-          return
-        }
-        void handler(message.submission)
-          .then((result) => {
-            channel.post({
-              type: "dialog.result",
-              requestId: message.requestId,
-              ok: true,
-              ...(result ? { result } : {}),
-            })
-          })
-          .catch((caught) => {
-            channel.post({
-              type: "dialog.result",
-              requestId: message.requestId,
-              ok: false,
-              error: errorText(caught, t("err.network"), t("err.unknown")),
-            })
-          })
-        return
-      }
-      if (message.type === "state.request") publishState()
-      if (message.type === "surface.ready" && message.surface === "sidebar") publishState()
-    }
-    const unsubscribe = channel.subscribe(receive)
-    channel.post({ type: "surface.ready", surface: embedded ? "workspace" : "standalone" })
-    return unsubscribe
-  }, [channel, embedded, openDialog, t])
-
-  React.useEffect(() => {
-    return () => channel?.close()
-  }, [channel])
-
-  React.useEffect(() => {
-    channel?.post({ type: "workspace.changed", workspaceId })
-  }, [channel, workspaceId])
-
-  React.useEffect(() => {
-    channel?.post({ type: "route.changed", view, issueId: detailIssueId })
-  }, [channel, view, detailIssueId])
-
   const refreshCurrent = React.useCallback(async () => {
     if (!workspaceId) return
     await refreshWorkspace(workspaceId)
@@ -276,8 +162,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
   const createWorkspace = async (name: string) => {
     const created = await api<{ id: number }>("/api/workspaces", jsonRequest("POST", { name, slug: slugify(name) }))
     await loadWorkspaces(created.id)
-    setView("kanban")
-    setDetailIssueId(null)
+    session.navigate({ view: "kanban", issueId: null })
     notify(t("success.workspaceCreated"), "success")
   }
 
@@ -300,8 +185,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
       kind,
     }))
     await refreshCurrent()
-    setDetailIssueId(created.id)
-    setView("issue")
+    session.navigate({ view: "issue", issueId: created.id })
     notify(t("success.issueCreated"), "success")
     // The lead is started server side with the issue, so there is no second
     // call to race here. A start that failed is recorded on the issue and shows
@@ -359,7 +243,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
     return response
   }
 
-  dialogSubmitHandler.current = async (submission) => {
+  const handleDialogSubmit = async (submission: DialogSubmission) => {
     if (submission.type === "workspace") {
       await createWorkspace(submission.name)
       return undefined
@@ -380,6 +264,10 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
     return undefined
   }
 
+  React.useEffect(() => {
+    session.registerDialogSubmit(handleDialogSubmit)
+  })
+
   const analyzeRepository = async (id: number) => {
     await api(`/api/repos/${id}/analyze`, jsonRequest("POST"))
     notify(t("success.analysisStarted"), "success")
@@ -387,9 +275,7 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
   }
 
   const switchView = (next: "kanban" | "repos") => {
-    setDetailIssueId(null)
-    setArtifactId(null)
-    setView(next)
+    session.navigate({ view: next, issueId: null })
   }
 
   const detailEntry = board.find((entry) => entry.issue.id === detailIssueId)
@@ -434,89 +320,14 @@ export default function App({ embedded = false }: { embedded?: boolean }) {
         actions={workActions}
         onOpenCreateIssue={() => openDialog({ type: "issue" })}
         onCreateWorkspace={() => openDialog({ type: "workspace" })}
-        onOpenIssue={(id) => { setDetailIssueId(id); setView("issue") }}
+        onOpenIssue={(id) => session.navigate({ view: "issue", issueId: id })}
       />
     )
   }
 
-  const activeNavigation = view === "issue" ? "kanban" : view
-  let topbar: React.ReactNode = null
-  if (!embedded) {
-    topbar = (
-      <header id="topbar">
-        <nav aria-label={t("nav.primary")}>
-          <Button
-            variant="ghost"
-            className={`nav-btn${activeNavigation === "kanban" ? " active" : ""}`}
-            aria-current={activeNavigation === "kanban" ? "page" : undefined}
-            onClick={() => switchView("kanban")}
-          >
-            <KanbanSquare aria-hidden="true" />
-            {t("nav.kanban")}
-          </Button>
-          <Button
-            variant="ghost"
-            className={`nav-btn${activeNavigation === "repos" ? " active" : ""}`}
-            aria-current={activeNavigation === "repos" ? "page" : undefined}
-            onClick={() => switchView("repos")}
-          >
-            <FolderGit2 aria-hidden="true" />
-            {t("nav.repos")}
-          </Button>
-        </nav>
-        <div className="workspace-controls">
-          <Button variant="ghost" disabled={!workspaceId} onClick={() => openDialog({ type: "issue" })}>
-            <SquarePen aria-hidden="true" />
-            {t("issue.create")}
-          </Button>
-          <Select
-            value={workspaceId ? String(workspaceId) : undefined}
-            disabled={!workspaces.length}
-            onValueChange={(value) => {
-              loadSequence.current += 1
-              setRepos([])
-              setBoard([])
-              setRepoMap(null)
-              setDetailIssueId(null)
-              setView("kanban")
-              setWorkspaceId(Number(value))
-            }}
-          >
-            <SelectTrigger
-              className="workspace-select-shell"
-              id="workspace-select"
-              aria-label={t("workspace.label")}
-            >
-              <SelectValue placeholder={t("workspace.none")} />
-            </SelectTrigger>
-            <SelectContent>
-              {workspaces.map((workspace) => (
-                <SelectItem key={workspace.id} value={String(workspace.id)}>{workspace.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button variant="ghost" onClick={() => openDialog({ type: "workspace" })}>
-            <Plus aria-hidden="true" />
-            {t("ws.add")}
-          </Button>
-        </div>
-      </header>
-    )
-  }
   return (
     <>
-      {topbar}
-
-      <main className={embedded ? "embedded-main" : undefined}>{mainContent}</main>
-
-      <DialogLayer
-        state={dialog}
-        onClose={() => setDialog(null)}
-        onCreateWorkspace={createWorkspace}
-        onCreateIssue={createIssue}
-        onImportRepositories={importRepositories}
-        onSendMessage={sendMessage}
-      />
+      <main className="embedded-main">{mainContent}</main>
 
       <div className="notifications" aria-live="polite" aria-atomic="false">
         {toasts.map((toast) => (

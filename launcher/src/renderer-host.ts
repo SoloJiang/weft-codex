@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto"
-
 import { CdpSession, listCdpTargets, selectRendererTarget, type CdpTarget } from "./cdp.js"
 import { probeRenderer, type CompatibilityTier, type ProbeReport } from "./probes.js"
 import {
@@ -26,14 +24,10 @@ export interface RendererAgentStatus {
   version: 1
   mode: HostMode
   view: "workspace" | "thread"
-  tier: "additive" | "weft-mode"
+  tier: "weft-mode"
   cspBypass: boolean
-  sidebarMounted: boolean
-  workspaceMounted: boolean
-  modalMounted: boolean
-  sidebarReady: boolean
-  workspaceReady: boolean
-  modalReady: boolean
+  uiMounted: boolean
+  uiReady: boolean
   nativeModeSwitcher: boolean
 }
 
@@ -41,7 +35,8 @@ export interface RendererHostEvent {
   version: 1
   type:
     | "agent.ready"
-    | "frame.ready"
+    | "ui.ready"
+    | "ui.error"
     | "mode.changed"
     | "thread.open.missing"
     | "repositories.pick"
@@ -81,7 +76,8 @@ function parseHostEvent(value: unknown): RendererHostEvent | null {
   if (candidate.version !== 1 || typeof candidate.type !== "string") return null
   const allowed = new Set([
     "agent.ready",
-    "frame.ready",
+    "ui.ready",
+    "ui.error",
     "mode.changed",
     "thread.open.missing",
     "repositories.pick",
@@ -100,24 +96,19 @@ function parseAgentStatus(value: unknown): RendererAgentStatus | null {
   const candidate = value as Partial<RendererAgentStatus>
   if (candidate.version !== 1 || !isHostMode(candidate.mode)) return null
   if (candidate.view !== "workspace" && candidate.view !== "thread") return null
-  if (candidate.tier !== "additive" && candidate.tier !== "weft-mode") return null
+  if (candidate.tier !== "weft-mode") return null
   const booleans = [
     candidate.cspBypass,
-    candidate.sidebarMounted,
-    candidate.workspaceMounted,
-    candidate.modalMounted,
-    candidate.sidebarReady,
-    candidate.workspaceReady,
-    candidate.modalReady,
+    candidate.uiMounted,
+    candidate.uiReady,
     candidate.nativeModeSwitcher,
   ]
   if (booleans.some((value) => typeof value !== "boolean")) return null
   return candidate as RendererAgentStatus
 }
 
-function compatibilityTier(tier: CompatibilityTier): "additive" | "weft-mode" | null {
-  if (tier === "safe-mode") return null
-  return tier
+function canInject(tier: CompatibilityTier): boolean {
+  return tier === "weft-mode"
 }
 
 async function evaluateValue(session: CdpSession, expression: string): Promise<unknown> {
@@ -143,11 +134,11 @@ async function agentStatus(session: CdpSession): Promise<RendererAgentStatus | n
 }
 
 function surfacesMounted(status: RendererAgentStatus | null): boolean {
-  return Boolean(status?.sidebarMounted && status.workspaceMounted && status.modalMounted)
+  return Boolean(status?.uiMounted)
 }
 
 function surfacesReady(status: RendererAgentStatus | null): boolean {
-  return Boolean(status?.sidebarReady && status.workspaceReady && status.modalReady)
+  return Boolean(status?.uiReady)
 }
 
 /**
@@ -157,12 +148,13 @@ function surfacesReady(status: RendererAgentStatus | null): boolean {
  * The roots can only attach once Codex has rendered its own shell — the sidebar
  * anchor does not exist before then — and that is host hydration, which we do
  * not control and which is slowest exactly when the machine is busiest. The
- * handshake, by contrast, is our own frames loading over loopback: once they
- * are attached it either completes quickly or something is genuinely wrong.
+ * second phase, by contrast, is our own Weft bundle loading over loopback:
+ * once the roots are attached it either completes quickly or something is
+ * genuinely wrong.
  *
  * Spending one budget on both meant a slow host shell consumed the whole window
- * and the run was reported as a handshake failure — the wrong diagnosis, and it
- * sent debugging at the frames instead of at the wait.
+ * and the run was reported as a bundle-load failure — the wrong diagnosis, and
+ * it sent debugging at the assets instead of at the wait.
  */
 export async function waitForSurfaces(
   readStatus: () => Promise<RendererAgentStatus | null>,
@@ -333,11 +325,9 @@ class AttachedRenderer {
 
   async install(
     options: RendererHostOptions,
-    bridgeId: string,
     bindingName: string,
   ): Promise<RendererReadySnapshot> {
-    const tier = compatibilityTier(this.probe.tier)
-    if (!tier) {
+    if (!canInject(this.probe.tier)) {
       return {
         target: this.publicTarget(),
         probe: this.probe,
@@ -383,31 +373,27 @@ class AttachedRenderer {
 
     await this.installAgentScript({
       webBaseUrl: options.webBaseUrl,
-      bridgeId,
       bindingName,
       initialMode: options.initialMode,
-      compatibilityTier: tier,
       cspBypass: false,
     })
 
     let status = await waitForSurfaces(() => agentStatus(this.session), { mountMs: 4500, handshakeMs: 4500 })
     if (!surfacesReady(status)) {
-      options.onWarning?.("Local iframe handshake failed; enabling dedicated-instance CSP compatibility mode")
+      options.onWarning?.("Weft bundle could not load; enabling dedicated-instance CSP compatibility mode")
       this.cspBypass = true
       await this.session.send("Page.setBypassCSP", { enabled: true })
       await this.installAgentScript({
         webBaseUrl: options.webBaseUrl,
-        bridgeId,
         bindingName,
         initialMode: status?.mode ?? options.initialMode,
-        compatibilityTier: tier,
         cspBypass: true,
       })
       // Chromium applies Page.setBypassCSP to subsequent document loads. The
       // current app:// document has already committed its CSP, so a dedicated
-      // renderer reload is required before loopback frames can navigate.
+      // renderer reload is required before the Weft bundle can load.
       // A reload restarts host hydration from nothing, so the mount phase needs
-      // the longer budget here — the handshake itself is no slower than before.
+      // the longer budget here — the bundle load itself is no slower than before.
       await this.session.send("Page.reload", { ignoreCache: true })
       status = await waitForSurfaces(() => agentStatus(this.session), { mountMs: 15000, handshakeMs: 8000 })
     }
@@ -419,11 +405,11 @@ class AttachedRenderer {
         probe: this.probe,
         status,
         safeMode: true,
-        // Name the phase that actually failed. "Handshake" was reported even
-        // when the roots never attached, which points debugging at the frames
-        // when the host shell is what never arrived.
+        // Name the phase that actually failed. A generic "handshake" used to
+        // be reported even when the roots never attached, which points
+        // debugging at the bundle when the host shell is what never arrived.
         reason: surfacesMounted(status)
-          ? "Injected surfaces did not complete the host-context handshake"
+          ? "Weft UI did not finish mounting into the host document"
           : "Codex did not render its shell in time for the Weft surfaces to mount",
       }
     }
@@ -515,7 +501,6 @@ export class RendererSupervisor {
   private timer: ReturnType<typeof setInterval> | null = null
   private reconciling = false
   private stopped = false
-  private readonly bridgeId = randomUUID()
   private readonly bindingName = "weftCodexHost"
 
   constructor(private readonly options: RendererHostOptions) {}
@@ -565,7 +550,7 @@ export class RendererSupervisor {
       if (current) await current.dispose()
       const next = await AttachedRenderer.connect(target)
       this.attached = next
-      const snapshot = await next.install(this.options, this.bridgeId, this.bindingName)
+      const snapshot = await next.install(this.options, this.bindingName)
       this.options.onReady?.(snapshot)
       return snapshot
     } catch (error) {

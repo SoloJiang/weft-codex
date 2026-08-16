@@ -67,16 +67,16 @@
 | 6321 | `renderer.root` | base | true | `#root` |
 | 6321 | `renderer.main` | base | true | **假阳性风险**：文档中同时存在 2 个 `main`，见 §5 |
 | 6321 | `sidebar.scroll` | base | true | n=1 |
-| 6321 | `sidebar.section` | base | true | n=2 |
-| 6321 | `sidebar.heading` | additive | true | n=2 |
-| 6321 | `sidebar.projectCreate` | subtractive | true | n=1，属性确实存在（同时 `project-row` n=4） |
-| 6321 | `sidebar.threadRow` | subtractive | true | n=24 |
-| 6321 | `sidebar.threadRoute` | subtractive | true | n=24 |
-| 6321 | `sidebar.threadActive` | subtractive | true | n=24；2026-08-10 新增探针，语义经真实点击验证（§5.1） |
-| 6321 | `mode.switcher` | subtractive | true | `nav` 作用域内、排除 sidebar 后恰好 1 个触发器（文档内共 9 个同形按钮）；触发器 `id` 为 `radix-_r_3_`（Radix 自动生成，非空） |
+| 6321 | `sidebar.section` | optional | true | n=2。2026-08-16 起不再作为进 Weft 条件（原 base，只服务已删除的 additive 行） |
+| 6321 | `sidebar.heading` | optional | true | n=2。2026-08-16 起不再作为进 Weft 条件 |
+| 6321 | `sidebar.projectCreate` | optional | true | n=1，属性确实存在（同时 `project-row` n=4）。2026-08-16 起不再作为进 Weft 条件 |
+| 6321 | `sidebar.threadRow` | base | true | n=24。2026-08-16：有会话行时缺失则不能进 Weft |
+| 6321 | `sidebar.threadRoute` | base | true | n=24 |
+| 6321 | `sidebar.threadActive` | base | true | n=24；2026-08-10 新增探针，语义经真实点击验证（§5.1） |
+| 6321 | `mode.switcher` | base | true | `nav` 作用域内、排除 sidebar 后恰好 1 个触发器（文档内共 9 个同形按钮）；触发器 `id` 为 `radix-_r_3_`（Radix 自动生成，非空）。2026-08-16：缺失则不能进 Weft |
 | 6321 | `sidebar.headerActionSlot` | optional | true | 2026-08-11 新增探针。模式行恰好 1 个非模式按钮的元素子节点（`div.ms-auto flex items-center gap-1`），内含 Search 与 View activity 两个按钮。定 `optional` 的理由见 §5.9 |
 | 6321 | `host.locale` | additive | true | `en-GB` |
-| 6321 | `titlebar.dragRegion` | optional | true | 文档内 3 个；`main[0]`（inert）内 1 个、`main[1]`（可见）内 2 个。探针已改为**可见 main 作用域**，实测 2 个 |
+| 6321 | `titlebar.dragRegion` | base | true | 文档内 3 个；`main[0]`（inert）内 1 个、`main[1]`（可见）内 2 个。探针已改为**可见 main 作用域**，实测 2 个。2026-08-16：缺失则不能进 Weft |
 | 6321 | `theme.sidebarSurface` | additive | true | `#f2f2f3` |
 | 6321 | `theme.mainSurface` | additive | true | `#fafafa` |
 | 6321 | `theme.dropdownSurface` | additive | true | `rgb(251, 251, 251)` |
@@ -152,8 +152,9 @@ Tier 1 下原生 sidebar 完整保留，Weft 收缩为入口行，而 workspace 
    `data-weft-codex-tier`。那样测到的只是 CSS 选择器能否解析，证明不了注入行为。
 2. **运行时改不了 tier。** 注入的 agent 会持续把该属性从 config 重新写回，手改立刻
    被覆盖；DOM 层面破坏锚点也撑不到 attach，因为 React 会重新渲染并恢复属性。
-   要观测 Tier 1，只能用 `compatibilityTier: "additive"` 构造 agent 源码并注入
-   （agent 自带单实例守卫，会先 dispose 旧的）。
+   要观测当时的 Tier 1，只能用当时的 `compatibilityTier: "additive"` 构造
+   agent 源码并注入（agent 自带单实例守卫，会先 dispose 旧的）。2026-08-16
+   起这条产品路径已删除：减法失败 = 不能进 Weft，不再有 additive 档可注入。
 
 ### 2.4 头部入口接管的真实注入验证（build 6321，2026-08-11）
 

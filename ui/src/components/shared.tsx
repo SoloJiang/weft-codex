@@ -3,7 +3,7 @@ import { MessageCircle } from "lucide-react"
 
 import { Button, type buttonVariants } from "@/components/ui/button"
 import { useI18n, type MessageKey } from "@/i18n"
-import { hasHostBridge, requestThreadOpen } from "@/host-context"
+import { currentHost } from "@/host"
 import { cn } from "@/lib/utils"
 import type { VariantProps } from "class-variance-authority"
 import type { RepoComponent } from "@/types"
@@ -73,8 +73,8 @@ export function codexThreadHref(threadId: string): string {
 
 export function openCodexThread(threadId: string): Promise<void> {
   if (!threadId) return Promise.reject(new Error("Thread id is required"))
-  const request = requestThreadOpen(threadId)
-  if (request) return request
+  const host = currentHost()
+  if (host) return host.openThread(threadId)
   window.location.assign(codexThreadHref(threadId))
   return Promise.resolve()
 }
@@ -114,7 +114,7 @@ export function ThreadLink({
         aria-busy={pending}
         aria-disabled={pending}
         onClick={(event) => {
-          if (!hasHostBridge()) return
+          if (!currentHost()) return
           event.preventDefault()
           if (pending) return
           setPending(true)

@@ -16,7 +16,7 @@ import {
   X,
 } from "lucide-react"
 
-import { api, jsonRequest } from "@/api"
+import { api, apiUrl, jsonRequest } from "@/api"
 import { kindLabel, statusLabel } from "@/components/artifact-view"
 import { AsyncButton, openCodexThread } from "@/components/shared"
 import { Button } from "@/components/ui/button"
@@ -28,9 +28,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import type { HostContextV1 } from "@/host-context"
-import { reportInboxCount, requestHostAction, useHostCommand } from "@/host-context"
 import { useI18n } from "@/i18n"
+import { useWeftSession } from "@/session"
 import {
   buildInbox,
   deliveryFailureKey,
@@ -40,8 +39,7 @@ import {
   type SearchHit,
 } from "@/lib/sidebar-entries"
 import { isTypingTarget } from "@/lib/utils"
-import { createSurfaceChannel, type SurfaceMessage } from "@/surface-channel"
-import { readInitialRoute, readInitialWorkspaceId, type SurfaceRoute } from "@/surface"
+import type { SurfaceRoute } from "@/route"
 import type {
   BoardEntry,
   Repo,
@@ -114,14 +112,12 @@ function buildThreadMap(
 }
 
 function deriveLocation(
-  hostContext: HostContextV1 | null,
+  hostView: "workspace" | "thread",
+  threadId: string | undefined,
   route: SurfaceRoute,
   bindings: ReadonlyMap<string, ThreadBinding>,
 ): SidebarLocation {
-  const threadId = hostContext?.threadId
-  const nativeThreadVisible = hostContext?.view === "thread"
-  const legacyThreadVisible = hostContext?.view === undefined && Boolean(threadId)
-  if (!threadId || (!nativeThreadVisible && !legacyThreadVisible)) {
+  if (!threadId || hostView !== "thread") {
     return { kind: "workspace", route }
   }
   const binding = bindings.get(threadId)
@@ -513,13 +509,14 @@ function InboxPanel({
   )
 }
 
-export default function SidebarApp({ hostContext }: { hostContext: HostContextV1 | null }) {
-  const { t, lang } = useI18n()
+export default function SidebarApp() {
+  const { t } = useI18n()
+  const session = useWeftSession()
+  const workspaceId = session.workspaceId
+  const route = session.route
   const [workspaces, setWorkspaces] = React.useState<Workspace[]>([])
-  const [workspaceId, setWorkspaceId] = React.useState<number | null>(readInitialWorkspaceId)
   const [board, setBoard] = React.useState<BoardEntry[]>([])
   const [repos, setRepos] = React.useState<Repo[]>([])
-  const [route, setRoute] = React.useState<SurfaceRoute>(readInitialRoute)
   const [panel, setPanel] = React.useState<SidebarPanel>("none")
   const [query, setQuery] = React.useState("")
   const [failures, setFailures] = React.useState<DeliveryFailure[]>([])
@@ -532,21 +529,15 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
   const loadSequence = React.useRef(0)
   const resolveSequence = React.useRef(0)
   const stateRef = React.useRef({ workspaceId, route })
-  const channel = React.useMemo(createSurfaceChannel, [])
   const threadMap = React.useMemo(
     () => buildThreadMap(board, resolvedThreads),
     [board, resolvedThreads],
   )
   const location = React.useMemo(
-    () => deriveLocation(hostContext, route, threadMap),
-    [hostContext, route, threadMap],
+    () => deriveLocation(session.hostView, session.threadId, route, threadMap),
+    [session.hostView, session.threadId, route, threadMap],
   )
   stateRef.current = { workspaceId, route }
-
-  React.useEffect(() => {
-    document.documentElement.lang = lang
-    document.title = t("sidebar.title")
-  }, [lang, t])
 
   const reportError = React.useCallback((caught: unknown) => {
     setError(t("err.prefix") + errorText(caught, t("err.network"), t("err.unknown")))
@@ -555,11 +546,10 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
   const loadWorkspaces = React.useCallback(async () => {
     const rows = await api<Workspace[]>("/api/workspaces")
     setWorkspaces(rows)
-    setWorkspaceId((current) => {
-      if (current && rows.some((workspace) => workspace.id === current)) return current
-      return rows[0]?.id ?? null
-    })
-  }, [])
+    if (workspaceId && rows.some((workspace) => workspace.id === workspaceId)) return
+    const first = rows[0]?.id
+    if (first) session.setWorkspaceId(first)
+  }, [session, workspaceId])
 
   const loadWorkspace = React.useCallback(async (id: number) => {
     const sequence = loadSequence.current + 1
@@ -598,7 +588,7 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
   }, [workspaceId, loadWorkspace, reportError])
 
   React.useEffect(() => {
-    const source = new EventSource("/api/events")
+    const source = new EventSource(apiUrl("/api/events"))
     let timer: number | undefined
     let refreshWorkspaceList = false
     const scheduleRefresh = (event: Event) => {
@@ -653,30 +643,6 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
   }, [loadWorkspace, loadWorkspaces, reportError])
 
   React.useEffect(() => {
-    if (!channel) return
-    const receive = (message: SurfaceMessage) => {
-      if (message.type === "workspace.changed") {
-        setWorkspaceId(message.workspaceId)
-        return
-      }
-      if (message.type === "route.changed") {
-        setRoute({ view: message.view, issueId: message.issueId })
-        return
-      }
-      if (message.type === "surface.ready" && message.surface === "workspace") {
-        channel.post({ type: "state.request" })
-      }
-    }
-    const unsubscribe = channel.subscribe(receive)
-    channel.post({ type: "surface.ready", surface: "sidebar" })
-    channel.post({ type: "state.request" })
-    return () => {
-      unsubscribe()
-      channel.close()
-    }
-  }, [channel])
-
-  React.useEffect(() => {
     if (location.kind !== "unbound-thread") return
     const sequence = resolveSequence.current + 1
     resolveSequence.current = sequence
@@ -705,16 +671,15 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
         })
         setExpandedIssueId(response.binding.issue_id)
         if (response.workspaceId !== stateRef.current.workspaceId) {
-          setWorkspaceId(response.workspaceId)
-          setRoute({ view: "kanban", issueId: null })
-          channel?.post({ type: "workspace.select", workspaceId: response.workspaceId })
+          session.setWorkspaceId(response.workspaceId)
+          session.navigate({ view: "kanban", issueId: null })
         }
         return
       }
     }
     void resolve()
     return () => { cancelled = true }
-  }, [channel, location])
+  }, [location, session])
 
   let activeIssueId: number | null = null
   let activeThreadId: string | null = null
@@ -730,19 +695,13 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
   }, [activeIssueId])
 
   const navigate = React.useCallback((next: SurfaceRoute) => {
-    requestHostAction({ action: "workspace.show" })
-    setRoute(next)
-    channel?.post({ type: "navigate", view: next.view, issueId: next.issueId, artifactId: next.artifactId ?? null })
-  }, [channel])
+    session.navigate(next)
+  }, [session])
 
   const selectWorkspace = React.useCallback((id: number) => {
-    requestHostAction({ action: "workspace.show" })
-    setWorkspaceId(id)
-    setRoute({ view: "kanban", issueId: null })
     setExpandedIssueId(null)
-    channel?.post({ type: "workspace.select", workspaceId: id })
-    channel?.post({ type: "navigate", view: "kanban", issueId: null })
-  }, [channel])
+    session.selectWorkspace(id)
+  }, [session])
 
   const openThread = React.useCallback((threadId: string) => {
     setError("")
@@ -789,12 +748,14 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
   )
   const inboxItems = React.useMemo(() => buildInbox(board, failures), [board, failures])
 
-  useHostCommand((command) => {
-    setPanel(command === "search.open" ? "search" : "inbox")
-  })
+  React.useEffect(() => {
+    return session.host.onCommand((command) => {
+      setPanel(command === "search.open" ? "search" : "inbox")
+    })
+  }, [session.host])
 
-  // Slash searches whatever frame you are in — the same key the kanban filter
-  // uses. ⌘K is not ours to take: the host binds it to its command menu.
+  // Slash focuses Weft search. ⌘K is not ours to take: the host binds it to
+  // its command menu.
   React.useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
       if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return
@@ -807,7 +768,7 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
   }, [])
 
   // The host paints the badge but never counts: the board lives here.
-  React.useEffect(() => { reportInboxCount(inboxItems.length) }, [inboxItems.length])
+  React.useEffect(() => { session.host.setInboxCount(inboxItems.length) }, [inboxItems.length, session.host])
 
   const closePanel = React.useCallback(() => {
     setPanel("none")
@@ -871,7 +832,7 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
     openDirectionThread(item.issueId, item.directionId)
   }, [closePanel, openDirectionThread])
 
-  const headerActionsAreNative = hostContext?.headerActions === "native"
+  const headerActionsAreNative = session.headerActions === "native"
 
   let issueList: React.ReactNode
   if (loading && !board.length) {
@@ -940,11 +901,7 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
           size="icon-sm"
           aria-label={t("ws.add")}
           title={t("ws.add")}
-          disabled={!channel}
-          onClick={() => {
-            requestHostAction({ action: "workspace.show" })
-            channel?.post({ type: "command", command: "workspace.create" })
-          }}
+          onClick={() => session.openDialog({ type: "workspace" })}
         >
           <Plus aria-hidden="true" />
         </Button>
@@ -958,11 +915,7 @@ export default function SidebarApp({ hostContext }: { hostContext: HostContextV1
           <Button
             variant="ghost"
             className="sidebar-create-button"
-            disabled={!channel}
-            onClick={() => {
-              requestHostAction({ action: "workspace.show" })
-              channel?.post({ type: "command", command: "issue.create" })
-            }}
+            onClick={() => session.openDialog({ type: "issue" })}
           >
             <SquarePen aria-hidden="true" />
             {t("issue.create")}

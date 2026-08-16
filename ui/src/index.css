@@ -25,7 +25,8 @@
 
 /* Host tokens are the source of truth in Weft mode. Fallbacks keep the same
    visual hierarchy when this thin UI is opened in a standalone browser. */
-:root {
+:root,
+:host {
   color-scheme: dark;
   --fb-bg: #131313;
   --fb-panel: #181818;
@@ -46,7 +47,8 @@
 }
 
 @media (prefers-color-scheme: light) {
-  :root {
+  :root,
+  :host {
     color-scheme: light;
     --fb-bg: #fcfcfc;
     --fb-panel: #ffffff;
@@ -67,7 +69,8 @@
   }
 }
 
-:root[data-host-theme="dark"] {
+:root[data-host-theme="dark"],
+:host([data-host-theme="dark"]) {
   color-scheme: dark;
   --fb-bg: #131313;
   --fb-panel: #181818;
@@ -87,7 +90,8 @@
   --fb-hover: rgba(252, 252, 252, 0.08);
 }
 
-:root[data-host-theme="light"] {
+:root[data-host-theme="light"],
+:host([data-host-theme="light"]) {
   color-scheme: light;
   --fb-bg: #fcfcfc;
   --fb-panel: #ffffff;
@@ -107,7 +111,8 @@
   --fb-hover: rgba(13, 13, 13, 0.06);
 }
 
-:root {
+:root,
+:host {
   --bg: var(--vscode-sideBar-background, var(--fb-bg));
   --panel: var(--color-token-main-surface-primary, var(--fb-panel));
   --panel-2: var(--color-token-dropdown-background, var(--fb-panel-2));
@@ -411,57 +416,60 @@ a { color: var(--link); }
 
 /* ── app shell ─────────────────────────────────────────────────────── */
 
-html[data-ui-surface="sidebar"],
-html[data-ui-surface="sidebar"] body,
-html[data-ui-surface="sidebar"] #root {
+.weft-mount {
+  display: block;
   height: 100%;
   min-height: 100%;
-  /* Stay transparent so the host sidebar column (mode header + account footer)
-     and Weft content share one continuous surface — solid sideBar tokens are a
-     shade darker and create a visible band above the native footer. */
-  background: transparent;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
 }
 
-html[data-ui-surface="sidebar"] body {
+.weft-sidebar-mount {
+  background: transparent;
   overflow: hidden;
 }
 
-html[data-ui-surface="workspace"] body {
+.weft-workspace-mount,
+.embedded-main {
+  min-height: 100%;
   background: var(--color-token-main-surface-primary, var(--panel));
 }
 
-html[data-ui-surface="workspace"] #root,
-html[data-ui-surface="workspace"] .embedded-main {
-  min-height: 100dvh;
+.weft-overlay-mount {
+  position: relative;
+  height: 100%;
+  pointer-events: none;
 }
 
-/* The host mounts this dedicated iframe over the complete app window. Its
-   document must remain transparent; the Radix overlay is the only scrim, so
-   the real sidebar and workspace stay visible beneath it.
-   `color-scheme: dark` on this document paints Chromium's iframe canvas
-   black, which reads as a solid void behind the dialog. Keep the document
-   `normal` and theme the card instead. */
-html[data-ui-surface="modal"] {
-  color-scheme: normal;
+.weft-overlay-mount > * {
+  pointer-events: auto;
 }
-html[data-ui-surface="modal"],
-html[data-ui-surface="modal"] body,
-html[data-ui-surface="modal"] #root {
-  width: 100%;
-  height: 100%;
-  min-height: 100%;
-  background: transparent !important;
-  background-color: transparent !important;
+
+.weft-react-host {
+  pointer-events: none;
 }
-html[data-ui-surface="modal"] body {
-  padding: 0 !important;
-  overflow: hidden;
+
+.preview-shell {
+  display: flex;
+  min-height: 100vh;
 }
-html[data-ui-surface="modal"][data-host-theme="dark"] .modal-body {
-  color-scheme: dark;
+
+.preview-sidebar {
+  flex: 0 0 268px;
+  min-width: 0;
+  border-inline-end: 0.5px solid var(--border);
 }
-html[data-ui-surface="modal"][data-host-theme="light"] .modal-body {
-  color-scheme: light;
+
+.preview-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.modal-body {
+  color-scheme: inherit;
 }
 
 .sidebar-surface {
@@ -2125,7 +2133,7 @@ main {
 }
 
 @media (max-width: 720px) {
-  :root:not([data-ui-surface="sidebar"]) { --control-h: 44px; font-size: 14px; }
+  :root { --control-h: 44px; font-size: 14px; }
 
   #topbar {
     flex-wrap: wrap;

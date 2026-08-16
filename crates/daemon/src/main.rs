@@ -7,10 +7,11 @@
 //! (default 127.0.0.1:47810, `WEFTD_ADDR` override) → orchestrator bus
 //! delivery loop → ctrl-c shutdown.
 
+use axum::middleware::from_fn;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use weft_core::{
-    api, bus::BusRegistry, events, mcp, orchestrator::Orchestrator, runtime, store::Store,
+    api, bus::BusRegistry, cors, events, mcp, orchestrator::Orchestrator, runtime, store::Store,
 };
 
 /// Log a fatal startup error and exit cleanly (no panic/unwind).
@@ -93,10 +94,11 @@ async fn main() {
         store: store.clone(),
         task_dispatch: task_dispatch.clone(),
     };
-    let app = mcp::router(state).merge(api::router(api::ApiState { store, orch }));
-    let app = app
+    let app = mcp::router(state)
+        .merge(api::router(api::ApiState { store, orch }))
         .route("/", get(web_index))
-        .route("/web/{*path}", get(web_file));
+        .route("/web/{*path}", get(web_file))
+        .layer(from_fn(cors::layer));
 
     let listener = tokio::net::TcpListener::bind(&addr)
         .await

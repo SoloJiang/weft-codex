@@ -3,9 +3,6 @@ import type en from "./en"
 const zh = {
   "app.title": "工作区",
   "app.loading": "正在载入工作区…",
-  "surface.workspaceTitle": "工作区",
-  "surface.sidebarTitle": "工作区导航",
-  "surface.modalTitle": "弹窗",
   "nav.primary": "工作区导航",
   "nav.kanban": "看板",
   "nav.repos": "仓库",

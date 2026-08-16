@@ -1,9 +1,6 @@
 const en = {
   "app.title": "Workspace",
   "app.loading": "Loading workspace…",
-  "surface.workspaceTitle": "Workspace",
-  "surface.sidebarTitle": "Workspace navigation",
-  "surface.modalTitle": "Dialog",
   "nav.primary": "Workspace navigation",
   "nav.kanban": "Kanban",
   "nav.repos": "Repositories",
