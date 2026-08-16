@@ -387,6 +387,21 @@ textarea::placeholder {
   opacity: 1;
 }
 
+/**
+ * The UA's own clear button is not in the host's vocabulary.
+ *
+ * Codex ships no `type="search"` anywhere in its bundle, so the accent-coloured
+ * ✕ Chromium paints inside a search field answers to no token here — and in the
+ * sidebar panel it lands directly beneath the panel's own close control, which
+ * does something else entirely. The input keeps `type="search"` for its
+ * `searchbox` role; only the decoration goes.
+ */
+input[type="search"]::-webkit-search-cancel-button,
+input[type="search"]::-webkit-search-decoration {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
 /* Every semantic state travels on the ring — nothing here carries a border for
    a `border-color` to reach. */
 input[aria-invalid="true"],
