@@ -247,6 +247,7 @@ interface WeftHost {
   readonly view: "workspace" | "thread"
   readonly threadId?: string
   readonly weftdOrigin: string
+  readonly headerActions: "native" | "fallback"
   openThread(threadId: string): Promise<void>
   showWorkspace(): void
   pickRepositories(): Promise<string[]>
@@ -271,6 +272,9 @@ interface WeftHost {
 - `showWorkspace` 把 `view` 设回 workspace，主区 root 重新可见。
 - `pickRepositories` 走 macOS 原生文件夹对话框。React 不拿文件系统权限。
 - `setInboxCount` 只画头部角标。agent 不读原生铃铛状态。
+- `headerActions` 是 `native`（模式行槽位在，搜索 / 收件箱占原位）或
+  `fallback`（改画在 Weft 侧栏顶部）。槽位后出现时 agent 改
+  `data-weft-codex-header-actions`，React 跟着改。
 - `onCommand` / `onView` 返回取消订阅。agent 在卸树时必须取消。
 
 ### 8.3 CSS、token、shadow
@@ -429,8 +433,8 @@ UI 只读这些写路径。SSE 只作失效提示，真值重新 GET。
 | GET | `/api/events` | SSE |
 | GET | `/healthz` | daemon 活着 |
 
-同文档挂载后请求跨源。weftd 必须对 Desktop 宿主 origin 开 CORS，范围仅
-`/api/*` 与 `/healthz`：
+同文档挂载后请求跨源。weftd 必须对 Desktop 宿主 origin 开 CORS，范围
+`/api/*`、`/healthz` 与 `/web/*`（agent 用 `fetch` 读 library CSS）：
 
 - 允许 origin：`app://-`（及实测到的宿主 origin）。开发预览继续同源，不靠 CORS。
 - 方法：`GET` `POST` `OPTIONS`。

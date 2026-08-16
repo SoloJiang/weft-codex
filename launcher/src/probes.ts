@@ -1,6 +1,6 @@
 import type { CdpSession } from "./cdp.js"
 
-export type CompatibilityTier = "safe-mode" | "additive" | "weft-mode"
+export type CompatibilityTier = "safe-mode" | "weft-mode"
 
 export interface CapabilityProbe {
   id: string
@@ -130,7 +130,7 @@ const FAILURE_REASONS: Record<
   "sidebar.threadRow": "找不到 Codex 的会话行，逐会话增强不可用",
   "sidebar.threadRoute": "找不到 Codex 的会话标识，无法打开指定会话",
   "sidebar.threadActive": "无法识别当前打开的会话，Issue 归属解析不可用",
-  "mode.switcher": "找不到 Codex 的模式切换入口，Weft 模式改用回退按钮",
+  "mode.switcher": "找不到 Codex 的模式切换入口，无法进入 Weft",
   "sidebar.headerActionSlot": "Codex 侧边栏头部结构已变化，搜索与收件箱入口改在 Weft 侧边栏内显示",
   "host.locale": "无法读取 Codex 的界面语言",
   "titlebar.dragRegion": "未检测到原生标题栏拖拽区域",
@@ -231,7 +231,7 @@ function tokenProbe(snapshot: RendererSnapshot, id: string, token: string): Capa
  */
 function modeSwitcherProbe(snapshot: RendererSnapshot): CapabilityProbe {
   const id = "mode.switcher"
-  const requiredFor = "subtractive" as const
+  const requiredFor = "base" as const
   if (!snapshot.modeSwitcher) {
     return {
       id,
@@ -254,9 +254,7 @@ function modeSwitcherProbe(snapshot: RendererSnapshot): CapabilityProbe {
 }
 
 export function classifyCompatibility(probes: CapabilityProbe[]): CompatibilityTier {
-  if (probes.some((probe) => probe.requiredFor === "base" && !probe.ok)) return "safe-mode"
-  if (probes.some((probe) => probe.requiredFor === "additive" && !probe.ok)) return "safe-mode"
-  if (probes.some((probe) => probe.requiredFor === "subtractive" && !probe.ok)) return "additive"
+  if (probes.some((probe) => probe.requiredFor !== "optional" && !probe.ok)) return "safe-mode"
   return "weft-mode"
 }
 
@@ -265,26 +263,24 @@ export function reportFromSnapshot(snapshot: RendererSnapshot): ProbeReport {
     selectorProbe(snapshot, "renderer.root", "base"),
     selectorProbe(snapshot, "renderer.main", "base"),
     selectorProbe(snapshot, "sidebar.scroll", "base"),
-    selectorProbe(snapshot, "sidebar.section", "base"),
-    selectorProbe(snapshot, "sidebar.heading", "additive"),
+    selectorProbe(snapshot, "sidebar.section", "optional"),
+    selectorProbe(snapshot, "sidebar.heading", "optional"),
     ...Object.entries(TOKEN_PROBES).map(([id, token]) => tokenProbe(snapshot, id, token)),
-    // Reclassified from "optional" on 2026-08-10 (N0-01). These back concrete
-    // features — thread deep-link, per-row enhancement, active-thread→Issue
-    // resolution — so their loss must degrade to the additive tier rather than
-    // pass silently. All four are verified present on build 6321; see
-    // docs/compat/codex-builds.md §2.
+    // Thread anchors back deep-link and active-thread→Issue resolution. When
+    // conversations exist, their loss cannot enter Weft. All four are verified
+    // present on build 6321; see docs/compat/codex-builds.md §2.
     //
     // `sidebar.threadActive` was previously not probed at all, even though
     // activeThreadId() reads it and it is the sole input to Issue resolution.
-    // Structural: the create-project affordance is sidebar chrome, present
-    // regardless of what the user has done.
-    selectorProbe(snapshot, "sidebar.projectCreate", "subtractive"),
+    // Structural: the create-project affordance is leftover sidebar chrome and
+    // is no longer an enter-Weft condition.
+    selectorProbe(snapshot, "sidebar.projectCreate", "optional"),
     // Data-dependent: only assertable once conversations exist. See
-    // threadAnchorProbe — gating the tier on these unconditionally pinned every
-    // fresh profile to `additive`.
-    threadAnchorProbe(snapshot, "sidebar.threadRow", "subtractive"),
-    threadAnchorProbe(snapshot, "sidebar.threadRoute", "subtractive"),
-    threadAnchorProbe(snapshot, "sidebar.threadActive", "subtractive"),
+    // threadAnchorProbe — gating the tier on these unconditionally locked
+    // every fresh profile out of Weft.
+    threadAnchorProbe(snapshot, "sidebar.threadRow", "base"),
+    threadAnchorProbe(snapshot, "sidebar.threadRoute", "base"),
+    threadAnchorProbe(snapshot, "sidebar.threadActive", "base"),
     modeSwitcherProbe(snapshot),
     {
       id: "host.locale",
@@ -308,7 +304,7 @@ export function reportFromSnapshot(snapshot: RendererSnapshot): ProbeReport {
       detail: snapshot.titlebarDragRegion
         ? "Native titlebar drag region preserved"
         : "No native titlebar drag region detected",
-      requiredFor: "optional",
+      requiredFor: "base",
       ...(snapshot.titlebarDragRegion ? {} : { reason: FAILURE_REASONS["titlebar.dragRegion"] }),
     },
   ]

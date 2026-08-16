@@ -2,8 +2,7 @@
 
 产品形态与壳层以
 [`docs/specs/2026-08-16-weft-third-mode-design.md`](../docs/specs/2026-08-16-weft-third-mode-design.md)
-为准。当前源码仍是 08-08 的三 iframe Host；迁到同文档 `mountWeft` 之前，下列
-命令与探针仍然可用。
+为准。产品壳是三个 open shadow root + `mountWeft`。下列命令与探针是日常入口。
 
 Codex Desktop 的外置 Host。它不修改、重签名或覆盖官方应用，而是：
 
@@ -11,7 +10,7 @@ Codex Desktop 的外置 Host。它不修改、重签名或覆盖官方应用，�
 - 启动或复用 weftd；
 - 对当前发行版执行语义 capability probe；
 - 在 document-start 安装可重挂载的 Renderer Agent；
-- 将 Sidebar / Workspace iframe、Host Context、Weft 第三模式与原生线程路由接入；
+- 将三个 shadow root、`mountWeft`、Weft 第三模式与原生线程路由接入；
 - 退出时移除注入并回收自己启动的 Codex 与 weftd 子进程。
 
 基础检查：
@@ -48,6 +47,6 @@ runtime，不依赖源码 checkout；开发态才回退到仓库的 `target/`、
 与 `skills/`。Host 在 doctor/start/attach 时把产品 skill 同步进 `$CODEX_HOME/skills`，
 升级 runtime 且 skill `version` 变化后会刷新托管副本。Host 只是后台启动与注入进程，不提供第二个 App 表面。
 
-任何 base/additive capability 失败都会进入 safe mode；模式切换器不匹配时只降级为
-additive，并保留自有 Weft 入口。只有 iframe 被当前发行版 CSP 阻止时，Host 才对
-这个专用实例启用 CSP bypass，同时通过 Host Context 向 UI 暴露该安全状态。
+必过探针失败则不能进入 Weft（fail-closed）。没有 additive 产品路径。只有
+`connect-src` / `script-src` 拦住 loopback 时，Host 才对这个专用实例启用 CSP
+bypass；诊断只进 CLI，不进产品 UI。

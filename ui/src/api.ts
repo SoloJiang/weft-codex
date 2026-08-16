@@ -1,3 +1,16 @@
+let apiOrigin = ""
+
+export function configureApi(origin: string): void {
+  apiOrigin = origin.replace(/\/$/, "")
+}
+
+export function apiUrl(path: string): string {
+  if (!path.startsWith("/")) {
+    throw new Error("API path must be absolute")
+  }
+  return `${apiOrigin}${path}`
+}
+
 export class ApiError extends Error {
   status: number
   /**
@@ -24,7 +37,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     headers.set("content-type", "application/json")
   }
 
-  const response = await fetch(path, { ...options, headers })
+  const response = await fetch(apiUrl(path), { ...options, headers })
   const body = (await response.json().catch(() => ({}))) as Record<string, unknown>
   if (!response.ok) {
     const message = typeof body.error === "string" ? body.error : `HTTP ${response.status}`

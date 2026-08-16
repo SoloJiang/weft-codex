@@ -19,7 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
-import { hasHostBridge, pickRepositoryPaths } from "@/host-context"
+import { canPickFolders, useHost } from "@/host"
 import { useI18n } from "@/i18n"
 import type { DialogState, IssueKind, MessageIntent, RepoImportResponse } from "@/types"
 import { ISSUE_KINDS } from "@/types"
@@ -233,7 +233,8 @@ function RepositoryDialog({
   const [error, setError] = React.useState("")
   const [summary, setSummary] = React.useState("")
   const [picking, setPicking] = React.useState(false)
-  const nativePicker = React.useMemo(hasHostBridge, [])
+  const host = useHost()
+  const nativePicker = canPickFolders(host)
 
   const paths = React.useMemo(() => {
     const seen = new Set<string>()
@@ -248,12 +249,10 @@ function RepositoryDialog({
   }, [value])
 
   const chooseRepositories = async () => {
-    const request = pickRepositoryPaths()
-    if (!request) return
     setPicking(true)
     setError("")
     try {
-      const selected = await request
+      const selected = await host.pickRepositories()
       if (!selected.length) return
       setValue((current) => {
         const merged = new Set(current.split(/\r?\n/).map((path) => path.trim()).filter(Boolean))

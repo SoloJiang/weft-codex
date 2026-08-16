@@ -99,7 +99,8 @@ API 路径与全部文档，收益为负。
 **宿主是否需要上报 `projectId`？** 不上报，并且**建议移除** `HostContextV1` 中的
 `projectId` 占位字段。它在 `ui/src/host-context.ts` 被声明并校验，但 `launcher/src/renderer-agent.ts`
 从不填充、`ui/src` 也从无消费者——留着会让后来者误以为这条链路存在。移除属于独立的清理项，
-不在本 ADR 的范围内执行。
+不在本 ADR 的范围内执行。2026-08-16 同文档壳落地时 `host-context.ts` 已删除，见
+[ADR 0002](./0002-same-document-shell.md)。
 
 ## 备选方案与放弃理由
 

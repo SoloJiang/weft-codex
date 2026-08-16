@@ -4,17 +4,15 @@ export type HostMode = "work" | "codex" | "weft"
 
 const SIDEBAR_ROOT_ID = "weft-codex-sidebar-root"
 const WORKSPACE_ROOT_ID = "weft-codex-workspace-root"
-const MODAL_ROOT_ID = "weft-codex-modal-root"
+const OVERLAY_ROOT_ID = "weft-codex-overlay-root"
 const NATIVE_CHECK_ATTR = "data-weft-codex-native-mode-check"
 const HEADER_ACTION_ATTR = "data-weft-codex-header-action"
 const HEADER_BADGE_ATTR = "data-weft-codex-header-badge"
 
 export interface RendererAgentConfig {
   webBaseUrl: string
-  bridgeId: string
   bindingName: string
   initialMode: HostMode
-  compatibilityTier: "additive" | "weft-mode"
   cspBypass: boolean
 }
 
@@ -28,9 +26,6 @@ export function validateRendererAgentConfig(config: RendererAgentConfig): Render
     throw new Error("Renderer web URL must use loopback HTTP")
   }
   if (webUrl.username || webUrl.password) throw new Error("Renderer web URL cannot contain credentials")
-  if (!/^[a-zA-Z0-9._-]{1,128}$/.test(config.bridgeId)) {
-    throw new Error("Renderer bridge id is invalid")
-  }
   if (!/^[a-zA-Z_$][a-zA-Z0-9_$]{0,63}$/.test(config.bindingName)) {
     throw new Error("Renderer binding name is invalid")
   }
@@ -48,9 +43,9 @@ function serializeForScript(value: unknown): string {
 }
 
 /**
- * Build the document-start renderer agent. The script intentionally has no
- * imports and no dependency on Codex's React tree. It only uses semantic DOM
- * anchors verified by the capability probe.
+ * Build the document-start renderer agent. The script has no imports and no
+ * dependency on Codex's React tree. It mounts three shadow roots and calls
+ * `WeftCodex.mountWeft`.
  */
 export function buildRendererAgentSource(input: RendererAgentConfig): string {
   const config = validateRendererAgentConfig(input)
@@ -65,14 +60,13 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
     const allowedTokens = ${serializedTokens};
     const SIDEBAR_ROOT_ID = "weft-codex-sidebar-root";
     const WORKSPACE_ROOT_ID = "weft-codex-workspace-root";
-    const MODAL_ROOT_ID = "weft-codex-modal-root";
+    const OVERLAY_ROOT_ID = "weft-codex-overlay-root";
     const STYLE_ID = "weft-codex-host-style";
     const MODE_ITEM_ATTR = "data-weft-codex-mode-item";
     const NATIVE_CHECK_ATTR = "data-weft-codex-native-mode-check";
     const HEADER_ACTION_ATTR = "data-weft-codex-header-action";
     const HEADER_BADGE_ATTR = "data-weft-codex-header-badge";
     const THREAD_OPEN_RETRY_DELAYS = [0, 80, 160, 320, 640, 1000, 1800];
-    const childOrigin = new URL(config.webBaseUrl).origin;
     const previous = window[GLOBAL_KEY];
     if (previous && typeof previous.dispose === "function") previous.dispose();
 
@@ -83,28 +77,28 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       cspBypass: Boolean(config.cspBypass),
       sidebarRoot: null,
       workspaceRoot: null,
-      sidebarFrame: null,
-      workspaceFrame: null,
-      modalRoot: null,
-      modalFrame: null,
-      dialogState: null,
-      modalVisible: false,
-      modalBackground: new Map(),
+      overlayRoot: null,
+      sidebarShadow: null,
+      workspaceShadow: null,
+      overlayShadow: null,
+      unmount: null,
+      uiReady: false,
+      loadingWeft: false,
+      weftCss: "",
       modeButton: null,
       savedModeButton: null,
       headerActionsMounted: false,
       inboxCount: 0,
       usedLengths: new Map(),
+      commandHandlers: new Set(),
+      viewHandlers: new Set(),
+      pendingPick: new Map(),
       mutationObserver: null,
       resizeObserver: null,
       mediaQuery: null,
-      readyFrames: new Set(),
-      pendingActions: new Map(),
       mountTimer: 0,
-      contextTimer: 0,
       disposed: false,
       started: false,
-      messageListener: null,
       clickListener: null,
       mediaListener: null,
     };
@@ -115,8 +109,16 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       try {
         binding(JSON.stringify({ version: 1, type, ...payload }));
       } catch {
-        // The launcher may be reconnecting. DOM integration remains usable.
+        // The launcher may be reconnecting.
       }
+    }
+
+    function weftdOrigin() {
+      return new URL(config.webBaseUrl).origin;
+    }
+
+    function weftAsset(name) {
+      return weftdOrigin() + "/web/" + name;
     }
 
     function modeButton() {
@@ -190,18 +192,6 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       if (button.getAttribute("aria-label") !== aria) button.setAttribute("aria-label", aria);
     }
 
-    /**
-     * The container the native header actions (search, activity) live in.
-     *
-     * Located structurally, on purpose. Those buttons carry no
-     * data-app-action-* attribute of their own, and their only distinguishing
-     * mark is aria-label — which is locale text, so anchoring on it would break
-     * on any host language but the one we happened to probe. What is stable is
-     * the shape: the mode row holds the switcher plus exactly one sibling
-     * container, and that container carries the ms-auto alignment that keeps
-     * these controls flush right. Requiring exactly one sibling fails closed if
-     * that shape ever changes.
-     */
     function actionSlot(button) {
       if (!(button instanceof HTMLElement)) return null;
       const modeRow = button.parentElement;
@@ -221,9 +211,6 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         if (!(child instanceof HTMLElement) || child === modeRow) continue;
         child.dataset.weftCodexNativeHeaderAction = "";
       }
-      // The action slot lives *inside* the mode row, so the loop above never
-      // reaches it. Mark its children rather than the slot itself: the slot
-      // carries the alignment our own entries inherit by sitting in it.
       const slot = actionSlot(button);
       if (!(slot instanceof HTMLElement)) return;
       for (const child of slot.children) {
@@ -238,14 +225,6 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       return locale.toLowerCase().startsWith("zh");
     }
 
-    /**
-     * Weft's two header entries, in the slot the native ones vacated.
-     *
-     * They are triggers and a number, nothing more: the panels render inside
-     * the sidebar iframe where React, i18n and the design tokens already live.
-     * Spec §7.6 keeps the renderer a thin surface agent, so it must not grow a
-     * second place that knows how to draw a list of Weft data.
-     */
     const HEADER_ACTIONS = [
       {
         key: "search",
@@ -279,13 +258,6 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       return svg;
     }
 
-    /**
-     * Clone a native control so ours inherit the host's sizing, hover, focus
-     * ring and theme without us restating any of it — the same trick
-     * createWeftMenuItem uses for the mode menu. The native actions are hidden,
-     * not removed, so they stay available as templates; the mode switcher is
-     * the fallback because it carries the identical class string.
-     */
     function headerActionTemplate(slot, button) {
       const native = [...slot.querySelectorAll("button")]
         .find((candidate) => !candidate.hasAttribute(HEADER_ACTION_ATTR));
@@ -320,6 +292,19 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       if (badge.textContent !== text) badge.textContent = text;
     }
 
+    function dispatchHostCommand(command) {
+      for (const handler of state.commandHandlers) {
+        try { handler(command); } catch { /* React handler */ }
+      }
+    }
+
+    function notifyView() {
+      const threadId = activeThreadId();
+      for (const handler of state.viewHandlers) {
+        try { handler(state.view, threadId); } catch { /* React handler */ }
+      }
+    }
+
     function createHeaderAction(template, action) {
       const clone = template.cloneNode(true);
       if (!(clone instanceof HTMLElement)) return null;
@@ -343,15 +328,11 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       clone.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        postSurfaceCommand(action.command);
+        dispatchHostCommand(action.command);
       });
       return clone;
     }
 
-    /**
-     * Idempotent: React re-renders the header, so this runs on every mount pass
-     * and must converge rather than accumulate.
-     */
     function ensureHeaderActions(button) {
       const slot = actionSlot(button);
       if (!(slot instanceof HTMLElement)) {
@@ -369,8 +350,6 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         const selector = '[' + HEADER_ACTION_ATTR + '="' + action.key + '"]';
         const existing = slot.querySelector(":scope > " + selector);
         if (existing instanceof HTMLElement) continue;
-        // A stale copy can survive a re-render that moved the slot; drop it
-        // before appending so the pair never doubles up.
         for (const orphan of document.querySelectorAll(selector)) orphan.remove();
         const created = createHeaderAction(template, action);
         if (created) slot.append(created);
@@ -395,15 +374,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       const values = {
         weftCodexMode: state.mode,
         weftCodexView: state.view,
-        // Spec §7.5 splits mounting into Tier 1 (additive, native UI untouched)
-        // and Tier 2 (weft-mode, subtractive). Publishing the tier here is what
-        // lets the stylesheet fail open: every subtractive rule is scoped to
-        // tier="weft-mode", so a failed subtractive probe cannot hide native UI.
-        weftCodexTier: config.compatibilityTier,
-        weftCodexModeCapability: state.modeButton ? "native" : "fallback",
-        // Deliberately not part of the tier. Losing the action slot must only
-        // move where the two Weft entries render — the sidebar draws its own
-        // pair instead — never cost the whole Weft sidebar (compat §5.8).
+        weftCodexTier: "weft-mode",
         weftCodexHeaderActions: state.headerActionsMounted ? "native" : "fallback",
         weftCodexCspBypass: state.cspBypass ? "true" : "false",
       };
@@ -420,7 +391,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         state.mode = "weft";
         if (state.modeButton) applyWeftModeButton(state.modeButton);
       } else {
-        dismissDialog();
+        unmountWeft();
         state.mode = nextMode;
         state.nativeMode = nextMode;
         state.view = "workspace";
@@ -428,8 +399,9 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       }
       setDocumentState();
       syncModeMenus();
-      publishContextSoon();
+      notifyView();
       if (changed && persist) notifyHost("mode.changed", { mode: nextMode });
+      if (nextMode === "weft") void ensureWeftMounted();
     }
 
     function setView(nextView) {
@@ -437,157 +409,18 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       if (state.view === nextView) return;
       state.view = nextView;
       setDocumentState();
-      publishContextSoon();
+      notifyView();
     }
 
-    function surfaceUrl(surface) {
-      const url = new URL(config.webBaseUrl);
-      url.searchParams.set("surface", surface);
-      url.searchParams.set("bridge_id", config.bridgeId);
-      url.searchParams.set("host_origin", location.origin);
-      url.searchParams.set("host_version", "1");
-      if (state.cspBypass) url.searchParams.set("csp_bypass", "1");
-      return url.href;
+    function ensureShadow(root) {
+      if (root.shadowRoot) return root.shadowRoot;
+      return root.attachShadow({ mode: "open" });
     }
 
-    function createFrame(surface) {
-      const frame = document.createElement("iframe");
-      frame.dataset.weftCodexSurface = surface;
-      // The child publishes its localized accessible name after receiving the
-      // host locale. Use the product name only during the short handshake so
-      // no user-facing locale string is duplicated in the launcher bundle.
-      frame.title = "Weft";
-      frame.src = surfaceUrl(surface);
-      frame.referrerPolicy = "no-referrer";
-      frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
-      frame.setAttribute("allow", "clipboard-read; clipboard-write");
-      frame.addEventListener("load", () => {
-        if (surface === "modal") {
-          state.modalVisible = false;
-          syncModalRoot();
-        }
-        publishContextSoon();
-      });
-      return frame;
-    }
-
-    function isDialogState(value) {
-      if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-      if (value.type === "workspace" || value.type === "issue" || value.type === "repositories") {
-        return true;
-      }
-      if (value.type !== "message") return false;
-      if (value.target !== "lead" && value.target !== "task") return false;
-      if (value.intent !== "message" && value.intent !== "continue") return false;
-      return Number.isInteger(value.id) && value.id > 0;
-    }
-
-    function syncModalRoot() {
-      const root = state.modalRoot;
+    function decorateHost(root) {
       if (!(root instanceof HTMLElement)) return;
-      const open = Boolean(state.modalVisible && state.dialogState);
-      const openValue = open ? "true" : "false";
-      const hiddenValue = open ? "false" : "true";
-      if (root.dataset.open !== openValue) root.dataset.open = openValue;
-      if (root.getAttribute("aria-hidden") !== hiddenValue) {
-        root.setAttribute("aria-hidden", hiddenValue);
-      }
-      if (open) isolateModalBackground(root);
-      else restoreModalBackground();
-    }
-
-    function isolateModalBackground(root) {
-      const parent = root.parentElement;
-      if (!parent) return;
-      for (const sibling of parent.children) {
-        if (!(sibling instanceof HTMLElement) || sibling === root) continue;
-        if (!state.modalBackground.has(sibling)) {
-          state.modalBackground.set(sibling, {
-            inert: sibling.inert,
-            ariaHidden: sibling.getAttribute("aria-hidden"),
-          });
-        }
-        if (!sibling.inert) sibling.inert = true;
-        if (sibling.getAttribute("aria-hidden") !== "true") {
-          sibling.setAttribute("aria-hidden", "true");
-        }
-      }
-    }
-
-    function restoreModalBackground() {
-      for (const [element, previous] of state.modalBackground) {
-        if (!element.isConnected) continue;
-        if (element.inert !== previous.inert) element.inert = previous.inert;
-        if (previous.ariaHidden === null) {
-          if (element.hasAttribute("aria-hidden")) element.removeAttribute("aria-hidden");
-        } else if (element.getAttribute("aria-hidden") !== previous.ariaHidden) {
-          element.setAttribute("aria-hidden", previous.ariaHidden);
-        }
-      }
-      state.modalBackground.clear();
-    }
-
-    function ensureModalRoot() {
-      let root = state.modalRoot;
-      if (!(root instanceof HTMLElement)) {
-        root = document.createElement("div");
-        root.id = MODAL_ROOT_ID;
-        root.dataset.weftCodexHostSurface = "modal";
-        root.dataset.open = "false";
-        root.setAttribute("aria-hidden", "true");
-        const frame = createFrame("modal");
-        root.append(frame);
-        state.modalRoot = root;
-        state.modalFrame = frame;
-      }
-      const parent = document.body || document.documentElement;
-      if (root.parentElement !== parent) parent.append(root);
-      syncModalRoot();
-      return true;
-    }
-
-    function postDialogState() {
-      const frame = state.modalFrame;
-      if (!(frame instanceof HTMLIFrameElement) || !frame.contentWindow) return;
-      frame.contentWindow.postMessage({
-        source: "weft-codex-host",
-        type: "weft:dialog-state",
-        payload: state.dialogState,
-      }, childOrigin);
-    }
-
-    function presentDialog(dialog) {
-      if (!isDialogState(dialog)) return false;
-      ensureModalRoot();
-      state.dialogState = dialog;
-      state.modalVisible = false;
-      syncModalRoot();
-      postDialogState();
-      return true;
-    }
-
-    function mountDialog() {
-      if (!state.dialogState) return false;
-      state.modalVisible = true;
-      syncModalRoot();
-      return true;
-    }
-
-    function dismissDialog() {
-      state.modalVisible = false;
-      state.dialogState = null;
-      syncModalRoot();
-      postDialogState();
-    }
-
-    function createFallbackButton() {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "weft-codex-fallback-button";
-      button.dataset.weftCodexFallback = "";
-      button.textContent = "Weft";
-      button.addEventListener("click", () => setMode("weft"));
-      return button;
+      root.dataset.hostTheme = resolvedTheme();
+      applyRadiusTokens(root);
     }
 
     function ensureSidebarRoot() {
@@ -598,13 +431,11 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         root = document.createElement("div");
         root.id = SIDEBAR_ROOT_ID;
         root.dataset.weftCodexHostSurface = "sidebar";
-        root.append(createFallbackButton());
-        const frame = createFrame("sidebar");
-        root.append(frame);
         state.sidebarRoot = root;
-        state.sidebarFrame = frame;
+        state.sidebarShadow = ensureShadow(root);
       }
       if (root.parentElement !== sidebar) sidebar.append(root);
+      decorateHost(root);
       return true;
     }
 
@@ -618,10 +449,8 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         root = document.createElement("div");
         root.id = WORKSPACE_ROOT_ID;
         root.dataset.weftCodexHostSurface = "workspace";
-        const frame = createFrame("workspace");
-        root.append(frame);
         state.workspaceRoot = root;
-        state.workspaceFrame = frame;
+        state.workspaceShadow = ensureShadow(root);
       }
       if (root.parentElement !== mainRoute) mainRoute.append(root);
       const mainRect = mainRoute.getBoundingClientRect();
@@ -635,7 +464,168 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       }
       const topValue = Math.max(0, Math.round(top)) + "px";
       if (root.style.top !== topValue) root.style.top = topValue;
+      decorateHost(root);
       return true;
+    }
+
+    function ensureOverlayRoot() {
+      let root = state.overlayRoot;
+      if (!(root instanceof HTMLElement)) {
+        root = document.createElement("div");
+        root.id = OVERLAY_ROOT_ID;
+        root.dataset.weftCodexHostSurface = "overlay";
+        document.documentElement.append(root);
+        state.overlayRoot = root;
+        state.overlayShadow = ensureShadow(root);
+      }
+      if (!root.isConnected) document.documentElement.append(root);
+      decorateHost(root);
+      return true;
+    }
+
+    function adoptCss(shadow, cssText) {
+      let style = shadow.querySelector("style[data-weft-codex-css]");
+      if (!(style instanceof HTMLStyleElement)) {
+        style = document.createElement("style");
+        style.dataset.weftCodexCss = "";
+        shadow.prepend(style);
+      }
+      if (style.textContent !== cssText) style.textContent = cssText;
+    }
+
+    function usedLength(value, rootFontSize) {
+      if (!value || value.includes("%")) return value;
+      const key = rootFontSize + "|" + value;
+      const cached = state.usedLengths.get(key);
+      if (cached !== undefined) return cached;
+      const probe = document.createElement("div");
+      probe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none";
+      probe.style.borderTopLeftRadius = value;
+      document.documentElement.append(probe);
+      const used = getComputedStyle(probe).borderTopLeftRadius || value;
+      probe.remove();
+      state.usedLengths.set(key, used);
+      return used;
+    }
+
+    function applyRadiusTokens(root) {
+      const style = getComputedStyle(document.documentElement);
+      const rootFontSize = style.fontSize;
+      for (const token of allowedTokens) {
+        if (!token.startsWith("--radius")) continue;
+        const value = style.getPropertyValue(token).trim();
+        if (!value) continue;
+        const px = usedLength(value, rootFontSize);
+        root.style.setProperty(token, px);
+        root.style.setProperty(token.replace("--radius-", "--r-"), px);
+      }
+    }
+
+    function resolvedTheme() {
+      const root = document.documentElement;
+      if (root.classList.contains("electron-light")) return "light";
+      if (root.classList.contains("electron-dark")) return "dark";
+      const scheme = getComputedStyle(root).colorScheme.toLowerCase();
+      return scheme.includes("light") && !scheme.includes("dark") ? "light" : "dark";
+    }
+
+    function loadScript(src) {
+      const existing = document.querySelector('script[data-weft-codex-bundle="true"]');
+      if (existing && window.WeftCodex && typeof window.WeftCodex.mountWeft === "function") {
+        return Promise.resolve();
+      }
+      if (existing) existing.remove();
+      return new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = src;
+        script.dataset.weftCodexBundle = "true";
+        script.onload = () => resolve();
+        script.onerror = () => {
+          script.remove();
+          reject(new Error("Failed to load Weft bundle"));
+        };
+        document.documentElement.append(script);
+      });
+    }
+
+    function createHost() {
+      return {
+        get locale() { return document.documentElement.lang || ""; },
+        get view() { return state.view; },
+        get threadId() { return activeThreadId(); },
+        get weftdOrigin() { return weftdOrigin(); },
+        get headerActions() { return state.headerActionsMounted ? "native" : "fallback"; },
+        openThread(threadId) {
+          return openNativeThread(threadId).then((ok) => {
+            if (ok) return;
+            notifyHost("thread.open.missing", { threadId });
+            throw new Error("Thread is not in the Codex sidebar yet");
+          });
+        },
+        showWorkspace() { setView("workspace"); },
+        pickRepositories() {
+          return new Promise((resolve, reject) => {
+            const requestId = typeof crypto.randomUUID === "function"
+              ? crypto.randomUUID()
+              : String(Date.now());
+            state.pendingPick.set(requestId, { resolve, reject });
+            notifyHost("repositories.pick", { requestId });
+          });
+        },
+        setInboxCount(count) { setInboxCount(count); },
+        onCommand(handler) {
+          state.commandHandlers.add(handler);
+          return () => state.commandHandlers.delete(handler);
+        },
+        onView(handler) {
+          state.viewHandlers.add(handler);
+          handler(state.view, activeThreadId());
+          return () => state.viewHandlers.delete(handler);
+        },
+      };
+    }
+
+    function unmountWeft() {
+      if (typeof state.unmount === "function") {
+        try { state.unmount(); } catch { /* already gone */ }
+      }
+      state.unmount = null;
+      state.uiReady = false;
+    }
+
+    async function ensureWeftMounted() {
+      if (state.disposed || state.mode !== "weft") return false;
+      if (state.unmount) return true;
+      if (!state.sidebarShadow || !state.workspaceShadow || !state.overlayShadow) return false;
+      if (state.loadingWeft) return false;
+      state.loadingWeft = true;
+      try {
+        if (!state.weftCss) {
+          const response = await fetch(weftAsset("weft.css"));
+          if (!response.ok) throw new Error("weft css " + response.status);
+          state.weftCss = await response.text();
+        }
+        for (const root of [state.sidebarShadow, state.workspaceShadow, state.overlayShadow]) {
+          adoptCss(root, state.weftCss);
+        }
+        await loadScript(weftAsset("weft.js"));
+        const api = window.WeftCodex;
+        if (!api || typeof api.mountWeft !== "function") throw new Error("WeftCodex.mountWeft missing");
+        state.unmount = api.mountWeft({
+          sidebar: state.sidebarShadow,
+          main: state.workspaceShadow,
+          overlay: state.overlayShadow,
+          host: createHost(),
+        });
+        state.uiReady = true;
+        notifyHost("ui.ready");
+        return true;
+      } catch (error) {
+        notifyHost("ui.error", { error: String(error && error.message ? error.message : error) });
+        return false;
+      } finally {
+        state.loadingWeft = false;
+      }
     }
 
     function installStyles() {
@@ -649,18 +639,6 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
           min-height: 0;
           width: 100%;
         }
-        #${SIDEBAR_ROOT_ID} > iframe,
-        #${WORKSPACE_ROOT_ID} > iframe,
-        #${MODAL_ROOT_ID} > iframe {
-          width: 100%;
-          height: 100%;
-          min-width: 0;
-          min-height: 0;
-          border: 0;
-          background: transparent;
-          color-scheme: inherit;
-        }
-        #${SIDEBAR_ROOT_ID} > iframe { display: none; }
         #${WORKSPACE_ROOT_ID} {
           position: absolute;
           inset-inline: 0;
@@ -672,35 +650,21 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
           overflow: hidden;
           background: var(--color-token-main-surface-primary);
         }
-        /* Dialogs live in a third host-level surface. Sidebar and workspace
-           never move or change opacity, so the scrim covers the real complete
-           window without replacing either underlying surface. */
-        #${MODAL_ROOT_ID} {
+        #${OVERLAY_ROOT_ID} {
           position: fixed;
           inset: 0;
           z-index: var(--weft-layer-modal, 10000);
-          visibility: hidden;
           pointer-events: none;
         }
-        #${MODAL_ROOT_ID}[data-open="true"] {
-          visibility: visible;
-          pointer-events: auto;
-        }
-        #${MODAL_ROOT_ID} > iframe {
-          display: block;
-          background: transparent !important;
-          color-scheme: normal !important;
-        }
-        /* Tier 2 only. Every rule that hides or reflows native chrome is gated
-           on tier="weft-mode"; a failed subtractive probe leaves the host UI
-           untouched instead of hiding it (spec §7.5 fail-open). */
         html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] [data-app-action-sidebar-scroll] {
           gap: 0 !important;
           overflow: hidden !important;
           background: transparent !important;
         }
-        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] #${SIDEBAR_ROOT_ID},
-        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] #${SIDEBAR_ROOT_ID} > iframe {
+        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] #${SIDEBAR_ROOT_ID} {
+          display: flex;
+          flex: 1 1 auto;
+          height: 100%;
           background: transparent !important;
         }
         html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] [data-weft-codex-native-header-action] {
@@ -709,62 +673,12 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] [data-app-action-sidebar-scroll] > :not(#${SIDEBAR_ROOT_ID}) {
           display: none !important;
         }
-        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] #${SIDEBAR_ROOT_ID} {
-          display: flex;
-          flex: 1 1 auto;
-          height: 100%;
-        }
-        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] #${SIDEBAR_ROOT_ID} > iframe {
-          display: block;
-          flex: 1 1 auto;
-        }
-        /* Tier 1: native sidebar keeps every row; Weft only appends an entry
-           that opens the workspace overlay. */
-        html[data-weft-codex-tier="additive"][data-weft-codex-mode="weft"] #${SIDEBAR_ROOT_ID} {
-          display: block;
-          flex: 0 0 auto;
-          height: 30px;
-          padding: 0 var(--padding-row-x, 8px);
-        }
-        html[data-weft-codex-tier="additive"][data-weft-codex-mode="weft"] .weft-codex-fallback-button {
-          display: block;
-        }
         html[data-weft-codex-mode="weft"][data-weft-codex-view="workspace"] #${WORKSPACE_ROOT_ID} {
-          display: block;
-        }
-        html[data-weft-codex-mode-capability="fallback"]:not([data-weft-codex-mode="weft"]) #${SIDEBAR_ROOT_ID} {
-          display: block;
-          flex: 0 0 auto;
-          height: 30px;
-          padding: 0 var(--padding-row-x, 8px);
-        }
-        .weft-codex-fallback-button {
-          display: none;
-          width: 100%;
-          height: 30px;
-          padding: 0 var(--padding-row-cell-x, 8px);
-          border: 0;
-          border-radius: var(--radius-token-row, 10px);
-          background: transparent;
-          color: var(--color-token-foreground);
-          font: inherit;
-          text-align: start;
-          cursor: pointer;
-        }
-        .weft-codex-fallback-button:hover,
-        .weft-codex-fallback-button:focus-visible {
-          background: var(--color-token-list-hover-background);
-          outline: none;
-        }
-        html[data-weft-codex-mode-capability="fallback"]:not([data-weft-codex-mode="weft"]) .weft-codex-fallback-button {
           display: block;
         }
         html[data-weft-codex-mode="weft"] [${NATIVE_CHECK_ATTR}] {
           display: none !important;
         }
-        /* Ours are the mirror image of the native actions: shown only where the
-           natives are hidden. Both halves are gated on tier="weft-mode", so a
-           failed subtractive probe leaves the header entirely native. */
         html:not([data-weft-codex-tier="weft-mode"]) [${HEADER_ACTION_ATTR}],
         html:not([data-weft-codex-mode="weft"]) [${HEADER_ACTION_ATTR}] {
           display: none !important;
@@ -865,7 +779,6 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       item.setAttribute("tabindex", "-1");
       item.removeAttribute("aria-labelledby");
       for (const identified of item.querySelectorAll("[id]")) identified.removeAttribute("id");
-
       const leafSpans = [...item.querySelectorAll("span")].filter((span) => !span.querySelector("span"));
       if (leafSpans[0]) leafSpans[0].textContent = "Weft";
       const locale = (document.documentElement.lang || navigator.language || "en").toLowerCase();
@@ -913,144 +826,6 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       return separator >= 0 ? value.slice(separator + 1) : value;
     }
 
-    function resolvedTheme() {
-      const root = document.documentElement;
-      if (root.classList.contains("electron-light")) return "light";
-      if (root.classList.contains("electron-dark")) return "dark";
-      const scheme = getComputedStyle(root).colorScheme.toLowerCase();
-      return scheme.includes("light") && !scheme.includes("dark") ? "light" : "dark";
-    }
-
-    /**
-     * Resolve a token to absolute pixels before forwarding it.
-     *
-     * The host states its radii in rem (build 6321: calc(.375rem * 1.25)), and
-     * rem resolves against the *consuming* document's root font size. The Weft
-     * surfaces set 13px where the host uses 16px, so forwarding the string made
-     * every corner land 19% tighter than the host draws it — 6.09px against
-     * 7.5px. Measuring the used value here is what makes the two agree.
-     */
-    function usedLength(value, rootFontSize) {
-      // Percentages resolve against the box, not the font, so a zero-sized
-      // probe would answer 0px. Leave those alone.
-      if (!value || value.includes("%")) return value;
-      const key = rootFontSize + "|" + value;
-      const cached = state.usedLengths.get(key);
-      if (cached !== undefined) return cached;
-      const probe = document.createElement("div");
-      probe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none";
-      probe.style.borderTopLeftRadius = value;
-      document.documentElement.append(probe);
-      const used = getComputedStyle(probe).borderTopLeftRadius || value;
-      probe.remove();
-      // Keyed by root font size so a zoom change re-measures instead of
-      // serving a stale answer; the probe forces a layout, and context is
-      // published on every mutation, so this must not run each time.
-      state.usedLengths.set(key, used);
-      return used;
-    }
-
-    function hostContext() {
-      const root = document.documentElement;
-      const style = getComputedStyle(root);
-      const tokens = {};
-      const rootFontSize = style.fontSize;
-      for (const token of allowedTokens) {
-        const value = style.getPropertyValue(token).trim();
-        if (!value) continue;
-        tokens[token] = token.startsWith("--radius") ? usedLength(value, rootFontSize) : value;
-      }
-      const sidebar = document.querySelector("[data-app-action-sidebar-scroll]");
-      const sidebarCollapsed = !(sidebar instanceof HTMLElement) || sidebar.getBoundingClientRect().width < 40;
-      const context = {
-        version: 1,
-        theme: resolvedTheme(),
-        locale: root.lang || navigator.language || "en",
-        tokens,
-        mode: state.mode,
-        view: state.view,
-        sidebarCollapsed,
-        // "fallback" tells the sidebar to draw the search and inbox entries in
-        // its own header: the capability must survive a host that no longer
-        // offers a slot to put them in, even if the placement cannot.
-        headerActions: state.headerActionsMounted ? "native" : "fallback",
-        security: { cspBypass: state.cspBypass },
-      };
-      const threadId = activeThreadId();
-      if (threadId) context.threadId = threadId;
-      return context;
-    }
-
-    function frameForSource(source) {
-      if (state.sidebarFrame && source === state.sidebarFrame.contentWindow) return state.sidebarFrame;
-      if (state.workspaceFrame && source === state.workspaceFrame.contentWindow) return state.workspaceFrame;
-      if (state.modalFrame && source === state.modalFrame.contentWindow) return state.modalFrame;
-      return null;
-    }
-
-    function postContext(frame, targetOrigin = childOrigin) {
-      if (!(frame instanceof HTMLIFrameElement) || !frame.contentWindow) return;
-      frame.contentWindow.postMessage({
-        source: "weft-codex-host",
-        type: "weft:host-context",
-        payload: hostContext(),
-      }, targetOrigin);
-    }
-
-    function publishContext() {
-      if (state.disposed) return;
-      postContext(state.sidebarFrame);
-      postContext(state.workspaceFrame);
-      postContext(state.modalFrame);
-    }
-
-    /**
-     * Header entries are triggers only; the sidebar owns the panel. One-way and
-     * unacknowledged on purpose — there is nothing for the host to do if the
-     * frame is still loading except let the human click again.
-     */
-    function postSurfaceCommand(command) {
-      const frame = state.sidebarFrame;
-      if (!(frame instanceof HTMLIFrameElement) || !frame.contentWindow) return;
-      frame.contentWindow.postMessage({
-        source: "weft-codex-host",
-        type: "weft:host-command",
-        version: 1,
-        command,
-      }, childOrigin);
-    }
-
-    function publishContextSoon() {
-      if (state.contextTimer) window.clearTimeout(state.contextTimer);
-      state.contextTimer = window.setTimeout(() => {
-        state.contextTimer = 0;
-        publishContext();
-      }, 40);
-    }
-
-    function actionResult(frame, requestId, ok, error, result) {
-      if (!(frame instanceof HTMLIFrameElement) || !frame.contentWindow) return;
-      const payload = { source: "weft-codex-host", type: "weft:host-action-result", requestId, ok };
-      if (error) payload.error = error;
-      if (result !== undefined) payload.result = result;
-      frame.contentWindow.postMessage(payload, childOrigin);
-    }
-
-    function deliverActionResult(requestId, response) {
-      if (typeof requestId !== "string" || !response || typeof response !== "object") return false;
-      const frame = state.pendingActions.get(requestId);
-      if (!(frame instanceof HTMLIFrameElement)) return false;
-      state.pendingActions.delete(requestId);
-      const ok = response.ok === true;
-      const error = typeof response.error === "string" ? response.error : undefined;
-      actionResult(frame, requestId, ok, error, response.result);
-      return true;
-    }
-
-    function validThreadId(value) {
-      return typeof value === "string" && /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(value);
-    }
-
     function nativeThreadRow(threadId) {
       const rows = [...document.querySelectorAll("[data-app-action-sidebar-thread-id]")];
       return rows.find((candidate) => {
@@ -1072,85 +847,6 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       return false;
     }
 
-    function onFrameMessage(event) {
-      if (event.origin !== childOrigin || !event.data || typeof event.data !== "object") return;
-      const frame = frameForSource(event.source);
-      if (!frame) return;
-      const message = event.data;
-      if (message.source !== "weft-codex-ui" || message.version !== 1) return;
-      if (message.type === "weft:host-context-request") {
-        state.readyFrames.add(frame.dataset.weftCodexSurface || "unknown");
-        postContext(frame, event.origin);
-        if (frame === state.modalFrame) postDialogState();
-        notifyHost("frame.ready", { surface: frame.dataset.weftCodexSurface || "unknown" });
-        return;
-      }
-      if (message.type !== "weft:host-action" || typeof message.requestId !== "string") return;
-      if (message.action === "surface.label") {
-        const label = typeof message.label === "string" ? message.label.trim() : "";
-        if (!label || label.length > 120) {
-          actionResult(frame, message.requestId, false, "invalid-surface-label");
-          return;
-        }
-        frame.title = label;
-        actionResult(frame, message.requestId, true);
-        return;
-      }
-      if (message.action === "workspace.show") {
-        setView("workspace");
-        actionResult(frame, message.requestId, true);
-        return;
-      }
-      if (message.action === "dialog.present") {
-        const accepted = presentDialog(message.dialog);
-        actionResult(frame, message.requestId, accepted, accepted ? undefined : "invalid-dialog");
-        return;
-      }
-      if (message.action === "dialog.mounted") {
-        const accepted = frame === state.modalFrame && mountDialog();
-        actionResult(frame, message.requestId, accepted, accepted ? undefined : "invalid-modal-surface");
-        return;
-      }
-      if (message.action === "dialog.dismiss") {
-        dismissDialog();
-        actionResult(frame, message.requestId, true);
-        return;
-      }
-      if (message.action === "thread.open") {
-        if (!validThreadId(message.threadId)) {
-          actionResult(frame, message.requestId, false, "invalid-thread-id");
-          return;
-        }
-        void openNativeThread(message.threadId).then((opened) => {
-          if (state.disposed) return;
-          actionResult(frame, message.requestId, opened, opened ? undefined : "thread-not-in-native-sidebar");
-          if (!opened) notifyHost("thread.open.missing", { threadId: message.threadId });
-        }).catch(() => {
-          if (!state.disposed) actionResult(frame, message.requestId, false, "thread-open-failed");
-        });
-        return;
-      }
-      if (message.action === "inbox.count") {
-        // Only the sidebar owns this number; the workspace frame sees the same
-        // board and would race it with a second, equally authoritative answer.
-        if (frame !== state.sidebarFrame) {
-          actionResult(frame, message.requestId, false, "inbox-count-not-from-sidebar");
-          return;
-        }
-        if (typeof message.count !== "number" || !Number.isFinite(message.count)) {
-          actionResult(frame, message.requestId, false, "invalid-inbox-count");
-          return;
-        }
-        setInboxCount(message.count);
-        actionResult(frame, message.requestId, true);
-        return;
-      }
-      if (message.action === "repositories.pick") {
-        state.pendingActions.set(message.requestId, frame);
-        notifyHost("repositories.pick", { requestId: message.requestId });
-      }
-    }
-
     function onDocumentClick(event) {
       const target = event.target instanceof Element ? event.target.closest('[role="menuitem"]') : null;
       if (!(target instanceof HTMLElement) || target.hasAttribute(MODE_ITEM_ATTR)) return;
@@ -1161,9 +857,6 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         .find((span) => !span.querySelector("span") && (span.textContent || "").trim());
       const selectedLabel = (leafLabel && leafLabel.textContent || "").trim();
       const nextMode = /codex/i.test(text) ? "codex" : "work";
-      // Restore our temporary Weft label during capture, before the native
-      // Radix/React handler commits its own selected mode in the bubble phase.
-      // Deferring this would overwrite the newly rendered ChatGPT/Codex label.
       setMode(nextMode);
       applyNativeModeButtonLabel(selectedLabel || (nextMode === "codex" ? "Codex" : "ChatGPT"));
     }
@@ -1173,7 +866,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       installStyles();
       ensureSidebarRoot();
       ensureWorkspaceRoot();
-      ensureModalRoot();
+      ensureOverlayRoot();
       const nextModeButton = modeButton();
       if (state.modeButton !== nextModeButton) {
         restoreModeButton();
@@ -1194,6 +887,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       }
       setDocumentState();
       syncModeMenus();
+      if (state.mode === "weft") void ensureWeftMounted();
     }
 
     function scheduleMount() {
@@ -1207,43 +901,49 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
     function start() {
       if (state.started || state.disposed || !document.documentElement) return;
       state.started = true;
-      state.messageListener = onFrameMessage;
       state.clickListener = onDocumentClick;
-      window.addEventListener("message", state.messageListener);
       document.addEventListener("click", state.clickListener, true);
-      state.mutationObserver = new MutationObserver(() => {
-        scheduleMount();
-        publishContextSoon();
-      });
+      state.mutationObserver = new MutationObserver(() => scheduleMount());
       state.mutationObserver.observe(document.documentElement, {
         attributes: true,
         attributeFilter: ["class", "lang", "style", "inert", "aria-hidden", "hidden"],
         childList: true,
         subtree: true,
       });
-      state.resizeObserver = new ResizeObserver(() => publishContextSoon());
+      state.resizeObserver = new ResizeObserver(() => scheduleMount());
       state.resizeObserver.observe(document.documentElement);
       state.mediaQuery = matchMedia("(prefers-color-scheme: dark)");
-      state.mediaListener = () => publishContextSoon();
+      state.mediaListener = () => scheduleMount();
       state.mediaQuery.addEventListener("change", state.mediaListener);
       mount();
-      notifyHost("agent.ready", { tier: config.compatibilityTier });
+      notifyHost("agent.ready");
     }
 
-    function reloadFrames() {
-      state.readyFrames.clear();
-      state.modalVisible = false;
-      syncModalRoot();
-      if (state.sidebarFrame) state.sidebarFrame.src = surfaceUrl("sidebar");
-      if (state.workspaceFrame) state.workspaceFrame.src = surfaceUrl("workspace");
-      if (state.modalFrame) state.modalFrame.src = surfaceUrl("modal");
+    function reloadUi() {
+      unmountWeft();
+      state.weftCss = "";
+      const bundle = document.querySelector('script[data-weft-codex-bundle="true"]');
+      if (bundle) bundle.remove();
+      void ensureWeftMounted();
     }
 
     function setCspBypass(enabled) {
       state.cspBypass = Boolean(enabled);
       setDocumentState();
-      reloadFrames();
-      publishContextSoon();
+      reloadUi();
+    }
+
+    function deliverActionResult(requestId, response) {
+      const pending = state.pendingPick.get(requestId);
+      if (!pending) return false;
+      state.pendingPick.delete(requestId);
+      if (response && response.ok === true) {
+        const paths = response.result && Array.isArray(response.result.paths) ? response.result.paths : [];
+        pending.resolve(paths);
+      } else {
+        pending.reject(new Error(response && response.error ? response.error : "picker failed"));
+      }
+      return true;
     }
 
     function status() {
@@ -1251,14 +951,14 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         version: 1,
         mode: state.mode,
         view: state.view,
-        tier: config.compatibilityTier,
+        tier: "weft-mode",
         cspBypass: state.cspBypass,
-        sidebarMounted: Boolean(state.sidebarRoot && state.sidebarRoot.isConnected),
-        workspaceMounted: Boolean(state.workspaceRoot && state.workspaceRoot.isConnected),
-        modalMounted: Boolean(state.modalRoot && state.modalRoot.isConnected),
-        sidebarReady: state.readyFrames.has("sidebar"),
-        workspaceReady: state.readyFrames.has("workspace"),
-        modalReady: state.readyFrames.has("modal"),
+        uiMounted: Boolean(
+          state.sidebarRoot && state.sidebarRoot.isConnected
+          && state.workspaceRoot && state.workspaceRoot.isConnected
+          && state.overlayRoot && state.overlayRoot.isConnected
+        ),
+        uiReady: Boolean(state.uiReady),
         nativeModeSwitcher: Boolean(state.modeButton),
         headerActions: state.headerActionsMounted ? "native" : "fallback",
         inboxCount: state.inboxCount,
@@ -1269,26 +969,27 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       if (state.disposed) return;
       state.disposed = true;
       if (state.mountTimer) window.clearTimeout(state.mountTimer);
-      if (state.contextTimer) window.clearTimeout(state.contextTimer);
       if (state.mutationObserver) state.mutationObserver.disconnect();
       if (state.resizeObserver) state.resizeObserver.disconnect();
       if (state.mediaQuery && state.mediaListener) state.mediaQuery.removeEventListener("change", state.mediaListener);
-      if (state.messageListener) window.removeEventListener("message", state.messageListener);
       if (state.clickListener) document.removeEventListener("click", state.clickListener, true);
-      state.pendingActions.clear();
+      unmountWeft();
+      state.pendingPick.clear();
+      state.commandHandlers.clear();
+      state.viewHandlers.clear();
       restoreModeButton();
       removeHeaderActions();
-      restoreModalBackground();
       if (state.sidebarRoot) state.sidebarRoot.remove();
       if (state.workspaceRoot) state.workspaceRoot.remove();
-      if (state.modalRoot) state.modalRoot.remove();
+      if (state.overlayRoot) state.overlayRoot.remove();
       const style = document.getElementById(STYLE_ID);
       if (style) style.remove();
+      const bundle = document.querySelector('script[data-weft-codex-bundle="true"]');
+      if (bundle) bundle.remove();
       const root = document.documentElement;
       delete root.dataset.weftCodexMode;
       delete root.dataset.weftCodexView;
       delete root.dataset.weftCodexTier;
-      delete root.dataset.weftCodexModeCapability;
       delete root.dataset.weftCodexHeaderActions;
       delete root.dataset.weftCodexCspBypass;
       for (const element of document.querySelectorAll("[data-weft-codex-mode-header]")) {
@@ -1304,7 +1005,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       status,
       setMode,
       setCspBypass,
-      reloadFrames,
+      reloadFrames: reloadUi,
       deliverActionResult,
       dispose,
     };

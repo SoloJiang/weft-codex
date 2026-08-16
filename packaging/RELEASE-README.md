@@ -33,8 +33,9 @@ ChatGPT/Codex 即为原生状态。也可以使用 `bin/weft-codex --safe-mode` 
 
 ## 安全边界
 
-CDP 和 weftd 都只监听 loopback。当前 Codex 发行版阻止本地 iframe 时，Host 只在
-它创建的专用 profile 中临时启用 CSP compatibility mode，并在退出时恢复。
+CDP 和 weftd 都只监听 loopback。只有 `connect-src` / `script-src` 拦住
+loopback 时，Host 才在它创建的专用 profile 中临时启用 CSP compatibility
+mode，并在退出时恢复。不为 `frame-src` 开 bypass。
 
 Host 不是第二个 App，也不复制、修改或重签官方 Codex。若未来通过正式渠道分发
 Host 二进制，仍需独立完成 Developer ID 签名和 notarization。

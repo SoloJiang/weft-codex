@@ -11,49 +11,38 @@ function status(partial: Partial<RendererAgentStatus> = {}): RendererAgentStatus
     view: "workspace",
     tier: "weft-mode",
     cspBypass: false,
-    sidebarMounted: false,
-    workspaceMounted: false,
-    modalMounted: false,
-    sidebarReady: false,
-    workspaceReady: false,
-    modalReady: false,
+    uiMounted: false,
+    uiReady: false,
     nativeModeSwitcher: false,
     ...partial,
   }
 }
 
-const MOUNTED = { sidebarMounted: true, workspaceMounted: true, modalMounted: true }
-const READY = { ...MOUNTED, sidebarReady: true, workspaceReady: true, modalReady: true }
+const MOUNTED = { uiMounted: true }
+const READY = { uiMounted: true, uiReady: true }
 
-/** A poller that yields each scripted status in turn, then repeats the last. */
 function scripted(steps: RendererAgentStatus[]): () => Promise<RendererAgentStatus | null> {
   let index = 0
   return async () => steps[Math.min(index++, steps.length - 1)] ?? null
 }
 
-// The roots can only attach after Codex renders its own shell. Sharing one
-// budget with the handshake let a slow host shell consume the whole window and
-// the run was then reported as a handshake failure.
 test("host hydration does not spend the handshake budget", async () => {
-  // Nothing mounts until the sixth poll — longer than the handshake budget.
   const steps = [...Array(6)].map(() => status()).concat([status(MOUNTED), status(READY)])
   const result = await waitForSurfaces(scripted(steps), { mountMs: 4000, handshakeMs: 200 })
-  assert.equal(result?.sidebarReady, true)
+  assert.equal(result?.uiReady, true)
 })
 
 test("a mounted but silent surface still gives up", async () => {
   const result = await waitForSurfaces(scripted([status(MOUNTED)]), { mountMs: 4000, handshakeMs: 200 })
-  assert.equal(result?.sidebarReady, false)
-  assert.equal(result?.sidebarMounted, true, "mounted state must survive so the caller can name the phase")
+  assert.equal(result?.uiReady, false)
+  assert.equal(result?.uiMounted, true, "mounted state must survive so the caller can name the phase")
 })
 
 test("a host that never renders its shell gives up on the mount budget", async () => {
   const result = await waitForSurfaces(scripted([status()]), { mountMs: 200, handshakeMs: 200 })
-  assert.equal(result?.sidebarMounted, false)
+  assert.equal(result?.uiMounted, false)
 })
 
-// A reload leaves no execution context for a moment; that must not be mistaken
-// for a surface that went away.
 test("a transient poll failure keeps the last status", async () => {
   let call = 0
   const result = await waitForSurfaces(async () => {
@@ -62,23 +51,21 @@ test("a transient poll failure keeps the last status", async () => {
     if (call < 4) throw new Error("no execution context")
     return status(READY)
   }, { mountMs: 1000, handshakeMs: 1000 })
-  assert.equal(result?.sidebarReady, true)
+  assert.equal(result?.uiReady, true)
 })
 
 test("surfaces already ready return without waiting out the mount budget", async () => {
   const started = Date.now()
   const result = await waitForSurfaces(scripted([status(READY)]), { mountMs: 5000, handshakeMs: 5000 })
-  assert.equal(result?.sidebarReady, true)
+  assert.equal(result?.uiReady, true)
   assert.ok(Date.now() - started < 500, "must not sleep once the surfaces are ready")
 })
 
 test("renderer host agent exposes the lifecycle methods used by reconnect and CSP fallback", () => {
   const source = buildRendererAgentSource({
     webBaseUrl: "http://127.0.0.1:47810/",
-    bridgeId: "test-bridge",
     bindingName: "weftCodexHost",
     initialMode: "weft",
-    compatibilityTier: "weft-mode",
     cspBypass: false,
   })
   for (const method of [
