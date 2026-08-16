@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input"
 import { useI18n } from "@/i18n"
 import type { BoardEntry, Direction, DirectionStatus, Issue, Repo } from "@/types"
 import { STATUSES } from "@/types"
+import { issueBoardSignalKey, issueBoardSignalReason } from "@/lib/attention-reason"
 import { buildIssueBoard, groupIssueBoard, type IssueBoardCard } from "@/lib/issue-board"
 import { isTypingTarget } from "@/lib/utils"
 import { AsyncButton, EmptyState, LeadChatLink, TaskChatLink } from "./shared"
@@ -22,22 +23,6 @@ export interface WorkActions {
   onCompleteTask: (direction: Direction) => Promise<void>
   onClearAttention: (direction: Direction) => Promise<void>
   onContinueTask: (direction: Direction) => void
-}
-
-/**
- * Failure reasons arrive as stable codes so the daemon never ships user-facing
- * prose. An unrecognised code still has to say something useful — a newer
- * daemon must not render a blank card against an older UI.
- */
-const LEAD_FAILURE_KEYS = {
-  "start-failed": "lead.startFailed",
-  "resume-failed": "lead.resumeFailed",
-  "turn-error": "lead.turnError",
-} as const
-
-function leadFailureText(reason: string, t: (key: never, values?: never) => string): string {
-  const key = LEAD_FAILURE_KEYS[reason as keyof typeof LEAD_FAILURE_KEYS] ?? "lead.failed"
-  return t(key as never)
 }
 
 export function directionMeta(
@@ -133,10 +118,18 @@ function IssueBoardCardView({
   // spends the one line of meta on something the reader just read. Only what is
   // specific to this card goes here. A failed lead outranks task attention:
   // nothing else on this issue can move until it is running again.
+  const directionReasons = entry.directions
+    .filter((direction) => direction.attention)
+    .map((direction) => direction.attention_reason)
+  const signalOptions = {
+    leadAttention,
+    leadReason: entry.issue.lead_attention_reason,
+    directionReasons,
+  }
   let signal = ""
-  if (leadAttention) signal = leadFailureText(entry.issue.lead_attention_reason, t)
-  else if (attentionCount) signal = t("kanban.issueNeedsYou")
+  if (leadAttention || attentionCount) signal = t(issueBoardSignalKey(signalOptions))
   else if (totalTasks) signal = t("kanban.issueProgress", { done: doneTasks, total: totalTasks })
+  const signalReason = issueBoardSignalReason(signalOptions)
 
   return (
     <article
@@ -157,8 +150,15 @@ function IssueBoardCardView({
             always has room; it no longer has to compete with a text button. */}
         {signal ? (
           // Long reasons must not push the row wider than the column; the full
-          // text stays reachable on hover rather than being lost.
-          <span className="issue-board-card-signal" title={signal}>{signal}</span>
+          // translated line stays reachable on hover. The daemon code is only
+          // a data attribute — never title, never visible copy.
+          <span
+            className="issue-board-card-signal"
+            title={signal}
+            data-attention-reason={signalReason || undefined}
+          >
+            {signal}
+          </span>
         ) : null}
         <LeadChatLink
           issue={entry.issue}

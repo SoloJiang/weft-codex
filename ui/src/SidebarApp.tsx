@@ -31,6 +31,7 @@ import {
 import { useI18n } from "@/i18n"
 import { useWeftSession } from "@/session"
 import { useWeftWorkspace } from "@/workspace-store"
+import { inboxAttentionKey } from "@/lib/attention-reason"
 import {
   buildInbox,
   type InboxItem,
@@ -548,7 +549,12 @@ function InboxPanel({
           <AlertTriangle aria-hidden="true" />
           <span>
             <span className="sidebar-row-title">{item.title}</span>
-            <span className="sidebar-row-meta">{item.meta}</span>
+            <span
+              className="sidebar-row-meta"
+              data-attention-reason={item.reason || undefined}
+            >
+              {t(inboxAttentionKey(item.kind, item.reason))}
+            </span>
           </span>
         </button>
       ))}

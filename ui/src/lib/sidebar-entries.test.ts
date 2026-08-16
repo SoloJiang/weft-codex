@@ -156,7 +156,7 @@ test("the inbox lists directions flagged for attention, with their reason", () =
   )
   assert.equal(items.length, 1)
   assert.equal(items[0]?.kind, "attention")
-  assert.equal(items[0]?.meta, "needs a decision")
+  assert.equal(items[0]?.reason, "needs a decision")
 })
 
 test("a delivery failure surfaces against the direction it was bound for", () => {
@@ -190,7 +190,7 @@ test("a stalled lead reaches the inbox ahead of its tasks", () => {
     [],
   )
   assert.deepEqual(items.map((item) => item.kind), ["lead", "attention"])
-  assert.equal(items[0]?.meta, "start-failed")
+  assert.equal(items[0]?.reason, "start-failed")
 })
 
 test("an issue with a healthy lead contributes nothing to the inbox", () => {

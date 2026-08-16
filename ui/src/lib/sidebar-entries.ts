@@ -28,7 +28,8 @@ export interface InboxItem {
   kind: InboxItemKind
   issueId: number
   title: string
-  meta: string
+  /** Daemon code. The panel maps it; the raw value never becomes copy. */
+  reason: string
   directionId?: number
   /** Present on delivery items: identifies the failure to drop once acted on. */
   failureKey?: string
@@ -154,7 +155,7 @@ export function buildInbox(board: BoardEntry[], failures: DeliveryFailure[]): In
         kind: "lead",
         issueId: entry.issue.id,
         title: entry.issue.title,
-        meta: entry.issue.lead_attention_reason,
+        reason: entry.issue.lead_attention_reason,
       })
     }
     for (const direction of entry.directions) {
@@ -164,7 +165,7 @@ export function buildInbox(board: BoardEntry[], failures: DeliveryFailure[]): In
         kind: "attention",
         issueId: entry.issue.id,
         title: direction.name,
-        meta: direction.attention_reason || entry.issue.title,
+        reason: direction.attention_reason,
         directionId: direction.id,
       })
     }
@@ -185,7 +186,7 @@ export function buildInbox(board: BoardEntry[], failures: DeliveryFailure[]): In
       kind: "delivery",
       issueId: failure.issueId,
       title: direction?.name ?? entry.issue.title,
-      meta: failure.reason,
+      reason: failure.reason,
       failureKey: deliveryFailureKey(failure),
       ...(direction ? { directionId: direction.id } : {}),
     })

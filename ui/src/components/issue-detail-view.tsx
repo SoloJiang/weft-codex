@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react"
 import { api } from "@/api"
 import { Button } from "@/components/ui/button"
 import { useI18n } from "@/i18n"
+import { directionAttentionKey, leadAttentionKey } from "@/lib/attention-reason"
 import type { BoardEntry, BusMessage, Direction, Repo } from "@/types"
 import { EmptyState } from "./shared"
 import { DirectionActions, directionMeta, IssueActions, type WorkActions } from "./kanban-view"
@@ -34,6 +35,15 @@ function TaskDetail({ direction, repos, actions }: { direction: Direction; repos
         <span className={`status-chip status-${direction.status}`}>{t(`status.${direction.status}`)}</span>
         <DirectionActions direction={direction} actions={actions} />
       </header>
+      {direction.attention ? (
+        <p
+          className="task-attention"
+          role="status"
+          data-attention-reason={direction.attention_reason || undefined}
+        >
+          {t(directionAttentionKey(direction.attention_reason))}
+        </p>
+      ) : null}
       {direction.reason ? <p className="task-reason">{direction.reason}</p> : null}
       {direction.spec ? (
         <section className="task-brief">
@@ -111,6 +121,15 @@ export function IssueDetailView({
               <div className="issue-context">
                 <span className="issue-kind">{t(`kind.${entry.issue.kind}`)}</span>
                 <span className="meta">#{entry.issue.id}</span>
+                {entry.issue.lead_attention ? (
+                  <span
+                    className="issue-lead-attention"
+                    role="status"
+                    data-attention-reason={entry.issue.lead_attention_reason || undefined}
+                  >
+                    {t(leadAttentionKey(entry.issue.lead_attention_reason))}
+                  </span>
+                ) : null}
               </div>
             </div>
             <IssueActions issue={entry.issue} actions={actions} />
