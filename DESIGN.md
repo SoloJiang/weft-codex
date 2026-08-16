@@ -168,8 +168,12 @@ ring 的**颜色**区分可交互与否，**投影的深度**区分贴在页面�
 | 字段 | `0 0 0 0.5px var(--border-strong)` + `0 3px 7.5px rgb(0 0 0/.04)` | input、textarea |
 | 字段·悬停 | ring 提至 `color-mix(in srgb, var(--text) 26%, transparent)` | input、textarea |
 | 字段·错误 | `0 0 0 1px var(--danger)` + 同上投影 | `aria-invalid` |
+| 分栏边缘 | `-8px 0 16px -8px rgb(0 0 0/.18)` | stage 内详情分栏的左缘。**不配描边线** |
 | 浮层 | 抬升 + `0 12px 32px rgb(0 0 0/.12)` | select-content、toast |
 | 模态 | `0 0 0 0.5px var(--border)` + `0 24px 64px rgb(0 0 0/.18)` | 宿主级弹窗 |
+
+**分栏边界只用投影，不画线。** 宿主的右侧面板实测就是这样：手柄里那条 1px 内线
+常态透明，边界完全由那道向左的方向性投影表达。给分栏补一条 hairline 会比宿主重。
 
 **语义状态改 ring 的颜色，不要退回 `border-color`。** toast 的成败、告警块的边都
 走同一条 ring，换的只是颜色。

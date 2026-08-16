@@ -359,6 +359,10 @@ issue → 任务 → artifact → thread。不新增接口。
 
 ### 8.7 Weft 模式 UI
 
+> 会话树的归属已改：`2026-08-16-host-container.md` §6 决定 issue 的会话数据不再
+> 由 Weft 在侧栏自绘，改为进原生右侧面板的 Weft tab。本节描述的是迁移前的现状，
+> 迁移落地时同步修订。
+
 侧栏：workspace 切换、Kanban / 仓库入口、新建 issue、issue 树（Lead / Tasks /
 fork）。主行点击展开并打开 Primary Lead；列表行不放展开箭头。收件箱里有条目的
 issue 在主行标「需要你」，文案不只靠颜色。任务行带所属 issue 标题。打开任何
