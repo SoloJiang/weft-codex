@@ -2113,6 +2113,14 @@ main {
   pointer-events: none;
 }
 
+.weft-overlay-toasts {
+  z-index: 60;
+}
+
+.weft-overlay-mount > .weft-overlay-toasts {
+  pointer-events: none;
+}
+
 .toast {
   max-width: min(420px, calc(100vw - 36px));
   padding: 9px 12px;

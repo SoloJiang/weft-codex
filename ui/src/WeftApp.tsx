@@ -8,6 +8,7 @@ import { I18nProvider, languageFromLocale } from "@/i18n"
 import { PortalProvider } from "@/portal"
 import { WeftSessionProvider, useWeftSession } from "@/session"
 import SidebarApp from "@/SidebarApp"
+import { ToastStack, WeftWorkspaceProvider } from "@/workspace-store"
 
 function OverlayDialogs() {
   const session = useWeftSession()
@@ -49,7 +50,13 @@ function HostedShell({
     <>
       {createPortal(<SidebarApp />, sidebarTarget)}
       {createPortal(<App />, mainTarget)}
-      {createPortal(<OverlayDialogs />, overlayTarget)}
+      {createPortal(
+        <>
+          <OverlayDialogs />
+          <ToastStack />
+        </>,
+        overlayTarget,
+      )}
     </>
   )
 }
@@ -64,6 +71,7 @@ function PreviewShell() {
         <App />
       </div>
       <OverlayDialogs />
+      <ToastStack />
     </div>
   )
 }
@@ -98,15 +106,17 @@ export function WeftApp({
       <I18nProvider lang={lang}>
         <PortalProvider container={portalContainer}>
           <WeftSessionProvider host={host}>
-            {layout === "hosted" && sidebarTarget && mainTarget && overlayTarget ? (
-              <HostedShell
-                sidebarTarget={sidebarTarget}
-                mainTarget={mainTarget}
-                overlayTarget={overlayTarget}
-              />
-            ) : (
-              <PreviewShell />
-            )}
+            <WeftWorkspaceProvider>
+              {layout === "hosted" && sidebarTarget && mainTarget && overlayTarget ? (
+                <HostedShell
+                  sidebarTarget={sidebarTarget}
+                  mainTarget={mainTarget}
+                  overlayTarget={overlayTarget}
+                />
+              ) : (
+                <PreviewShell />
+              )}
+            </WeftWorkspaceProvider>
           </WeftSessionProvider>
         </PortalProvider>
       </I18nProvider>

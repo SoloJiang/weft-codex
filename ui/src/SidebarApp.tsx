@@ -16,7 +16,7 @@ import {
   X,
 } from "lucide-react"
 
-import { api, apiUrl, jsonRequest } from "@/api"
+import { api, jsonRequest } from "@/api"
 import { kindLabel, statusLabel } from "@/components/artifact-view"
 import { AsyncButton, openCodexThread } from "@/components/shared"
 import { Button } from "@/components/ui/button"
@@ -30,39 +30,24 @@ import {
 } from "@/components/ui/select"
 import { useI18n } from "@/i18n"
 import { useWeftSession } from "@/session"
+import { useWeftWorkspace } from "@/workspace-store"
 import {
   buildInbox,
-  deliveryFailureKey,
-  searchBoard,
-  type DeliveryFailure,
   type InboxItem,
   type SearchHit,
+  searchBoard,
 } from "@/lib/sidebar-entries"
 import { isTypingTarget } from "@/lib/utils"
 import type { SurfaceRoute } from "@/route"
 import type {
+  ArtifactSummary,
   BoardEntry,
-  Repo,
   ThreadBinding,
   ThreadLocationResponse,
-  Workspace,
-  ArtifactSummary,
 } from "@/types"
 
 /** Only one of the two header entries can be open; neither is the default. */
 type SidebarPanel = "none" | "search" | "inbox"
-
-const SIDEBAR_EVENT_NAMES = [
-  "direction.updated",
-  "issue.updated",
-  "workspace.updated",
-  "repo.added",
-  "bus.message",
-  "bus.parked",
-  "bus.undelivered",
-  "thread.binding.updated",
-  "lead.attention",
-]
 
 interface ResolvedThread {
   binding: ThreadBinding
@@ -84,19 +69,6 @@ interface ThreadRowProps {
   primary?: boolean
   nested?: boolean
   onOpen: (threadId: string) => void
-}
-
-function errorText(error: unknown, network: string, unknown: string): string {
-  if (error instanceof TypeError) return network
-  if (error instanceof Error && error.message) return error.message
-  return unknown
-}
-
-function normalizeBoard(entries: BoardEntry[]): BoardEntry[] {
-  return entries.map((entry) => ({
-    ...entry,
-    threads: Array.isArray(entry.threads) ? entry.threads : [],
-  }))
 }
 
 function buildThreadMap(
@@ -512,21 +484,17 @@ function InboxPanel({
 export default function SidebarApp() {
   const { t } = useI18n()
   const session = useWeftSession()
+  const store = useWeftWorkspace()
   const workspaceId = session.workspaceId
   const route = session.route
-  const [workspaces, setWorkspaces] = React.useState<Workspace[]>([])
-  const [board, setBoard] = React.useState<BoardEntry[]>([])
-  const [repos, setRepos] = React.useState<Repo[]>([])
+  const { workspaces, board, repos, loading, deliveryFailures } = store
   const [panel, setPanel] = React.useState<SidebarPanel>("none")
   const [query, setQuery] = React.useState("")
-  const [failures, setFailures] = React.useState<DeliveryFailure[]>([])
   const [expandedIssueId, setExpandedIssueId] = React.useState<number | null>(null)
   const [resolvedThreads, setResolvedThreads] = React.useState<Map<string, ResolvedThread>>(
     () => new Map(),
   )
-  const [loading, setLoading] = React.useState(true)
   const [error, setError] = React.useState("")
-  const loadSequence = React.useRef(0)
   const resolveSequence = React.useRef(0)
   const stateRef = React.useRef({ workspaceId, route })
   const threadMap = React.useMemo(
@@ -538,109 +506,6 @@ export default function SidebarApp() {
     [session.hostView, session.threadId, route, threadMap],
   )
   stateRef.current = { workspaceId, route }
-
-  const reportError = React.useCallback((caught: unknown) => {
-    setError(t("err.prefix") + errorText(caught, t("err.network"), t("err.unknown")))
-  }, [t])
-
-  const loadWorkspaces = React.useCallback(async () => {
-    const rows = await api<Workspace[]>("/api/workspaces")
-    setWorkspaces(rows)
-    if (workspaceId && rows.some((workspace) => workspace.id === workspaceId)) return
-    const first = rows[0]?.id
-    if (first) session.setWorkspaceId(first)
-  }, [session, workspaceId])
-
-  const loadWorkspace = React.useCallback(async (id: number) => {
-    const sequence = loadSequence.current + 1
-    loadSequence.current = sequence
-    // Repositories ride along because workspace search matches on repo name,
-    // which is the one thing the board carries only as an id.
-    const [rows, repoRows] = await Promise.all([
-      api<BoardEntry[]>(`/api/issues?workspace_id=${id}`),
-      api<Repo[]>(`/api/workspaces/${id}/repos`),
-    ])
-    if (loadSequence.current !== sequence) return
-    setBoard(normalizeBoard(rows))
-    setRepos(repoRows)
-  }, [])
-
-  React.useEffect(() => {
-    let active = true
-    loadWorkspaces()
-      .catch(reportError)
-      .finally(() => { if (active) setLoading(false) })
-    return () => { active = false }
-  }, [loadWorkspaces, reportError])
-
-  React.useEffect(() => {
-    if (!workspaceId) {
-      loadSequence.current += 1
-      setBoard([])
-      setRepos([])
-      return
-    }
-    setLoading(true)
-    setError("")
-    loadWorkspace(workspaceId)
-      .catch(reportError)
-      .finally(() => setLoading(false))
-  }, [workspaceId, loadWorkspace, reportError])
-
-  React.useEffect(() => {
-    const source = new EventSource(apiUrl("/api/events"))
-    let timer: number | undefined
-    let refreshWorkspaceList = false
-    const scheduleRefresh = (event: Event) => {
-      if (event.type === "workspace.updated") refreshWorkspaceList = true
-      window.clearTimeout(timer)
-      timer = window.setTimeout(() => {
-        const jobs: Promise<unknown>[] = []
-        if (stateRef.current.workspaceId) jobs.push(loadWorkspace(stateRef.current.workspaceId))
-        if (refreshWorkspaceList) {
-          refreshWorkspaceList = false
-          jobs.push(loadWorkspaces())
-        }
-        Promise.all(jobs).catch(reportError)
-      }, 400)
-    }
-
-    // A failed delivery leaves a message sitting on the bus with nothing in the
-    // board to show for it, so the event itself is the only record the human
-    // ever gets. Keep it until they act on it; a refresh will not bring it back.
-    const recordFailure = (event: Event) => {
-      scheduleRefresh(event)
-      if (!(event instanceof MessageEvent) || typeof event.data !== "string") return
-      let payload: unknown
-      try {
-        payload = JSON.parse(event.data)
-      } catch {
-        return
-      }
-      if (!payload || typeof payload !== "object") return
-      const body = payload as Record<string, unknown>
-      if (typeof body.issueId !== "number" || typeof body.party !== "string") return
-      const failure: DeliveryFailure = {
-        issueId: body.issueId,
-        party: body.party,
-        reason: typeof body.reason === "string" ? body.reason : "undelivered",
-      }
-      setFailures((current) => {
-        const key = deliveryFailureKey(failure)
-        if (current.some((existing) => deliveryFailureKey(existing) === key)) return current
-        return [...current, failure]
-      })
-    }
-
-    for (const name of SIDEBAR_EVENT_NAMES) {
-      if (name === "bus.undelivered") source.addEventListener(name, recordFailure)
-      else source.addEventListener(name, scheduleRefresh)
-    }
-    return () => {
-      window.clearTimeout(timer)
-      source.close()
-    }
-  }, [loadWorkspace, loadWorkspaces, reportError])
 
   React.useEffect(() => {
     if (location.kind !== "unbound-thread") return
@@ -727,8 +592,8 @@ export default function SidebarApp() {
    */
   const promoteLead = React.useCallback(async (issueId: number, threadId: string) => {
     await api(`/api/issues/${issueId}/lead-thread`, jsonRequest("POST", { thread_id: threadId }))
-    if (stateRef.current.workspaceId) await loadWorkspace(stateRef.current.workspaceId)
-  }, [loadWorkspace])
+    await store.refreshCurrent()
+  }, [store])
 
   const openIssue = React.useCallback((entry: BoardEntry) => {
     setExpandedIssueId(entry.issue.id)
@@ -746,7 +611,10 @@ export default function SidebarApp() {
     () => searchBoard(board, repos, deferredQuery),
     [board, repos, deferredQuery],
   )
-  const inboxItems = React.useMemo(() => buildInbox(board, failures), [board, failures])
+  const inboxItems = React.useMemo(
+    () => buildInbox(board, deliveryFailures),
+    [board, deliveryFailures],
+  )
 
   React.useEffect(() => {
     return session.host.onCommand((command) => {
@@ -825,12 +693,10 @@ export default function SidebarApp() {
     if (item.failureKey) {
       // Acting on it is the only acknowledgement there is; the bus event will
       // not fire again for a failure that already happened.
-      setFailures((current) => current.filter(
-        (failure) => deliveryFailureKey(failure) !== item.failureKey,
-      ))
+      store.dismissDeliveryFailure(item.failureKey)
     }
     openDirectionThread(item.issueId, item.directionId)
-  }, [closePanel, openDirectionThread])
+  }, [closePanel, openDirectionThread, store])
 
   const headerActionsAreNative = session.headerActions === "native"
 
@@ -971,7 +837,7 @@ export default function SidebarApp() {
                 activeThreadId={activeThreadId}
                 onOpenThread={openThread}
                 onPromoteLead={(threadId) => promoteLead(expandedEntry.issue.id, threadId)}
-                onError={reportError}
+                onError={store.notifyError}
               />
               <ArtifactSummaryList
                 artifacts={expandedEntry.artifacts ?? []}

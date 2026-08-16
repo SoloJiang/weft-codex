@@ -197,3 +197,29 @@ export function buildInbox(board: BoardEntry[], failures: DeliveryFailure[]): In
 export function deliveryFailureKey(failure: DeliveryFailure): string {
   return `${failure.issueId}:${failure.party}`
 }
+
+export function parseDeliveryFailure(data: string): DeliveryFailure | null {
+  let payload: unknown
+  try {
+    payload = JSON.parse(data)
+  } catch {
+    return null
+  }
+  if (!payload || typeof payload !== "object") return null
+  const body = payload as Record<string, unknown>
+  if (typeof body.issueId !== "number" || typeof body.party !== "string") return null
+  return {
+    issueId: body.issueId,
+    party: body.party,
+    reason: typeof body.reason === "string" ? body.reason : "undelivered",
+  }
+}
+
+export function rememberDeliveryFailure(
+  current: DeliveryFailure[],
+  failure: DeliveryFailure,
+): DeliveryFailure[] {
+  const key = deliveryFailureKey(failure)
+  if (current.some((existing) => deliveryFailureKey(existing) === key)) return current
+  return [...current, failure]
+}
