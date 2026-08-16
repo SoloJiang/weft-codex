@@ -661,6 +661,11 @@ impl Store {
         .execute(&pool)
         .await
         .context("backfill worker thread bindings")?;
+        // Planning and implementation share one in-progress column.
+        sqlx::query("UPDATE direction SET status = 'working' WHERE status = 'planning'")
+            .execute(&pool)
+            .await
+            .context("merge planning status into working")?;
         Ok(Self { pool })
     }
 
@@ -2200,6 +2205,36 @@ mod tests {
             .create_issue_with_kind(ws, "Invalid", "invalid", "other")
             .await
             .is_err());
+    }
+
+    #[tokio::test]
+    async fn planning_status_is_merged_into_working_on_open() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let path = dir.path().join("t.db");
+        let store = Store::open(&path).await.expect("open");
+        let ws = store.create_workspace("W", "w").await.expect("ws");
+        let repo = store
+            .add_repo(ws, "r", "/tmp/r", "main")
+            .await
+            .expect("repo");
+        let issue = store.create_issue(ws, "i", "i").await.expect("issue");
+        let direction = store
+            .add_direction(issue, "d", "d", repo, "plan+impl", "main", "", "")
+            .await
+            .expect("direction");
+        store
+            .set_direction_status(direction, "planning")
+            .await
+            .expect("planning");
+        drop(store);
+
+        let store = Store::open(&path).await.expect("reopen");
+        let row = store
+            .get_direction(direction)
+            .await
+            .expect("get")
+            .expect("some");
+        assert_eq!(row.status, "working");
     }
 
     #[tokio::test]

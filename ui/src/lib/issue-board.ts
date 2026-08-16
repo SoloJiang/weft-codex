@@ -16,10 +16,18 @@ export interface IssueBoardCard {
 
 const STATUS_RANK: Record<DirectionStatus, number> = {
   queued: 0,
-  planning: 1,
-  working: 2,
-  review: 3,
-  done: 4,
+  working: 1,
+  review: 2,
+  done: 3,
+}
+
+/** Fold the retired `planning` column into working; unknown values stay queued. */
+export function normalizeDirectionStatus(status: string): DirectionStatus {
+  if (status === "planning") return "working"
+  for (const known of STATUSES) {
+    if (known === status) return known
+  }
+  return "queued"
 }
 
 /**
@@ -32,11 +40,12 @@ const STATUS_RANK: Record<DirectionStatus, number> = {
  */
 export function deriveIssueStatus(directions: readonly Direction[]): IssueBoardStatus {
   if (!directions.length) return "queued"
-  if (directions.every((direction) => direction.status === "done")) return "done"
+  const statuses = directions.map((direction) => normalizeDirectionStatus(direction.status))
+  if (statuses.every((status) => status === "done")) return "done"
   let best: DirectionStatus = "queued"
-  for (const direction of directions) {
-    if (direction.status === "done") continue
-    if (STATUS_RANK[direction.status] > STATUS_RANK[best]) best = direction.status
+  for (const status of statuses) {
+    if (status === "done") continue
+    if (STATUS_RANK[status] > STATUS_RANK[best]) best = status
   }
   return best
 }

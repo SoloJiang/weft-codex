@@ -870,8 +870,7 @@ a { color: var(--link); }
   background: var(--hover);
 }
 
-.sidebar-status-chip.status-working,
-.sidebar-status-chip.status-planning { color: var(--warn); }
+.sidebar-status-chip.status-working { color: var(--warn); }
 .sidebar-status-chip.status-review { color: var(--link); }
 .sidebar-status-chip.status-active { color: var(--link); }
 .sidebar-status-chip.status-done { color: var(--ok); }
@@ -1180,10 +1179,10 @@ main {
 }
 
 .kanban-board {
-  min-width: 900px;
+  min-width: 720px;
   min-height: max(520px, calc(100dvh - 152px));
   display: grid;
-  grid-template-columns: repeat(5, minmax(168px, 1fr));
+  grid-template-columns: repeat(4, minmax(168px, 1fr));
   gap: var(--space-2);
 }
 
@@ -1812,7 +1811,6 @@ main {
 }
 
 .status-working,
-.status-planning,
 .runstate-running { color: var(--warn); }
 .status-done,
 .runstate-done { color: var(--ok); }
@@ -2160,7 +2158,7 @@ main {
 /* ── responsive behavior ──────────────────────────────────────────── */
 
 @media (min-width: 721px) and (max-width: 1050px) {
-  .kanban-board { min-width: 820px; grid-template-columns: repeat(5, minmax(148px, 1fr)); }
+  .kanban-board { min-width: 656px; grid-template-columns: repeat(4, minmax(148px, 1fr)); }
 }
 
 @media (max-width: 720px) {

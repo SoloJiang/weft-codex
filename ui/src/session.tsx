@@ -20,6 +20,8 @@ export interface WeftSession {
   adoptWorkspace: (id: number) => void
   route: SurfaceRoute
   navigate: (route: SurfaceRoute) => void
+  /** Update the Weft route without covering the native thread. */
+  setRoute: (route: SurfaceRoute) => void
   dialog: DialogState
   openDialog: (dialog: ActiveDialogState) => void
   closeDialog: () => void
@@ -89,6 +91,10 @@ export function WeftSessionProvider({
     setRoute(next)
   }, [host])
 
+  const rememberRoute = React.useCallback((next: SurfaceRoute) => {
+    setRoute(next)
+  }, [])
+
   const openThread = React.useCallback(async (threadId: string) => {
     const inflight = inFlightRef.current
     if (inflight && inflight.threadId === threadId) return inflight.promise
@@ -129,6 +135,7 @@ export function WeftSessionProvider({
     adoptWorkspace,
     route,
     navigate,
+    setRoute: rememberRoute,
     dialog,
     openDialog,
     closeDialog,
@@ -145,6 +152,7 @@ export function WeftSessionProvider({
     adoptWorkspace,
     route,
     navigate,
+    rememberRoute,
     dialog,
     openDialog,
     closeDialog,

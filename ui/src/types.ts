@@ -1,4 +1,4 @@
-export const STATUSES = ["queued", "planning", "working", "review", "done"] as const
+export const STATUSES = ["queued", "working", "review", "done"] as const
 export const ISSUE_KINDS = ["feature", "bugfix", "refactor", "spike"] as const
 
 export type DirectionStatus = (typeof STATUSES)[number]

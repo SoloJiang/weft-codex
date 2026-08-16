@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { deriveIssueStatus, toIssueBoardCard } from "./issue-board.ts"
+import { deriveIssueStatus, normalizeDirectionStatus, toIssueBoardCard } from "./issue-board.ts"
 import type { BoardEntry, Direction, Issue } from "../types.ts"
 
 function direction(partial: Partial<Direction> & Pick<Direction, "status">): Direction {
@@ -61,10 +61,22 @@ test("issue status follows the most advanced open task", () => {
   )
   assert.equal(
     deriveIssueStatus([
-      direction({ status: "planning" }),
+      direction({ status: "working" }),
       direction({ id: 2, status: "review" }),
     ]),
     "review",
+  )
+})
+
+test("legacy planning rows count as working", () => {
+  assert.equal(normalizeDirectionStatus("planning"), "working")
+  assert.equal(normalizeDirectionStatus("working"), "working")
+  assert.equal(normalizeDirectionStatus("unknown"), "queued")
+  assert.equal(
+    deriveIssueStatus([
+      { ...direction({ status: "queued" }), status: "planning" as Direction["status"] },
+    ]),
+    "working",
   )
 })
 

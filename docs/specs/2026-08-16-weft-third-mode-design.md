@@ -135,7 +135,7 @@ Weft 内
 | Workspace | `workspace` | repo 集合的权威。不映射 Codex Project |
 | 仓库 | `repo_ref` + `repo_profile` | 路径、base_ref、画像、关系 |
 | Issue | `issue` | kind、`lead_codex_thread_id`、`lead_attention` |
-| 任务 | `direction` | 五态 queued / planning / working / review / done；`codex_thread_id` |
+| 任务 | `direction` | 四态 queued / working / review / done；`codex_thread_id` |
 | — | `thread_binding` | 每个原生线程一行；fork 不替换 Primary |
 | — | `bus_message` | durable inbox + 活动日志 |
 | — | `worktree` | 按任务幂等 |
@@ -147,11 +147,15 @@ Primary 指针。打开数据库时把旧指针幂等回填到该表。
 
 状态推进：
 
+- 任务启动（plan+impl 与 impl-only 相同）→ `working`
 - turn 进行中 → `working`
 - turn 完成 → `review`
 - 用户验收 → `done`（同时清 attention）
 - 启动失败 / turn 失败 / quota → attention
 - 「继续处理」发补充要求并回到 `working`
+
+`mandate` 仍区分 plan+impl / impl-only（brief 与 `task_create`），只影响
+工人怎么写，不单独占一列。旧库里的 `planning` 在打开数据库时并入 `working`。
 
 Lead 拥有 `task_create`。UI 不提供手工新建任务。Issue 可先于仓库创建。
 
