@@ -29,9 +29,10 @@
 | 26.727.51351 | 6119 | `weft-mode` | 2026-08-08 / 2026-08-09 | 真机 launcher probe + Stage 2–4 真机闭环 | **PASS**（见 spec §7.5 / §9 / §10） |
 | 26.803.41515 | 6321 | `weft-mode` | 2026-08-10 | `node dist/cli.js probe --endpoint=… --target-url='app://-/index.html'`，专用 profile + `--safe-mode`（无注入、无 weftd）；CSP 与协议轴另测，见 §3 / §4 | **PASS**，但有 3 项假阳性/语义问题，见 §5 |
 
-> Tier 取值与 `launcher/src/probes.ts` 的 `CompatibilityTier` 一致：
-> `safe-mode`（base 锚点缺失，不注入）/ `additive`（subtractive 锚点缺失，只追加
-> 入口，不改造原生 sidebar）/ `weft-mode`（全部通过）。
+> Tier 取值与采集当时 `launcher/src/probes.ts` 的 `CompatibilityTier` 一致：
+> `safe-mode` / `additive` / `weft-mode`。**从 2026-08-16 起，`additive` 不再是
+> 产品档**（见 08-16 spec §4 / §8.4）：减法失败 = 不能进 Weft。本表历史行仍按
+> 当时分类记录，不要改写。
 >
 > 6321 这一行是在**未注入**的纯净原生 DOM 上采集的（`injection.mode === null`、
 > 无 `weft-codex-*` 根节点与样式），因此测到的是宿主自身结构，不含 Weft 影响。

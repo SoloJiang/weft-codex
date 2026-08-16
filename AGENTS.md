@@ -3,8 +3,10 @@
 ## What you're working on
 
 weft-codex: Weft 的编排能力移植到 Codex Desktop 的独立项目。Rust workspace
-（`crates/`）+ 未来的 TS launcher 与 React UI。创始设计文档在
-`docs/specs/2026-08-08-codex-desktop-migration-design.md`，先读它再动手。
+（`crates/`）+ 未来的 TS launcher 与 React UI。产品形态与 Desktop 壳层的规范在
+`docs/specs/2026-08-16-weft-third-mode-design.md`（canonical）。
+协议 spike 与 bus 投递经验仍在
+`docs/specs/2026-08-08-codex-desktop-migration-design.md` §5–6、§9。
 
 ## Hard constraints
 
@@ -17,7 +19,7 @@ weft-codex: Weft 的编排能力移植到 Codex Desktop 的独立项目。Rust w
 - 改控件外观前先读 `DESIGN.md`：宿主是真相且数值都是真机实测；视觉属性写
   `index.css`（unlayered 永远赢 Tailwind utilities，堆在组件上的视觉类不生效）。
 - app-server 协议变更以 `codex app-server generate-json-schema`（本机安装
-  版本）为准；协议经验记录在 spec §9。
+  版本）为准；协议经验记录在 08-08 spec §9。
 - Bus 投递语义：活跃 turn 用 `turn/steer`，空闲用 `turn/start`；
   **活跃期间 `turn/start` 会被静默丢弃**（spike 实证）。
 

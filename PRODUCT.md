@@ -76,8 +76,11 @@ Weft”。官方 plugin 目前没有模式级 contribution point，因此 Deskto
 Weft，提示修复，保持 ChatGPT / Codex 可用。禁止两条假降级：打开浏览器当
 Weft，或在 Codex 模式里塞一行入口冒充第三种模式。
 
-实现分层与探针见 `docs/specs/2026-08-08-codex-desktop-migration-design.md` §7.5。
-`standalone` surface 不是产品形态的一部分。
+实现分层与探针见
+[`docs/specs/2026-08-16-weft-third-mode-design.md`](docs/specs/2026-08-16-weft-third-mode-design.md)
+§8。协议 spike 仍在
+[`docs/specs/2026-08-08-codex-desktop-migration-design.md`](docs/specs/2026-08-08-codex-desktop-migration-design.md)
+§5–6、§9。Vite 顶层页只作开发预览，不是产品形态的一部分。
 
 ## Brand Personality
 

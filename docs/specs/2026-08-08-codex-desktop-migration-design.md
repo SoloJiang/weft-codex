@@ -1,5 +1,14 @@
 # Weft 迁移至 Codex Desktop 设计（2026-08-08）
 
+> **产品形态与 Desktop 壳层已被
+> [`2026-08-16-weft-third-mode-design.md`](2026-08-16-weft-third-mode-design.md)
+> 取代。** 新实现以 08-16 为准。本文仍保留：编排 / bus / curator 决策、
+> §5–6 线程绑定、§9 协议经验。历史 Stage 记录与当时的 iframe / Tier 1 假设
+> 不再约束实现。
+>
+> 产品范围与用户可见决策以 [`PRODUCT.md`](../../PRODUCT.md) 为准。
+> 协议字段以本机 `codex app-server generate-json-schema` 为准（见 §9）。
+
 ## 1. 背景与目标
 
 停发 Weft Tauri 客户端，把产品能力移植进 Codex Desktop。聊天表面全部委托给
