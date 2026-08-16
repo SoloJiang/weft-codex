@@ -46,6 +46,11 @@ Vite 顶层页只作开发预览。
 - 兼容矩阵里历史 `additive` 行仍是当时实测，不再是产品档。
 - 官方若出模式级 API，只换 launcher 壳，不换 weftd。
 
+同文档壳落地之后，#58 跟踪的「host-context 握手超时、重试即成功」不再存在。
+launcher 等的是 `mountWeft` 的 `uiReady`；CSP reload 后预算是 15s / 8s，失败
+文案区分「宿主壳没出来」和「Weft UI 没挂上」。真机若还偶发，另开 shadow
+挂载问题，不要按 iframe 握手去改。
+
 ## 翻案条件
 
 只有在官方提供稳定的 `ui.sidebar` / 模式 contribution，或同文档挂载被发行版
