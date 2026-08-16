@@ -3,9 +3,12 @@
 //! The UI supplies paths; the daemon owns validation and Git discovery so
 //! every surface (standalone today, Desktop later) gets identical behavior.
 
-use anyhow::Context;
 use std::path::{Path, PathBuf};
+
+use anyhow::Context;
 use tokio::process::Command;
+
+use crate::api_error::ApiError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InspectedRepo {
@@ -96,7 +99,13 @@ fn derived_name(path: &Path) -> anyhow::Result<String> {
         .map(str::trim)
         .filter(|name| !name.is_empty())
         .map(str::to_string)
-        .ok_or_else(|| anyhow::anyhow!("invalid repository name for {}", path.display()))
+        .ok_or_else(|| {
+            ApiError::bad_request(
+                "invalid_repo",
+                format!("invalid repository name for {}", path.display()),
+            )
+            .into()
+        })
 }
 
 /// Validate a user-supplied local path and derive its durable registration
@@ -107,28 +116,41 @@ pub async fn inspect_local_repo(
 ) -> anyhow::Result<InspectedRepo> {
     let requested_path = requested_path.trim();
     if requested_path.is_empty() {
-        anyhow::bail!("invalid repository path: path is required");
+        return Err(ApiError::bad_request("invalid_repo", "path is required").into());
     }
     if requested_path.chars().count() > 4096 {
-        anyhow::bail!("invalid repository path: path is too long");
+        return Err(ApiError::bad_request("invalid_repo", "path is too long").into());
     }
 
     let input = PathBuf::from(requested_path);
-    let canonical_input = tokio::task::spawn_blocking(move || std::fs::canonicalize(&input))
+    let canonical_input = match tokio::task::spawn_blocking(move || std::fs::canonicalize(&input))
         .await
         .context("join repository path canonicalization")?
-        .with_context(|| format!("invalid repository path {requested_path:?}"))?;
+    {
+        Ok(path) => path,
+        Err(_) => {
+            return Err(ApiError::bad_request(
+                "invalid_repo",
+                format!("invalid repository path {requested_path:?}"),
+            )
+            .into());
+        }
+    };
     if !canonical_input.is_dir() {
-        anyhow::bail!(
-            "invalid repository path: {} is not a directory",
-            canonical_input.display()
-        );
+        return Err(ApiError::bad_request(
+            "invalid_repo",
+            format!("{} is not a directory", canonical_input.display()),
+        )
+        .into());
     }
 
     let root = git(&canonical_input, &["rev-parse", "--show-toplevel"])
         .await
         .map_err(|_| {
-            anyhow::anyhow!("invalid repository path: {requested_path:?} is not a Git repository")
+            ApiError::bad_request(
+                "invalid_repo",
+                format!("{requested_path:?} is not a Git repository"),
+            )
         })?;
     let root_path = PathBuf::from(root);
     let canonical_root = tokio::task::spawn_blocking(move || std::fs::canonicalize(&root_path))
@@ -139,9 +161,9 @@ pub async fn inspect_local_repo(
     git(&canonical_root, &["rev-parse", "--verify", "HEAD^{commit}"])
         .await
         .map_err(|_| {
-            anyhow::anyhow!(
-                "invalid repository: {} has no commits",
-                canonical_root.display()
+            ApiError::bad_request(
+                "invalid_repo",
+                format!("{} has no commits", canonical_root.display()),
             )
         })?;
 
@@ -151,7 +173,7 @@ pub async fn inspect_local_repo(
         None => derived_name(&canonical_root)?,
     };
     if name.chars().count() > 120 {
-        anyhow::bail!("invalid repository name: name is too long");
+        return Err(ApiError::bad_request("invalid_repo", "name is too long").into());
     }
 
     let (base_ref, base_ref_is_default) = discover_base_ref(&canonical_root).await;

@@ -1,9 +1,9 @@
 //! HTTP API for the weft-codex kanban UI (Stage 3 consumes this). Served by
 //! the same axum listener as the MCP bus; the daemon merges both routers.
 //!
-//! Error mapping is intentionally crude string-sniffing for now (internal
-//! tool): "unknown …" → 404, "already has …" → 409, validation wording →
-//! 400, everything else → 500 with the full anyhow chain in the body.
+//! Classified failures are [`crate::api_error::ApiError`] (and [`ArtifactError`]
+//! for documents). `fail()` walks the anyhow chain for one of those; anything
+//! else is 500. It does not sniff message text.
 
 use axum::{
     extract::{Path, Query, State},
@@ -19,6 +19,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio_stream::StreamExt;
 
+use crate::api_error::{classified, ApiError};
 use crate::orchestrator::Orchestrator;
 use crate::store::{ArtifactError, ArtifactRow, ArtifactStatus, NewArtifact, Store};
 use crate::{curator, events, repo_intake};
@@ -77,7 +78,10 @@ pub fn router(state: ApiState) -> Router {
 /// skipped — events are advisory, never load-bearing.
 async fn sse_events() -> Response {
     let Some(rx) = events::subscribe() else {
-        return fail(anyhow::anyhow!("invalid: events channel not installed"));
+        return reject(ApiError::bad_request(
+            "events_unavailable",
+            "events channel not installed",
+        ));
     };
     let stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(|item| {
         let (event, value) = item.ok()?;
@@ -88,21 +92,28 @@ async fn sse_events() -> Response {
     Sse::new(stream).into_response()
 }
 
+fn http_status(code: u16) -> StatusCode {
+    match code {
+        400 => StatusCode::BAD_REQUEST,
+        404 => StatusCode::NOT_FOUND,
+        409 => StatusCode::CONFLICT,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    }
+}
+
+fn reject(error: ApiError) -> Response {
+    (http_status(error.status()), Json(error.body())).into_response()
+}
+
 fn fail(e: anyhow::Error) -> Response {
-    let msg = format!("{e:#}");
-    let status = if msg.contains("unknown") {
-        StatusCode::NOT_FOUND
-    } else if msg.contains("already has")
-        || msg.contains("no Codex thread")
-        || msg.contains("cannot complete task")
-    {
-        StatusCode::CONFLICT
-    } else if msg.contains("invalid") || msg.contains("not in") || msg.contains("required") {
-        StatusCode::BAD_REQUEST
-    } else {
-        StatusCode::INTERNAL_SERVER_ERROR
-    };
-    (status, Json(json!({ "error": msg }))).into_response()
+    if let Some(api) = classified(&e) {
+        return reject(api.clone());
+    }
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(json!({ "code": "internal", "error": format!("{e:#}") })),
+    )
+        .into_response()
 }
 
 fn ok(value: Value) -> Response {
@@ -368,7 +379,7 @@ async fn promote_lead_thread(
 ) -> Response {
     let thread_id = body.thread_id.trim();
     if thread_id.is_empty() {
-        return fail(anyhow::anyhow!("invalid empty thread_id"));
+        return reject(ApiError::bad_request("empty_thread_id", "empty thread_id"));
     }
     match state.store.promote_lead_thread(issue_id, thread_id).await {
         Ok(()) => {
@@ -508,13 +519,15 @@ async fn import_repos(
     Json(body): Json<ImportRepos>,
 ) -> Response {
     if body.paths.is_empty() {
-        return fail(anyhow::anyhow!(
-            "invalid repository import: at least one path is required"
+        return reject(ApiError::bad_request(
+            "import_empty",
+            "at least one path is required",
         ));
     }
     if body.paths.len() > 64 {
-        return fail(anyhow::anyhow!(
-            "invalid repository import: at most 64 paths are allowed"
+        return reject(ApiError::bad_request(
+            "import_too_many",
+            "at most 64 paths are allowed",
         ));
     }
 
@@ -700,7 +713,7 @@ async fn resolve_thread(
     Json(body): Json<ResolveThread>,
 ) -> Response {
     if !valid_thread_id(&body.thread_id) {
-        return fail(anyhow::anyhow!("invalid thread id"));
+        return reject(ApiError::bad_request("invalid_thread_id", "invalid thread id"));
     }
     let binding = match state.orch.resolve_thread_binding(&body.thread_id).await {
         Ok(binding) => binding,
@@ -711,7 +724,7 @@ async fn resolve_thread(
     };
     let issue = match state.store.get_issue(binding.issue_id).await {
         Ok(Some(issue)) => issue,
-        Ok(None) => return fail(anyhow::anyhow!("unknown issue {}", binding.issue_id)),
+        Ok(None) => return reject(ApiError::not_found("issue", binding.issue_id)),
         Err(error) => return fail(error),
     };
     ok(json!({ "binding": binding, "workspaceId": issue.workspace_id }))
@@ -742,7 +755,7 @@ async fn message_lead(
     Json(body): Json<Message>,
 ) -> Response {
     if body.text.trim().is_empty() {
-        return fail(anyhow::anyhow!("invalid empty message text"));
+        return reject(ApiError::bad_request("empty_message", "empty message text"));
     }
     match state.orch.human_message_lead(issue_id, &body.text).await {
         Ok(()) => ok(json!({ "queued": true })),
@@ -756,7 +769,7 @@ async fn message_direction(
     Json(body): Json<Message>,
 ) -> Response {
     if body.text.trim().is_empty() {
-        return fail(anyhow::anyhow!("invalid empty message text"));
+        return reject(ApiError::bad_request("empty_message", "empty message text"));
     }
     match state
         .orch
@@ -798,13 +811,14 @@ async fn bus_log(State(state): State<ApiState>, Path(issue_id): Path<i64>) -> Re
 async fn analyze_repo(State(state): State<ApiState>, Path(repo_id): Path<i64>) -> Response {
     match state.store.get_repo(repo_id).await {
         Ok(Some(_)) => {}
-        Ok(None) => return fail(anyhow::anyhow!("unknown repo {repo_id}")),
+        Ok(None) => return reject(ApiError::not_found("repo", repo_id)),
         Err(e) => return fail(e),
     }
     match state.store.get_profile(repo_id).await {
         Ok(Some(p)) if p.run_state == "running" => {
-            return fail(anyhow::anyhow!(
-                "repo {repo_id} already has a running analysis"
+            return reject(ApiError::conflict(
+                "already_running",
+                format!("repo {repo_id} already has a running analysis"),
             ));
         }
         Ok(_) => {}
@@ -825,7 +839,7 @@ async fn analyze_repo(State(state): State<ApiState>, Path(repo_id): Path<i64>) -
 async fn repo_profile(State(state): State<ApiState>, Path(repo_id): Path<i64>) -> Response {
     match state.store.get_profile(repo_id).await {
         Ok(Some(p)) => ok(json!(p)),
-        Ok(None) => fail(anyhow::anyhow!("unknown profile for repo {repo_id}")),
+        Ok(None) => reject(ApiError::not_found("profile", repo_id)),
         Err(e) => fail(e),
     }
 }
@@ -838,8 +852,9 @@ async fn analyze_workspace(
 ) -> Response {
     match state.store.list_repos(workspace_id).await {
         Ok(repos) if repos.is_empty() => {
-            return fail(anyhow::anyhow!(
-                "invalid analyze: workspace {workspace_id} has no repos"
+            return reject(ApiError::bad_request(
+                "workspace_empty",
+                format!("workspace {workspace_id} has no repos"),
             ));
         }
         Ok(_) => {}
@@ -898,4 +913,33 @@ async fn repo_map(State(state): State<ApiState>, Path(workspace_id): Path<i64>) 
         Err(e) => return fail(e),
     };
     ok(json!({ "repos": entries, "relations": relations, "repoMap": doc }))
+}
+
+#[cfg(test)]
+mod fail_tests {
+    use super::*;
+
+    #[test]
+    fn a_message_that_says_unknown_is_not_a_404() {
+        let response = fail(anyhow::anyhow!("unknown internal invariant broken"));
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn a_classified_unknown_issue_is_404() {
+        let response = fail(ApiError::not_found("issue", 3).into());
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn a_classified_conflict_is_409() {
+        let response = fail(ApiError::conflict("cannot_complete", "cannot complete task 1 from status \"working\"; expected review").into());
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[test]
+    fn a_classified_bad_request_is_400() {
+        let response = fail(ApiError::bad_request("empty_message", "empty message text").into());
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
 }

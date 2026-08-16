@@ -5,6 +5,7 @@
 )]
 
 pub mod api;
+pub mod api_error;
 pub mod brief;
 pub mod bus;
 pub mod cors;

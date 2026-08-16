@@ -5,11 +5,14 @@
 //! `ALTER TABLE` guards; a real migration framework lands when the schema
 //! starts churning.
 
+use std::path::Path;
+use std::str::FromStr;
+
 use anyhow::Context;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::{Row, SqlitePool};
-use std::path::Path;
-use std::str::FromStr;
+
+use crate::api_error::ApiError;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS workspace (
@@ -710,12 +713,16 @@ impl Store {
                 .context("register_repo workspace")?
                 .is_some();
         if !workspace_exists {
-            anyhow::bail!("unknown workspace {workspace_id}");
+            return Err(ApiError::not_found("workspace", workspace_id).into());
         }
         let name = name.trim();
         let path = path.trim();
         if name.is_empty() || path.is_empty() {
-            anyhow::bail!("invalid repository: name and path are required");
+            return Err(ApiError::bad_request(
+                "invalid_repo",
+                "name and path are required",
+            )
+            .into());
         }
 
         let existing = self.list_repos(workspace_id).await?;
@@ -853,7 +860,11 @@ impl Store {
     pub async fn set_last_workspace_id(&self, id: Option<i64>) -> anyhow::Result<()> {
         if let Some(workspace_id) = id {
             if workspace_id <= 0 {
-                anyhow::bail!("invalid last workspace id");
+                return Err(ApiError::bad_request(
+                    "invalid_workspace_id",
+                    "invalid last workspace id",
+                )
+                .into());
             }
             let exists = sqlx::query_scalar::<_, i64>("SELECT id FROM workspace WHERE id = ?")
                 .bind(workspace_id)
@@ -861,7 +872,7 @@ impl Store {
                 .await
                 .context("check last workspace")?;
             if exists.is_none() {
-                anyhow::bail!("unknown workspace {workspace_id}");
+                return Err(ApiError::not_found("workspace", workspace_id).into());
             }
             sqlx::query(
                 "INSERT INTO ui_pref (key, value) VALUES (?, ?)
@@ -917,13 +928,25 @@ impl Store {
         let title = title.trim();
         let slug = slug.trim();
         if title.is_empty() || slug.is_empty() {
-            anyhow::bail!("invalid issue: title and slug are required");
+            return Err(ApiError::bad_request(
+                "invalid_issue",
+                "title and slug are required",
+            )
+            .into());
         }
         if title.chars().count() > 120 || slug.chars().count() > 120 {
-            anyhow::bail!("invalid issue: title or slug is too long");
+            return Err(ApiError::bad_request(
+                "invalid_issue",
+                "title or slug is too long",
+            )
+            .into());
         }
         if !ISSUE_KINDS.contains(&kind) {
-            anyhow::bail!("invalid issue kind {kind:?}");
+            return Err(ApiError::bad_request(
+                "invalid_issue_kind",
+                format!("invalid issue kind {kind:?}"),
+            )
+            .into());
         }
         let workspace_exists =
             sqlx::query_scalar::<_, i64>("SELECT id FROM workspace WHERE id = ?")
@@ -933,7 +956,7 @@ impl Store {
                 .context("create_issue workspace")?
                 .is_some();
         if !workspace_exists {
-            anyhow::bail!("unknown workspace {workspace_id}");
+            return Err(ApiError::not_found("workspace", workspace_id).into());
         }
         let row = sqlx::query(
             "INSERT INTO issue (workspace_id, title, slug, kind, created_at)
@@ -982,14 +1005,22 @@ impl Store {
         .fetch_optional(&mut *tx)
         .await
         .context("load binding")?
-        .ok_or_else(|| anyhow::anyhow!("unknown thread {thread_id}"))?;
+        .ok_or(ApiError::not_found("thread", thread_id))?;
         if binding.issue_id != issue_id {
-            anyhow::bail!("invalid: thread {thread_id} is not in issue {issue_id}");
+            return Err(ApiError::bad_request(
+                "thread_not_in_issue",
+                format!("thread {thread_id} is not in issue {issue_id}"),
+            )
+            .into());
         }
         if binding.direction_id.is_some() {
             // A worker thread has its own primary within its task; promoting it
             // to lead would make one thread answer to two parties on the bus.
-            anyhow::bail!("invalid: thread {thread_id} belongs to a task, not the lead");
+            return Err(ApiError::bad_request(
+                "thread_is_task",
+                format!("thread {thread_id} belongs to a task, not the lead"),
+            )
+            .into());
         }
 
         let now = now_unix();
@@ -1024,7 +1055,7 @@ impl Store {
         let issue = self
             .get_issue(issue_id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("unknown issue {issue_id}"))?;
+            .ok_or(ApiError::not_found("issue", issue_id))?;
         let now = now_unix();
         let mut tx = self.pool.begin().await.context("set_lead_thread begin")?;
         sqlx::query("UPDATE issue SET lead_codex_thread_id = ? WHERE id = ?")
@@ -1525,7 +1556,7 @@ impl Store {
         let direction = self
             .get_direction(id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("unknown direction {id}"))?;
+            .ok_or(ApiError::not_found("direction", id))?;
         let now = now_unix();
         let mut tx = self
             .pool
@@ -1555,7 +1586,7 @@ impl Store {
         let direction = self
             .get_direction(id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("unknown direction {id}"))?;
+            .ok_or(ApiError::not_found("direction", id))?;
         let now = now_unix();
         let mut tx = self
             .pool
@@ -2915,12 +2946,24 @@ mod tests {
             .expect("worker");
 
         // Another issue's lead.
-        assert!(store.promote_lead_thread(mine, "their-lead").await.is_err());
+        let foreign = store.promote_lead_thread(mine, "their-lead").await.unwrap_err();
+        assert_eq!(
+            crate::api_error::classified(&foreign).map(ApiError::code),
+            Some("thread_not_in_issue"),
+        );
         // A worker thread: promoting it would make one thread answer to two
         // parties on the bus.
-        assert!(store.promote_lead_thread(mine, "worker-1").await.is_err());
+        let worker = store.promote_lead_thread(mine, "worker-1").await.unwrap_err();
+        assert_eq!(
+            crate::api_error::classified(&worker).map(ApiError::code),
+            Some("thread_is_task"),
+        );
         // Something we have never seen.
-        assert!(store.promote_lead_thread(mine, "ghost").await.is_err());
+        let ghost = store.promote_lead_thread(mine, "ghost").await.unwrap_err();
+        assert_eq!(
+            crate::api_error::classified(&ghost).map(ApiError::code),
+            Some("not_found"),
+        );
 
         let refreshed = store.get_issue(mine).await.expect("issue").expect("row");
         assert_eq!(

@@ -15,6 +15,7 @@ use weft_app_server::client as codex;
 use weft_app_server::client::ThreadMsg;
 use weft_app_server::proto::ChatEvent;
 
+use crate::api_error::ApiError;
 use crate::events;
 use crate::runtime;
 use crate::store::{RelationRow, Store};
@@ -299,10 +300,14 @@ pub async fn analyze_repo(store: &Store, repo_id: i64) -> anyhow::Result<()> {
     let repo = store
         .get_repo(repo_id)
         .await?
-        .ok_or_else(|| anyhow::anyhow!("unknown repo {repo_id}"))?;
+        .ok_or(ApiError::not_found("repo", repo_id))?;
     if let Some(p) = store.get_profile(repo_id).await? {
         if p.run_state == "running" {
-            anyhow::bail!("repo {repo_id} already has a running analysis");
+            return Err(ApiError::conflict(
+                "already_running",
+                format!("repo {repo_id} already has a running analysis"),
+            )
+            .into());
         }
     }
 
