@@ -714,6 +714,14 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] [data-weft-codex-native-header-action] {
           display: none !important;
         }
+        /* The header title belongs to the thread that is on stage, and on the
+           workspace stage there is none — leaving it up hangs the last Lead's
+           first line above the board. Hidden rather than removed: the header
+           itself is the window drag band, and collapsing the box would take
+           that band down with it. */
+        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"][data-weft-codex-view="workspace"] [data-testid="app-shell-header-context-menu-surface"] {
+          visibility: hidden;
+        }
         html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] [data-app-action-sidebar-scroll] > :not(#${SIDEBAR_ROOT_ID}) {
           display: none !important;
         }
