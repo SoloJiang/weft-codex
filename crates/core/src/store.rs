@@ -142,6 +142,16 @@ CREATE TABLE IF NOT EXISTS ui_pref (
 );
 ";
 
+/// Matches the floor and ceiling `stage-split.tsx` enforces against the live
+/// stage. Duplicated deliberately: the column must stay sane even if a client
+/// posts something the UI never would.
+const DETAIL_PANE_MIN_WIDTH: i64 = 320;
+const DETAIL_PANE_MAX_WIDTH: i64 = 1200;
+
+fn clamp_detail_pane_width(width: i64) -> i64 {
+    width.clamp(DETAIL_PANE_MIN_WIDTH, DETAIL_PANE_MAX_WIDTH)
+}
+
 /// A connected store handle. Cheap to clone (Arc inside the pool).
 #[derive(Clone)]
 pub struct Store {
@@ -895,6 +905,46 @@ impl Store {
             .execute(&self.pool)
             .await
             .context("clear last_workspace_id")?;
+        Ok(())
+    }
+
+    /// How wide the human dragged the issue detail pane, in CSS pixels.
+    ///
+    /// Clamped on read as well as on write: the stored value outlives the
+    /// window it was chosen in, and a width that made sense on an external
+    /// display would otherwise come back on a laptop as a pane wider than the
+    /// stage. The UI clamps against the live stage too; this bound only keeps
+    /// nonsense out of the column.
+    pub async fn detail_pane_width(&self) -> anyhow::Result<Option<i64>> {
+        let row = sqlx::query("SELECT value FROM ui_pref WHERE key = ?")
+            .bind("detail_pane_width")
+            .fetch_optional(&self.pool)
+            .await
+            .context("detail_pane_width")?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        Ok(row.get::<String, _>("value").parse::<i64>().ok().map(clamp_detail_pane_width))
+    }
+
+    pub async fn set_detail_pane_width(&self, width: Option<i64>) -> anyhow::Result<()> {
+        let Some(width) = width else {
+            sqlx::query("DELETE FROM ui_pref WHERE key = ?")
+                .bind("detail_pane_width")
+                .execute(&self.pool)
+                .await
+                .context("clear detail_pane_width")?;
+            return Ok(());
+        };
+        sqlx::query(
+            "INSERT INTO ui_pref (key, value) VALUES (?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .bind("detail_pane_width")
+        .bind(clamp_detail_pane_width(width).to_string())
+        .execute(&self.pool)
+        .await
+        .context("set detail_pane_width")?;
         Ok(())
     }
 
@@ -1999,6 +2049,35 @@ mod tests {
         let dir = tempfile::tempdir().expect("tmp");
         let store = Store::open(&dir.path().join("t.db")).await.expect("open");
         (store, dir)
+    }
+
+    #[tokio::test]
+    async fn detail_pane_width_round_trips_and_stays_in_bounds() {
+        let (store, _dir) = fixture().await;
+        assert_eq!(store.detail_pane_width().await.expect("empty"), None);
+
+        store
+            .set_detail_pane_width(Some(540))
+            .await
+            .expect("remember");
+        assert_eq!(store.detail_pane_width().await.expect("read"), Some(540));
+
+        // A width chosen on a wide external display must not come back as a
+        // pane wider than a laptop's whole stage.
+        store
+            .set_detail_pane_width(Some(9000))
+            .await
+            .expect("clamp high");
+        assert_eq!(store.detail_pane_width().await.expect("read high"), Some(1200));
+
+        store
+            .set_detail_pane_width(Some(10))
+            .await
+            .expect("clamp low");
+        assert_eq!(store.detail_pane_width().await.expect("read low"), Some(320));
+
+        store.set_detail_pane_width(None).await.expect("forget");
+        assert_eq!(store.detail_pane_width().await.expect("cleared"), None);
     }
 
     #[tokio::test]
