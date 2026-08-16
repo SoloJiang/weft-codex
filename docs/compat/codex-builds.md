@@ -28,6 +28,7 @@
 |---|---|---|---|---|---|
 | 26.727.51351 | 6119 | `weft-mode` | 2026-08-08 / 2026-08-09 | 真机 launcher probe + Stage 2–4 真机闭环 | **PASS**（见 spec §7.5 / §9 / §10） |
 | 26.803.41515 | 6321 | `weft-mode` | 2026-08-10 | `node dist/cli.js probe --endpoint=… --target-url='app://-/index.html'`，专用 profile + `--safe-mode`（无注入、无 weftd）；CSP 与协议轴另测，见 §3 / §4 | **PASS**，但有 3 项假阳性/语义问题，见 §5 |
+| 26.810.52044 | 6662 | `weft-mode` | 2026-08-16 | 同上（专用 profile + `--safe-mode`，`injected` 计数为 0）；CSP 与协议轴本次未复验，§3 / §4 仍停在 6321 | **初测 FAIL**：`safe-mode`，两个 token 别名消失；改读底层 `--vscode-*` 后 31 项全绿。见 §8 |
 
 > Tier 取值与采集当时 `launcher/src/probes.ts` 的 `CompatibilityTier` 一致：
 > `safe-mode` / `additive` / `weft-mode`。**从 2026-08-16 起，`additive` 不再是
@@ -96,6 +97,37 @@
 | 6321 | `theme.radiusLarge` | additive | true | `calc(.625rem * 1.25)` |
 | 6321 | `theme.radiusMedium` | additive | true | `calc(.5rem * 1.25)` |
 | 6321 | `theme.radiusSmall` | additive | true | `calc(.375rem * 1.25)` |
+| 6662 | `renderer.root` | base | true | `#root` |
+| 6662 | `renderer.main` | base | true | 文档内仍有 2 个 `main`（同 6321 的 inert 旧路由），可见路由解析成功 |
+| 6662 | `sidebar.scroll` | base | true | n=1 |
+| 6662 | `sidebar.section` | optional | true | n=2 |
+| 6662 | `sidebar.heading` | optional | true | n=2 |
+| 6662 | `sidebar.projectCreate` | optional | true | n=1 |
+| 6662 | `sidebar.threadRow` | base | true | n=32 |
+| 6662 | `sidebar.threadRoute` | base | true | n=32 |
+| 6662 | `sidebar.threadActive` | base | true | n=32 |
+| 6662 | `mode.switcher` | base | true | `nav` 作用域内排除 sidebar 后恰好 1 个触发器；id 为 `radix-_r_4_`（6321 是 `radix-_r_3_`，Radix 生成值本就不稳定，见 §5.5） |
+| 6662 | `sidebar.headerActionSlot` | optional | true | 模式行恰好 1 个非模式按钮的元素子节点 |
+| 6662 | `host.locale` | base | true | `en-GB` |
+| 6662 | `titlebar.dragRegion` | base | true | 可见 `main` 作用域内检出 |
+| 6662 | `theme.sidebarSurface` | base | true | `#f2f2f3`（`--vscode-sideBar-background`） |
+| 6662 | `theme.mainSurface` | base | true | `#fafafa` |
+| 6662 | `theme.dropdownSurface` | base | true | `rgb(251, 251, 251)` |
+| 6662 | `theme.foreground` | base | true | `#383a42` |
+| 6662 | `theme.secondaryText` | optional | true | `color-mix(in srgb, #383a42 65%, transparent)`。2026-08-16 由 `additive`(=base) 降为 `optional`，见 §8.2 |
+| 6662 | `theme.border` | optional | true | `rgba(56, 58, 66, 0.078)`。同上降级 |
+| 6662 | `theme.borderHeavy` | optional | true | `rgba(56, 58, 66, 0.117)`。同上降级 |
+| 6662 | `theme.primary` | optional | true | `#526fff`（与 6321 相同）。同上降级 |
+| 6662 | `theme.buttonForeground` | optional | true | `#fafafa`。**探针改读 `--vscode-button-foreground`**：原别名 `--color-token-button-foreground` 在 6662 已不存在，值不变，见 §8.1 |
+| 6662 | `theme.linkForeground` | optional | true | `#526fff`。同上降级 |
+| 6662 | `theme.inputBackground` | optional | true | `rgba(251, 251, 251, 0.96)`。**探针改读 `--vscode-input-background`**，原别名已不存在，值不变，见 §8.1 |
+| 6662 | `theme.inputBorder` | optional | true | `rgba(56, 58, 66, 0.117)`。同上降级 |
+| 6662 | `theme.hoverBackground` | optional | true | `rgba(56, 58, 66, 0.053)`。同上降级 |
+| 6662 | `theme.fontSans` | base | true | `Maple Mono NF CN, -apple-system, …`（受用户字体设置影响，非稳定基线，见 §5.7） |
+| 6662 | `theme.fontMono` | base | true | `Maple Mono NF CN, ui-monospace, …`（同上） |
+| 6662 | `theme.radiusLarge` | optional | true | `calc(.625rem * 1.25)`。同 §8.2 降级；`applyRadiusTokens` 本就跳过读不到的半径 |
+| 6662 | `theme.radiusMedium` | optional | true | `calc(.5rem * 1.25)`。同上降级 |
+| 6662 | `theme.radiusSmall` | optional | true | `calc(.375rem * 1.25)`。同上降级 |
 
 ### 2.1 已使用但未被探测的锚点（升级盲区）
 
@@ -524,3 +556,54 @@ tier 已回到基线；但中途崩溃会留下被改过的 renderer，重新加
    构建。
 4. **null 结果不是结论。** 合成事件没反应可能是事件没送达（`⌘K` 被 OS 菜单层拦下
    即此例）。先用已知为真的目标验证探针本身有效，再解读 null。
+
+## 8. 已知增量与问题（6321 → 6662）
+
+本节是本矩阵**第一次真的抓到回归**——而且是在用户机器上先坏、事后才补记录的，
+不是 CI 拦下来的。宿主于 2026-08-15 20:24 自更新到 6662，次日第一次真机启动即
+落进 safe mode。
+
+### 8.1 别名层收缩：两个 `--color-token-*` 消失
+
+`--color-token-button-foreground` 与 `--color-token-input-background` 在 6662
+上读不出值。这不是主题差异：同一次采集里其余 16 个 token 的值与 6321 行**逐字节
+相同**，字体、圆角、主色全部未变。
+
+三处证据一致：
+
+| 观测 | 结果 |
+|---|---|
+| `app.asar` 内出现次数 | 两个名字均为 **0**（`--color-token-primary` 23 次、`--color-token-input-border` 2 次） |
+| 运行时 `getComputedStyle(document.documentElement)` | 两项均为空串 |
+| 底层 `--vscode-*` | `--vscode-button-foreground` = `#fafafa`，`--vscode-input-background` = `rgba(251, 251, 251, 0.96)` |
+
+Codex 的 `--color-token-*` 本就是架在 `--vscode-*` 上的一层别名，包内可见其定义
+形如 `--color-token-input-border: var(--vscode-input-border, transparent)`。6662
+只是把这两条别名从该块里删掉了，底层变量与值都还在——所以探针改读 `--vscode-*`
+既恢复判定，又不改变任何观感。`theme.sidebarSurface` 从一开始就是这么取的，本次
+只是让另外两项跟上同一做法。
+
+同批修的还有 renderer agent 收件箱角标：它是全代码库**唯一**一处不带兜底的
+`var(--color-token-button-foreground)`，6662 上角标文字会掉回继承色、压在主色底
+上。`ui/src/index.css` 的 5 处消费点都带 `--fb-*` 兜底，因此只损失宿主保真度
+（`--fb-on-accent: #ffffff` vs 宿主 `#fafafa`），不影响可用性。
+
+### 8.2 token 分级收回 spec 的核心档
+
+真正让两个配色别名足以杀死整个产品的，是 `tokenProbe()` 把 18 个 token **一律**
+写死成 `requiredFor: "base"`。这比 spec 严：08-16 spec §8.3 写的是「缺**核心**表面 /
+前景 / 字体则探针失败」，§8.4 表格写的是「主题**核心** token」。
+
+现在 `base` 只留 spec 点名的六项：`theme.sidebarSurface` / `mainSurface` /
+`dropdownSurface`（表面）、`theme.foreground`（前景）、`theme.fontSans` /
+`fontMono`（字体）。其余 12 项降为 `optional`——照常探测、照常在 `detail` 里报出
+缺失，只是不再一票否决。
+
+判据与 §5.8 是同一条，只是换了个轴：**定 `requiredFor` 之前先问缺失的真实代价。**
+`sidebar.scroll` 没了就没地方挂 Weft 侧栏，是功能损失；`--color-token-primary`
+没了只是主色掉回 `--fb-accent`，是保真度损失。用 safe mode 惩罚后者，等于拿一次
+功能性回归去换一次观感回归——正是 §5.9 定 `headerActionSlot` 为 `optional` 时
+拒绝过的那笔交易。
+
+历史行的 `additive` 与当时的 `base` 同义（见 §2 表头注），本次降级只体现在 6662
+行；6119 / 6321 行按采集当时的分级保留。

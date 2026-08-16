@@ -222,13 +222,32 @@ function threadAnchorProbe(
   return selectorProbe(snapshot, id, requiredFor)
 }
 
+/**
+ * The tokens spec §8.3 actually gates Weft on: core surfaces, foreground, fonts.
+ *
+ * The rest are cosmetic. Every one of them is consumed through a fallback in
+ * `ui/src/index.css`, and `applyRadiusTokens` already skips radii it cannot
+ * read, so losing one costs fidelity to the host palette — not usability.
+ * Gating on all eighteen is what let build 6662 lock the whole product out by
+ * renaming two colour aliases, which is the trade §5.8 warns against: a
+ * cosmetic regression is not worth buying with a functional one.
+ */
+const CORE_TOKEN_PROBES = new Set([
+  "theme.sidebarSurface",
+  "theme.mainSurface",
+  "theme.dropdownSurface",
+  "theme.foreground",
+  "theme.fontSans",
+  "theme.fontMono",
+])
+
 function tokenProbe(snapshot: RendererSnapshot, id: string, token: string): CapabilityProbe {
   const value = snapshot.tokens[token]?.trim() ?? ""
   return {
     id,
     ok: Boolean(value),
     detail: value || `Missing ${token}`,
-    requiredFor: "base",
+    requiredFor: CORE_TOKEN_PROBES.has(id) ? "base" : "optional",
   }
 }
 
