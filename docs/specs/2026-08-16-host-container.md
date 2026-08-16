@@ -195,8 +195,15 @@ standalone 浏览器没有 stage 概念，保留整页 `view=issue` 作为降级
 **这会改动 08-16 spec §8.7**——它现在写着侧栏含「issue 树（Lead / Tasks /
 fork）」。落地时同步修订，不要让两份文档各说各话。
 
-现状仍是侧栏内联 `.sidebar-expanded-issue` + `IssueConversationTree`，迁移完成
-前保持不变。
+**已落地**：侧栏的 `.sidebar-expanded-issue` 整块拆除，Lead 的主会话与 fork 迁进
+详情栏的「会话」段（`LeadConversations`），产物列表一并迁入。
+
+迁移时只搬了会话树的 Lead 一半。它原本的 Tasks 一半没有搬——详情栏本来就逐个列出
+任务且每个都带自己的会话入口，再画一份就是一件事两个控件。
+
+侧栏因此不再需要展开态：`activeIssueId` 已经同时覆盖「线程打开的 issue」与「详情
+打开的 issue」两种情况，原来的 `expandedIssueId` 变成纯冗余，连同 6 个写入点一起
+删除。
 
 ## 7. 几何（已落地）
 
@@ -235,10 +242,10 @@ stage.bottom = bottom-panel 盒子高度
 2. ~~workspace 下藏掉残留线程标题~~（PR #89）
 3. ~~探右侧 tab 条能否承载 Weft 表面~~——**结论：不能**，见 §5
 4. stage 内详情分栏：`IssueDetailView` 原样搬进去，去掉「返回看板」整页导航
-5. 重接点击契约：看板卡片 → 分栏详情，Desktop 路径去掉整页 `view=issue`
-6. 会话树跟随详情迁出侧栏，同步修订 08-16 spec §8.7
+5. ~~重接点击契约：看板卡片 → 分栏详情~~（PR #91，`view=issue` 改为渲染成分栏）
+6. ~~会话跟随详情迁出侧栏，同步修订 08-16 spec §8.7~~
 
-每步单独可验收。4 与 5 之间可以停。
+§9 到此走完。侧栏回到纯导航，详情栏承载会话、产物、任务、活动。
 
 ## 10. 验收
 
