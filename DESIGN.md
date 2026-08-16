@@ -90,6 +90,7 @@ token，由 `ui/src/index.css` 统一声明；**组件中不出现字面颜色�
 |---|---|---|---|
 | 前景 | `--text` | `--color-token-foreground` | 正文、图标 |
 | 次级前景 | `--dim` | `--color-token-text-secondary` | 元信息、占位说明 |
+| 三级前景 | `--dim-2` | `--color-token-text-tertiary` | 分区标题——宿主用它把标题压到行文本之下 |
 | 描边 | `--border` | `--color-token-border` | 浮层轮廓、分隔线、焦点环 |
 | 强描边 | `--border-strong` | `--color-token-border-heavy` | 字段轮廓 |
 | 悬停 | `--hover` | `--color-token-list-hover-background` | 行与触发器的悬停底 |
@@ -124,12 +125,17 @@ token，由 `ui/src/index.css` 统一声明；**组件中不出现字面颜色�
 | `heading` | 18px | 1.35 | 视图标题 |
 | `title` | 16px | — | 详情页、产物、弹窗标题 |
 | `subtitle` | 14px | — | 仓库名、弹窗正文等需要高于正文的一档 |
-| `body` | 12px | 1.45 | 正文、行标题、控件文本 |
-| `label` | 11px | — | 分区标题、计数、字段标签 |
+| `body` | 12px | 1.45 | 正文、行标题、控件文本、**分区标题** |
+| `label` | 11px | — | 计数、字段标签 |
 | `meta` | 10.5px | 1.35 | 次要说明、产物元信息 |
 | `micro-caps` | 9.5px | — | 全大写类型徽标，字距 0.03em |
 
 新增文本从上表取值，**不要新增第八档**。
+
+**分区标题不缩小、不大写。** 宿主把 Projects / Recents 设成和会话行**同一字号**
+（14px，根 16px），只用字重与颜色拉开——500 对行的 445，`text-tertiary` 对行的
+85% 前景。没有大写，没有字距。Weft 的行标题是 `body`，所以分区标题也是 `body`
+配 500 与 `--dim-2`。此前那种更小的全大写 label 是 web 习惯，宿主不说这种话。
 
 ## Layout
 

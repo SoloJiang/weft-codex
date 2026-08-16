@@ -35,6 +35,7 @@
   --fb-border-strong: rgba(252, 252, 252, 0.18);
   --fb-text: #fcfcfc;
   --fb-dim: rgba(252, 252, 252, 0.7);
+  --fb-dim-2: rgba(252, 252, 252, 0.5);
   --fb-placeholder: #b8b8b8;
   --fb-accent: #0169cc;
   --fb-accent-hover: #0285ff;
@@ -57,6 +58,7 @@
     --fb-border-strong: rgba(13, 13, 13, 0.22);
     --fb-text: #0d0d0d;
     --fb-dim: rgba(13, 13, 13, 0.68);
+    --fb-dim-2: rgba(13, 13, 13, 0.5);
     --fb-placeholder: #5f5f5f;
     --fb-accent: #0169cc;
     --fb-accent-hover: #005cad;
@@ -79,6 +81,7 @@
   --fb-border-strong: rgba(252, 252, 252, 0.18);
   --fb-text: #fcfcfc;
   --fb-dim: rgba(252, 252, 252, 0.7);
+  --fb-dim-2: rgba(252, 252, 252, 0.5);
   --fb-placeholder: #b8b8b8;
   --fb-accent: #0169cc;
   --fb-accent-hover: #0285ff;
@@ -100,6 +103,7 @@
   --fb-border-strong: rgba(13, 13, 13, 0.22);
   --fb-text: #0d0d0d;
   --fb-dim: rgba(13, 13, 13, 0.68);
+  --fb-dim-2: rgba(13, 13, 13, 0.5);
   --fb-placeholder: #5f5f5f;
   --fb-accent: #0169cc;
   --fb-accent-hover: #005cad;
@@ -120,6 +124,7 @@
   --border-strong: var(--color-token-border-heavy, var(--fb-border-strong));
   --text: var(--color-token-foreground, var(--fb-text));
   --dim: var(--color-token-text-secondary, var(--fb-dim));
+  --dim-2: var(--color-token-text-tertiary, var(--fb-dim-2));
   /**
    * Six of these read through a `--vscode-*` middle link.
    *
@@ -576,15 +581,11 @@ a { color: var(--link); }
   gap: var(--space-2);
 }
 
-/* Same role as the sidebar's own section heading, so same tracking — one
-   shared idiom had drifted to 0.04em here and 0.02em there. */
 .sidebar-panel-header h2 {
   margin: 0;
-  color: var(--dim);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
+  color: var(--dim-2);
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .sidebar-panel-list {
@@ -689,16 +690,26 @@ a { color: var(--link); }
   color: var(--dim);
 }
 
+/**
+ * A section heading is a row label that is one notch quieter, not a different
+ * kind of type.
+ *
+ * Codex sets Projects / Recents at exactly its row size (14px on a 16px root)
+ * and separates them by weight and colour alone — 500 against the rows' 445,
+ * `text-tertiary` against the rows' 85% foreground. No caps, no tracking, no
+ * step down in size. Weft's rows are `body`, so its headings are `body` too;
+ * the smaller all-caps label these used to be was a web idiom the host does
+ * not speak.
+ */
 .sidebar-section-heading h2 {
   min-width: 0;
   margin: 0;
   overflow: hidden;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1.3;
-  letter-spacing: 0.02em;
+  color: var(--dim-2);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
   text-overflow: ellipsis;
-  text-transform: uppercase;
   white-space: nowrap;
 }
 
