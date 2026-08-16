@@ -136,6 +136,16 @@ const FAILURE_REASONS: Record<
   "titlebar.dragRegion": "未检测到原生标题栏拖拽区域",
 }
 
+/**
+ * Codex publishes `--color-token-*` as a thin alias layer over its `--vscode-*`
+ * theme variables, and build 6662 dropped two of those aliases while keeping
+ * the variables behind them. Reading the `--vscode-*` name is therefore both
+ * the durable choice and a value-preserving one: measured on 6662,
+ * `--vscode-button-foreground` is `#fafafa` and `--vscode-input-background` is
+ * `rgba(251, 251, 251, 0.96)`, byte-identical to what the aliases reported on
+ * 6321. `theme.sidebarSurface` has always been sourced this way. See
+ * docs/compat/codex-builds.md §8.1.
+ */
 export const TOKEN_PROBES = {
   "theme.sidebarSurface": "--vscode-sideBar-background",
   "theme.mainSurface": "--color-token-main-surface-primary",
@@ -145,9 +155,9 @@ export const TOKEN_PROBES = {
   "theme.border": "--color-token-border",
   "theme.borderHeavy": "--color-token-border-heavy",
   "theme.primary": "--color-token-primary",
-  "theme.buttonForeground": "--color-token-button-foreground",
+  "theme.buttonForeground": "--vscode-button-foreground",
   "theme.linkForeground": "--color-token-text-link-foreground",
-  "theme.inputBackground": "--color-token-input-background",
+  "theme.inputBackground": "--vscode-input-background",
   "theme.inputBorder": "--color-token-input-border",
   "theme.hoverBackground": "--color-token-list-hover-background",
   "theme.fontSans": "--font-sans",
@@ -213,13 +223,34 @@ function threadAnchorProbe(
   return selectorProbe(snapshot, id, requiredFor)
 }
 
+/**
+ * The tokens Weft is actually gated on, per the 08-16 spec §8.3 / §8.4: core
+ * surfaces, foreground, fonts.
+ *
+ * The rest are cosmetic. Every one of them is consumed through a fallback in
+ * `ui/src/index.css`, and `applyRadiusTokens` already skips radii it cannot
+ * read, so losing one costs fidelity to the host palette — not usability.
+ * Gating on all eighteen is what let build 6662 lock the whole product out by
+ * renaming two colour aliases; docs/compat/codex-builds.md §8 records the
+ * incident and §5.8 the rule it broke — size `requiredFor` to what the
+ * anchor's absence actually costs.
+ */
+const CORE_TOKEN_PROBES = new Set([
+  "theme.sidebarSurface",
+  "theme.mainSurface",
+  "theme.dropdownSurface",
+  "theme.foreground",
+  "theme.fontSans",
+  "theme.fontMono",
+])
+
 function tokenProbe(snapshot: RendererSnapshot, id: string, token: string): CapabilityProbe {
   const value = snapshot.tokens[token]?.trim() ?? ""
   return {
     id,
     ok: Boolean(value),
     detail: value || `Missing ${token}`,
-    requiredFor: "base",
+    requiredFor: CORE_TOKEN_PROBES.has(id) ? "base" : "optional",
   }
 }
 
