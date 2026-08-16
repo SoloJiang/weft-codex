@@ -3,7 +3,6 @@ import {
   AlertTriangle,
   CircleCheck,
   ChevronDown,
-  ChevronRight,
   CornerDownRight,
   Star,
   FileText,
@@ -845,15 +844,6 @@ export default function SidebarApp() {
             {needsYou ? (
               <span className="sidebar-needs-you-chip">{t("kanban.issueNeedsYou")}</span>
             ) : null}
-          </button>
-          <button
-            type="button"
-            className="sidebar-issue-toggle"
-            aria-label={t(expanded ? "sidebar.collapseIssue" : "sidebar.expandIssue", { title: entry.issue.title })}
-            aria-expanded={expanded}
-            onClick={() => setExpandedIssueId((current) => current === entry.issue.id ? null : entry.issue.id)}
-          >
-            {expanded ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
           </button>
         </div>
       )
