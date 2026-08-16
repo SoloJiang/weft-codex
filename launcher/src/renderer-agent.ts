@@ -707,7 +707,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
           padding: 0 3px;
           border-radius: 7px;
           background: var(--color-token-primary);
-          color: var(--color-token-button-foreground);
+          color: var(--color-token-button-foreground, var(--vscode-button-foreground, #fff));
           font-size: 9px;
           font-weight: 600;
           line-height: 14px;

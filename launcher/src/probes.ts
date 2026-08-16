@@ -136,6 +136,15 @@ const FAILURE_REASONS: Record<
   "titlebar.dragRegion": "未检测到原生标题栏拖拽区域",
 }
 
+/**
+ * Codex publishes `--color-token-*` as a thin alias layer over its `--vscode-*`
+ * theme variables, and build 6662 dropped two of those aliases while keeping
+ * the variables behind them. Reading the `--vscode-*` name is therefore both
+ * the durable choice and a value-preserving one: measured on 6662,
+ * `--vscode-button-foreground` is `#fafafa` and `--vscode-input-background` is
+ * `rgba(251, 251, 251, 0.96)`, byte-identical to what the aliases reported on
+ * 6321. `theme.sidebarSurface` has always been sourced this way.
+ */
 export const TOKEN_PROBES = {
   "theme.sidebarSurface": "--vscode-sideBar-background",
   "theme.mainSurface": "--color-token-main-surface-primary",
@@ -145,9 +154,9 @@ export const TOKEN_PROBES = {
   "theme.border": "--color-token-border",
   "theme.borderHeavy": "--color-token-border-heavy",
   "theme.primary": "--color-token-primary",
-  "theme.buttonForeground": "--color-token-button-foreground",
+  "theme.buttonForeground": "--vscode-button-foreground",
   "theme.linkForeground": "--color-token-text-link-foreground",
-  "theme.inputBackground": "--color-token-input-background",
+  "theme.inputBackground": "--vscode-input-background",
   "theme.inputBorder": "--color-token-input-border",
   "theme.hoverBackground": "--color-token-list-hover-background",
   "theme.fontSans": "--font-sans",

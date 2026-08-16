@@ -8,6 +8,7 @@ import {
   buildProbeExpression,
   classifyCompatibility,
   reportFromSnapshot,
+  TOKEN_PROBES,
   type CapabilityProbe,
 } from "./probes.js"
 
@@ -28,8 +29,8 @@ const TOKEN_VALUES = [
   "--color-token-dropdown-background", "--color-token-foreground",
   "--color-token-text-secondary", "--color-token-border",
   "--color-token-border-heavy", "--color-token-primary",
-  "--color-token-button-foreground", "--color-token-text-link-foreground",
-  "--color-token-input-background", "--color-token-input-border",
+  "--vscode-button-foreground", "--color-token-text-link-foreground",
+  "--vscode-input-background", "--color-token-input-border",
   "--color-token-list-hover-background", "--font-sans", "--font-mono",
   "--radius-lg", "--radius-md", "--radius-sm",
 ]
@@ -176,6 +177,24 @@ test("a token failure also enters safe mode", () => {
   const snapshot = healthySnapshot()
   snapshot.tokens["--color-token-foreground"] = ""
   assert.equal(reportFromSnapshot(snapshot).tier, "safe-mode")
+})
+
+test("the healthy fixture supplies every token the probes read", () => {
+  const unsupplied = Object.values(TOKEN_PROBES).filter((token) => !TOKEN_VALUES.includes(token))
+  assert.deepEqual(unsupplied, [], "TOKEN_VALUES drifted from TOKEN_PROBES; the fixture is no longer healthy")
+})
+
+/**
+ * Build 6662 deleted these two aliases while keeping the `--vscode-*`
+ * variables behind them, which stranded every user on that build in safe mode.
+ * Nothing else in the suite would notice their return: the fixture supplies
+ * whatever the probes ask for, so a revert here reads as perfectly healthy.
+ */
+test("the aliases build 6662 deleted are not probed again", () => {
+  const probed: string[] = Object.values(TOKEN_PROBES)
+  for (const deleted of ["--color-token-button-foreground", "--color-token-input-background"]) {
+    assert.ok(!probed.includes(deleted), `${deleted} does not exist on Codex 6662`)
+  }
 })
 
 test("a missing titlebar drag region cannot enter Weft", () => {
