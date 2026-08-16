@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils"
 import { useWeftSession } from "@/session"
 import { codexThreadHref } from "@/lib/thread-open"
 import type { VariantProps } from "class-variance-authority"
-import type { RepoComponent } from "@/types"
+import type { Direction, Issue, RepoComponent } from "@/types"
 
 interface AsyncButtonProps
   extends Omit<React.ComponentProps<typeof Button>, "onClick">,
@@ -119,6 +119,114 @@ export function ThreadLink({
         {iconOnly ? <span className="sr-only">{resolvedLabel}</span> : resolvedLabel}
       </a>
     </Button>
+  )
+}
+
+/**
+ * The one way to reach a conversation, whatever owns it.
+ *
+ * Whether the thread already exists is a mechanism detail: the user has a
+ * single concept — go to this thing's chat — and starting the agent when it is
+ * not running yet happens on the way there. Both branches take the same label
+ * and the same icon, so consistency is structural rather than two look-alikes
+ * kept in sync by hand.
+ */
+export function ChatLink({
+  threadId,
+  label,
+  pendingLabel,
+  onStart,
+  onError,
+  className,
+  iconOnly = false,
+}: {
+  threadId: string
+  label: string
+  pendingLabel: string
+  /** Called only when there is no thread yet: start it, then open it. */
+  onStart: () => Promise<void>
+  onError?: (error: unknown) => void
+  className?: string
+  iconOnly?: boolean
+}) {
+  if (threadId) {
+    return (
+      <ThreadLink
+        threadId={threadId}
+        onError={onError}
+        label={label}
+        pendingLabel={pendingLabel}
+        className={className}
+        iconOnly={iconOnly}
+      />
+    )
+  }
+  return (
+    <AsyncButton
+      variant="ghost"
+      className={cn("thread-link", iconOnly && "thread-link-icon", className)}
+      label={label}
+      pendingLabel={pendingLabel}
+      onAction={onStart}
+      onError={onError ?? (() => {})}
+      iconOnly={iconOnly}
+    >
+      <MessageCircle aria-hidden="true" />
+    </AsyncButton>
+  )
+}
+
+export function LeadChatLink({
+  issue,
+  onOpen,
+  onError,
+  className,
+  iconOnly = false,
+}: {
+  issue: Pick<Issue, "id" | "title" | "lead_codex_thread_id">
+  onOpen: (issueId: number) => Promise<void>
+  onError?: (error: unknown) => void
+  className?: string
+  iconOnly?: boolean
+}) {
+  const { t } = useI18n()
+  return (
+    <ChatLink
+      threadId={issue.lead_codex_thread_id}
+      label={t("issue.openChat", { title: issue.title })}
+      pendingLabel={t("loading.openingChat")}
+      onStart={() => onOpen(issue.id)}
+      onError={onError}
+      className={className}
+      iconOnly={iconOnly}
+    />
+  )
+}
+
+export function TaskChatLink({
+  direction,
+  onOpen,
+  onError,
+  className,
+  iconOnly = false,
+}: {
+  direction: Pick<Direction, "id" | "name" | "codex_thread_id">
+  onOpen: (directionId: number) => Promise<void>
+  onError?: (error: unknown) => void
+  className?: string
+  iconOnly?: boolean
+}) {
+  const { t } = useI18n()
+  return (
+    <ChatLink
+      threadId={direction.codex_thread_id}
+      label={t("dir.openChat", { name: direction.name })}
+      pendingLabel={t("loading.openingChat")}
+      onStart={() => onOpen(direction.id)}
+      onError={onError}
+      className={className}
+      iconOnly={iconOnly}
+    />
   )
 }
 

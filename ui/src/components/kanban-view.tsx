@@ -2,8 +2,6 @@ import * as React from "react"
 import {
   Check,
   Flag,
-  Play,
-  RotateCcw,
   Search,
   Send,
 } from "lucide-react"
@@ -15,12 +13,12 @@ import type { BoardEntry, Direction, DirectionStatus, Issue, Repo } from "@/type
 import { STATUSES } from "@/types"
 import { buildIssueBoard, groupIssueBoard, type IssueBoardCard } from "@/lib/issue-board"
 import { isTypingTarget } from "@/lib/utils"
-import { AsyncButton, EmptyState, ThreadLink } from "./shared"
+import { AsyncButton, EmptyState, LeadChatLink, TaskChatLink } from "./shared"
 
 export interface WorkActions {
   onError: (error: unknown) => void
-  onStartLead: (issue: Issue) => Promise<void>
-  onRetryTask: (direction: Direction) => Promise<void>
+  onOpenChat: (issueId: number) => Promise<void>
+  onOpenTaskChat: (directionId: number) => Promise<void>
   onCompleteTask: (direction: Direction) => Promise<void>
   onClearAttention: (direction: Direction) => Promise<void>
   onContinueTask: (direction: Direction) => void
@@ -63,33 +61,19 @@ export function DirectionActions({
 }) {
   const { t } = useI18n()
   const canContinue = direction.status === "review" || direction.status === "done"
-  const canRetryStart = !direction.codex_thread_id && Boolean(direction.attention)
-  let threadActions: React.ReactNode = null
-  if (canRetryStart) {
-    threadActions = (
-      <AsyncButton
-        variant="ghost"
-        label={t("dir.retryStart")}
-        pendingLabel={t("loading.retryingTask")}
-        onAction={() => actions.onRetryTask(direction)}
-        onError={actions.onError}
-      >
-        <RotateCcw aria-hidden="true" />
-      </AsyncButton>
-    )
-  } else if (direction.codex_thread_id) {
-    threadActions = (
-      <>
-        <ThreadLink threadId={direction.codex_thread_id} onError={actions.onError} />
-        {canContinue ? (
-          <Button variant="ghost" onClick={() => actions.onContinueTask(direction)}>
-            <Send aria-hidden="true" />
-            {t("dir.continue")}
-          </Button>
-        ) : null}
-      </>
-    )
-  }
+  // Same single concept as the lead: one way in, and dispatching the worker
+  // when it has not started yet is part of getting there.
+  const threadActions = (
+    <>
+      <TaskChatLink direction={direction} onOpen={actions.onOpenTaskChat} onError={actions.onError} />
+      {canContinue && direction.codex_thread_id ? (
+        <Button variant="ghost" onClick={() => actions.onContinueTask(direction)}>
+          <Send aria-hidden="true" />
+          {t("dir.continue")}
+        </Button>
+      ) : null}
+    </>
+  )
   return (
     <div className="btns">
       {threadActions}
@@ -104,7 +88,10 @@ export function DirectionActions({
           <Check aria-hidden="true" />
         </AsyncButton>
       ) : null}
-      {Boolean(direction.attention) && !canRetryStart ? (
+      {/* Not offered while the task has no thread: dismissing the flag there
+          hides the problem without dispatching anything, leaving a task that is
+          both unflagged and not running. Opening the chat is the way out. */}
+      {Boolean(direction.attention) && direction.codex_thread_id ? (
         <AsyncButton
           variant="ghost"
           label={t("dir.clearAttention")}
@@ -120,22 +107,9 @@ export function DirectionActions({
 }
 
 export function IssueActions({ issue, actions }: { issue: Issue; actions: WorkActions }) {
-  const { t } = useI18n()
   return (
     <div className="issue-actions">
-      {issue.lead_codex_thread_id ? (
-        <ThreadLink threadId={issue.lead_codex_thread_id} onError={actions.onError} />
-      ) : (
-        <AsyncButton
-          variant="ghost"
-          label={t("issue.spawnLead")}
-          pendingLabel={t("loading.startingLead")}
-          onAction={() => actions.onStartLead(issue)}
-          onError={actions.onError}
-        >
-          <Play aria-hidden="true" />
-        </AsyncButton>
-      )}
+      <LeadChatLink issue={issue} onOpen={actions.onOpenChat} onError={actions.onError} />
     </div>
   )
 }
@@ -145,16 +119,16 @@ export function IssueActions({ issue, actions }: { issue: Issue; actions: WorkAc
 function IssueBoardCardView({
   card,
   onOpenIssue,
-  onOpenLead,
+  onOpenChat,
   onError,
 }: {
   card: IssueBoardCard
   onOpenIssue: (id: number) => void
-  onOpenLead: (entry: BoardEntry) => Promise<void>
+  onOpenChat: (issueId: number) => Promise<void>
   onError: (error: unknown) => void
 }) {
   const { t } = useI18n()
-  const { entry, totalTasks, doneTasks, attentionCount, hasLead, leadAttention } = card
+  const { entry, totalTasks, doneTasks, attentionCount, leadAttention } = card
   // The column heading already states the status, so repeating it on every card
   // spends the one line of meta on something the reader just read. Only what is
   // specific to this card goes here. A failed lead outranks task attention:
@@ -179,38 +153,20 @@ function IssueBoardCardView({
       </button>
       <div className="issue-board-card-meta">
         <span className="issue-board-card-number">#{entry.issue.id}</span>
-        {/* With no lead the reason and the retry say the same thing, and at
-            ~122px they cannot both fit — showing both truncated the reason to a
-            single letter. The retry carries the failure itself, in warn. */}
-        {hasLead && signal ? (
+        {/* The action is one narrow icon in every state now, so the reason
+            always has room; it no longer has to compete with a text button. */}
+        {signal ? (
           // Long reasons must not push the row wider than the column; the full
           // text stays reachable on hover rather than being lost.
           <span className="issue-board-card-signal" title={signal}>{signal}</span>
         ) : null}
-        {hasLead ? (
-          <ThreadLink
-            threadId={entry.issue.lead_codex_thread_id}
-            onError={onError}
-            label={t("kanban.openLead", { title: entry.issue.title })}
-            pendingLabel={t("loading.openingThread")}
-            className="issue-board-lead-link"
-            iconOnly
-          />
-        ) : (
-          // Starting a lead is a different capability from opening one, so it
-          // does not borrow the chat icon — the board is its only entry point
-          // (App wires onStartLead nowhere else), and a lead that never started
-          // is an exception worth naming in words.
-          <AsyncButton
-            variant="ghost"
-            className="issue-board-start-lead"
-            label={t("kanban.startLeadShort")}
-            pendingLabel={t("loading.startingLead")}
-            aria-label={t("kanban.startLead", { title: entry.issue.title })}
-            onAction={() => onOpenLead(entry)}
-            onError={onError}
-          />
-        )}
+        <LeadChatLink
+          issue={entry.issue}
+          onOpen={onOpenChat}
+          onError={onError}
+          className="issue-board-lead-link"
+          iconOnly
+        />
       </div>
     </article>
   )
@@ -220,13 +176,13 @@ function IssueBoardColumn({
   status,
   cards,
   onOpenIssue,
-  onOpenLead,
+  onOpenChat,
   onError,
 }: {
   status: DirectionStatus
   cards: IssueBoardCard[]
   onOpenIssue: (id: number) => void
-  onOpenLead: (entry: BoardEntry) => Promise<void>
+  onOpenChat: (issueId: number) => Promise<void>
   onError: (error: unknown) => void
 }) {
   const { t } = useI18n()
@@ -245,7 +201,7 @@ function IssueBoardColumn({
             key={card.entry.issue.id}
             card={card}
             onOpenIssue={onOpenIssue}
-            onOpenLead={onOpenLead}
+            onOpenChat={onOpenChat}
             onError={onError}
           />
         ))}
@@ -301,10 +257,6 @@ export function KanbanView({
   }, [cards, deferredQuery, repos])
   const grouped = React.useMemo(() => groupIssueBoard(visibleCards), [visibleCards])
 
-  const startLead = React.useCallback(async (entry: BoardEntry) => {
-    await actions.onStartLead(entry.issue)
-  }, [actions])
-
   // Not ⌘K: Codex Desktop binds that (and ⇧⌘P) to its own command menu, at the
   // Electron menu-accelerator level, so the keypress may never reach this frame
   // — and the hint we used to print promised something the host would take.
@@ -354,7 +306,7 @@ export function KanbanView({
                 status={status}
                 cards={grouped[status]}
                 onOpenIssue={onOpenIssue}
-                onOpenLead={startLead}
+                onOpenChat={actions.onOpenChat}
                 onError={actions.onError}
               />
             ))}
