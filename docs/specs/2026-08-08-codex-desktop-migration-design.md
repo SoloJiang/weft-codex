@@ -302,10 +302,12 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
 
 ## 7.5 模式切换（Weft mode）
 
+产品形态以 `PRODUCT.md`「Product Form」为准：Weft 是与 ChatGPT / Codex 同级的
+第三种模式，不是插件或浮层。本节只写 Desktop 怎么把这个形态挂上宿主开关。
+
 入口级模式开关，挂载到应用既有的顶层模式切换上：应用本身已有
-Work（everyday work）/ Codex 双模式（bundle 实证：`isEverydayWorkMode`、
-跨模式 handoff 链接），Weft 作为**第三个并列模式**加入，而不是自造一套
-独立开关：
+ChatGPT（everyday work / `isEverydayWorkMode`）与 Codex 双模式，Weft 作为
+**第三个并列模式**加入，而不是自造一套独立开关：
 
 - Weft 模式下隐藏 Codex 常规会话列表与无关聊天入口，只保留 workspace /
   issue / kanban / repo map 表面；线程聊天仍使用原生线程视图（唯一不隐藏
