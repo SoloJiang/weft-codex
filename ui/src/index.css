@@ -1105,6 +1105,14 @@ main {
   background: var(--color-token-input-background, var(--panel));
 }
 
+/* Same exception as the host command-menu field: `/` drops the caret into
+   this filter, so a second outline just frames a box that is already the
+   only thing being typed into. The caret is the focus signal. */
+.kanban-search input:focus,
+.kanban-search input:focus-visible {
+  outline: none;
+}
+
 .kanban-search kbd {
   position: absolute;
   top: 50%;
