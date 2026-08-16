@@ -1,7 +1,12 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import { buildInbox, searchBoard } from "./sidebar-entries.ts"
+import {
+  buildInbox,
+  parseDeliveryFailure,
+  rememberDeliveryFailure,
+  searchBoard,
+} from "./sidebar-entries.ts"
 import type {
   ArtifactSummary,
   BoardEntry,
@@ -190,4 +195,25 @@ test("a stalled lead reaches the inbox ahead of its tasks", () => {
 
 test("an issue with a healthy lead contributes nothing to the inbox", () => {
   assert.deepEqual(buildInbox(board(), []), [])
+})
+
+test("an undelivered bus payload becomes a delivery failure", () => {
+  const failure = parseDeliveryFailure(JSON.stringify({
+    issueId: 12,
+    party: "1",
+    reason: "settlement-failed",
+  }))
+  assert.deepEqual(failure, { issueId: 12, party: "1", reason: "settlement-failed" })
+})
+
+test("a malformed undelivered payload is ignored", () => {
+  assert.equal(parseDeliveryFailure("{"), null)
+  assert.equal(parseDeliveryFailure(JSON.stringify({ party: "1" })), null)
+})
+
+test("the same delivery failure is remembered once", () => {
+  const first = rememberDeliveryFailure([], { issueId: 12, party: "1", reason: "a" })
+  const second = rememberDeliveryFailure(first, { issueId: 12, party: "1", reason: "b" })
+  assert.equal(second.length, 1)
+  assert.equal(second[0]?.reason, "a")
 })
