@@ -18,7 +18,7 @@ import {
 
 import { api, jsonRequest } from "@/api"
 import { kindLabel, statusLabel } from "@/components/artifact-view"
-import { AsyncButton, openCodexThread } from "@/components/shared"
+import { AsyncButton } from "@/components/shared"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -66,6 +66,7 @@ interface ThreadRowProps {
   label: string
   threadId: string
   active: boolean
+  opening?: boolean
   primary?: boolean
   nested?: boolean
   onOpen: (threadId: string) => void
@@ -155,6 +156,7 @@ function ThreadRow({
   label,
   threadId,
   active,
+  opening = false,
   primary = false,
   nested = false,
   onOpen,
@@ -162,17 +164,23 @@ function ThreadRow({
   onError,
 }: ThreadRowProps) {
   const { t } = useI18n()
+  const openingLabel = t("loading.openingThread")
   const row = (
     <button
       type="button"
       className="sidebar-thread-row"
       data-active={active ? "true" : "false"}
       data-nested={nested ? "true" : "false"}
+      data-opening={opening ? "true" : "false"}
+      aria-busy={opening}
       aria-current={active ? "page" : undefined}
+      disabled={opening}
       onClick={() => onOpen(threadId)}
     >
       {nested ? <CornerDownRight aria-hidden="true" /> : <MessageCircle aria-hidden="true" />}
-      <span className="sidebar-thread-title" title={label}>{label}</span>
+      <span className="sidebar-thread-title" title={opening ? openingLabel : label}>
+        {opening ? openingLabel : label}
+      </span>
       {primary ? <span className="sidebar-primary-chip">{t("sidebar.primary")}</span> : null}
     </button>
   )
@@ -201,12 +209,14 @@ function ThreadRow({
 function IssueConversationTree({
   entry,
   activeThreadId,
+  openingThreadId,
   onOpenThread,
   onPromoteLead,
   onError,
 }: {
   entry: BoardEntry
   activeThreadId: string | null
+  openingThreadId: string | null
   onOpenThread: (threadId: string) => void
   onPromoteLead: (threadId: string) => Promise<void>
   onError: (error: unknown) => void
@@ -229,6 +239,7 @@ function IssueConversationTree({
               label={t("sidebar.mainChat")}
               threadId={leadPrimary.thread_id}
               active={activeThreadId === leadPrimary.thread_id}
+              opening={openingThreadId === leadPrimary.thread_id}
               primary
               nested
               onOpen={onOpenThread}
@@ -242,6 +253,7 @@ function IssueConversationTree({
               label={branchTitle(binding, index + 1, t("sidebar.forkChat"))}
               threadId={binding.thread_id}
               active={activeThreadId === binding.thread_id}
+              opening={openingThreadId === binding.thread_id}
               nested
               onOpen={onOpenThread}
               onPromote={onPromoteLead}
@@ -276,6 +288,7 @@ function IssueConversationTree({
                     label={direction.name}
                     threadId={taskPrimary.thread_id}
                     active={activeThreadId === taskPrimary.thread_id}
+                    opening={openingThreadId === taskPrimary.thread_id}
                     onOpen={onOpenThread}
                   />
                   {taskForks.map((binding, index) => (
@@ -284,6 +297,7 @@ function IssueConversationTree({
                       label={branchTitle(binding, index + 1, t("sidebar.forkChat"))}
                       threadId={binding.thread_id}
                       active={activeThreadId === binding.thread_id}
+                      opening={openingThreadId === binding.thread_id}
                       nested
                       onOpen={onOpenThread}
                     />
@@ -494,7 +508,6 @@ export default function SidebarApp() {
   const [resolvedThreads, setResolvedThreads] = React.useState<Map<string, ResolvedThread>>(
     () => new Map(),
   )
-  const [error, setError] = React.useState("")
   const resolveSequence = React.useRef(0)
   const stateRef = React.useRef({ workspaceId, route })
   const threadMap = React.useMemo(
@@ -569,11 +582,10 @@ export default function SidebarApp() {
   }, [session])
 
   const openThread = React.useCallback((threadId: string) => {
-    setError("")
-    void openCodexThread(threadId).catch(() => {
-      setError(t("err.prefix") + t("err.threadOpen"))
+    void session.openThread(threadId).catch(() => {
+      // Session keeps failedThreadId so the footer can offer a retry.
     })
-  }, [t])
+  }, [session])
 
   /**
    * Opening an artifact must NOT change the native thread: the human is reading
@@ -709,6 +721,8 @@ export default function SidebarApp() {
     issueList = board.map((entry) => {
       const expanded = expandedIssueId === entry.issue.id
       const selected = activeIssueId === entry.issue.id
+      const leadThreadId = primaryBranch(entry, null)?.thread_id || entry.issue.lead_codex_thread_id
+      const opening = Boolean(leadThreadId) && session.openingThreadId === leadThreadId
       return (
         <div
           key={entry.issue.id}
@@ -718,7 +732,12 @@ export default function SidebarApp() {
           <button
             type="button"
             className="sidebar-issue-main"
-            aria-label={t("sidebar.openIssueLead", { title: entry.issue.title })}
+            data-opening={opening ? "true" : "false"}
+            aria-busy={opening}
+            disabled={opening}
+            aria-label={opening
+              ? t("loading.openingThread")
+              : t("sidebar.openIssueLead", { title: entry.issue.title })}
             onClick={() => openIssue(entry)}
           >
             <ScrollingIssueTitle title={entry.issue.title} />
@@ -835,6 +854,7 @@ export default function SidebarApp() {
               <IssueConversationTree
                 entry={expandedEntry}
                 activeThreadId={activeThreadId}
+                openingThreadId={session.openingThreadId}
                 onOpenThread={openThread}
                 onPromoteLead={(threadId) => promoteLead(expandedEntry.issue.id, threadId)}
                 onError={store.notifyError}
@@ -874,9 +894,19 @@ export default function SidebarApp() {
         </section>
       )}
 
-      {error ? (
+      {session.failedThreadId ? (
         <footer className="sidebar-footer">
-          <span className="sidebar-error" role="alert" title={error}>{error}</span>
+          <span className="sidebar-error" role="alert" title={t("err.prefix") + t("err.threadOpen")}>
+            {t("err.prefix") + t("err.threadOpen")}
+          </span>
+          <Button
+            variant="ghost"
+            size="xs"
+            className="sidebar-footer-retry"
+            onClick={() => openThread(session.failedThreadId as string)}
+          >
+            {t("action.retryOpenThread")}
+          </Button>
         </footer>
       ) : null}
     </aside>

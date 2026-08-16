@@ -4,7 +4,6 @@ import { IssueDetailView } from "@/components/issue-detail-view"
 import { ArtifactView } from "@/components/artifact-view"
 import { KanbanView, type WorkActions } from "@/components/kanban-view"
 import { RepositoriesView } from "@/components/repositories-view"
-import { openCodexThread } from "@/components/shared"
 import { useI18n } from "@/i18n"
 import { useWeftSession } from "@/session"
 import { useWeftWorkspace } from "@/workspace-store"
@@ -39,11 +38,11 @@ export default function App() {
     const started = await api<{ codexThreadId: string }>(`/api/issues/${issueId}/spawn-lead`, jsonRequest("POST"))
     await store.refreshCurrent()
     window.setTimeout(() => {
-      void openCodexThread(started.codexThreadId).catch(() => {
+      void session.openThread(started.codexThreadId).catch(() => {
         notifyError(new Error(t("err.threadOpen")))
       })
     }, 0)
-  }, [notifyError, store, t])
+  }, [notifyError, session, store, t])
 
   const createIssue = async (title: string, kind: IssueKind) => {
     if (!workspaceId) throw new Error(t("err.unknown"))
@@ -61,7 +60,7 @@ export default function App() {
     // on the board; opening the thread is all that is left.
     if (created.codexThreadId) {
       window.setTimeout(() => {
-        void openCodexThread(created.codexThreadId as string).catch(() => {
+        void session.openThread(created.codexThreadId as string).catch(() => {
           notifyError(new Error(t("err.threadOpen")))
         })
       }, 0)

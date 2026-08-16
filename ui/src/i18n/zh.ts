@@ -135,6 +135,7 @@ const zh = {
   "sidebar.makePrimary": "把「{label}」设为主会话",
   "sidebar.makingPrimary": "切换中…",
   "sidebar.artifacts": "产物",
+  "action.retryOpenThread": "重试打开",
 
   "repo.add": "添加仓库",
   "repo.chooseFolders": "选择文件夹",
