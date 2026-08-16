@@ -1112,9 +1112,11 @@ main {
 
 /* ── kanban ───────────────────────────────────────────────────────── */
 
+/* The inline 6px lets the columns' hairline ring breathe; there is no top
+   padding because the toolbar, not the board, is the first child here. */
 #issues {
   min-width: 0;
-  padding: 12px 6px 0;
+  padding: 0 6px;
 }
 
 /* Keep empty-workspace / empty-list screens aligned across routes.
