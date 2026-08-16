@@ -47,6 +47,7 @@ test("inbox rows pick the map that matches their kind", () => {
   assert.equal(inboxAttentionKey("lead", "start-failed"), "lead.startFailed")
   assert.equal(inboxAttentionKey("attention", "quota exceeded"), "dir.quotaExceeded")
   assert.equal(inboxAttentionKey("delivery", "settlement-failed"), "dir.undelivered")
+  assert.equal(inboxAttentionKey("review", "review"), "inbox.review")
 })
 
 test("an issue card prefers the lead reason over its tasks", () => {

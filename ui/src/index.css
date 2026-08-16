@@ -904,6 +904,8 @@ a { color: var(--link); }
   color: var(--warn);
 }
 
+.sidebar-attention-row[data-kind="review"] > svg { color: var(--ok); }
+
 .sidebar-attention-row:hover {
   background: var(--hover);
 }

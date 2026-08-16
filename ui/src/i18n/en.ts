@@ -14,6 +14,7 @@ const en = {
   "entries.inbox": "Inbox",
   "entries.inboxCount": "Inbox, {count} needing attention",
   "entries.inboxEmpty": "Nothing needs you right now",
+  "inbox.review": "Ready for you to accept",
   "entries.close": "Close",
   "entries.kind.issue": "Issue",
   "entries.kind.direction": "Task",

@@ -21,7 +21,7 @@ export interface SearchHit {
   artifactId?: number
 }
 
-export type InboxItemKind = "attention" | "delivery" | "lead"
+export type InboxItemKind = "attention" | "delivery" | "lead" | "review"
 
 export interface InboxItem {
   key: string
@@ -31,8 +31,34 @@ export interface InboxItem {
   /** Daemon code. The panel maps it; the raw value never becomes copy. */
   reason: string
   directionId?: number
+  /** Present when opening the row should land on a native thread. */
+  threadId?: string
   /** Present on delivery items: identifies the failure to drop once acted on. */
   failureKey?: string
+}
+
+export type InboxFollow =
+  | { action: "open-thread"; threadId: string; issueId: number }
+  | { action: "show-issue"; issueId: number }
+
+/**
+ * Where an inbox row should go.
+ *
+ * Failures with a live thread open that chat and only remember the issue
+ * route — showWorkspace would cover the conversation. Review is the opposite:
+ * Accept lives on the issue page, so the Weft surface has to come forward.
+ */
+export function inboxFollow(item: InboxItem): InboxFollow {
+  if (item.kind === "review") return { action: "show-issue", issueId: item.issueId }
+  if (item.threadId) {
+    return { action: "open-thread", threadId: item.threadId, issueId: item.issueId }
+  }
+  return { action: "show-issue", issueId: item.issueId }
+}
+
+function nonEmptyThread(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  return value
 }
 
 /** A `bus.undelivered` event seen this session, keyed by issue and party. */
@@ -145,6 +171,20 @@ export function searchBoard(
  * inbox stops being read at all. `bus.undelivered` is the opposite: delivery
  * actually failed and the message is sitting there.
  */
+function leadThreadId(entry: BoardEntry): string | undefined {
+  const primary = entry.threads.find(
+    (binding) => binding.direction_id == null && binding.is_primary === 1,
+  )
+  return nonEmptyThread(primary?.thread_id || entry.issue.lead_codex_thread_id)
+}
+
+function directionThreadId(entry: BoardEntry, directionId: number, fallback: string): string | undefined {
+  const primary = entry.threads.find(
+    (binding) => binding.direction_id === directionId && binding.is_primary === 1,
+  )
+  return nonEmptyThread(primary?.thread_id || fallback)
+}
+
 export function buildInbox(board: BoardEntry[], failures: DeliveryFailure[]): InboxItem[] {
   const items: InboxItem[] = []
   for (const entry of board) {
@@ -156,6 +196,7 @@ export function buildInbox(board: BoardEntry[], failures: DeliveryFailure[]): In
         issueId: entry.issue.id,
         title: entry.issue.title,
         reason: entry.issue.lead_attention_reason,
+        threadId: leadThreadId(entry),
       })
     }
     for (const direction of entry.directions) {
@@ -166,6 +207,20 @@ export function buildInbox(board: BoardEntry[], failures: DeliveryFailure[]): In
         issueId: entry.issue.id,
         title: direction.name,
         reason: direction.attention_reason,
+        directionId: direction.id,
+        threadId: directionThreadId(entry, direction.id, direction.codex_thread_id),
+      })
+    }
+    // A finished turn waiting for Accept is the happy-path Needs-you. Failed
+    // turns also land in review, but those already have an attention row.
+    for (const direction of entry.directions) {
+      if (direction.status !== "review" || direction.attention) continue
+      items.push({
+        key: `review:${direction.id}`,
+        kind: "review",
+        issueId: entry.issue.id,
+        title: direction.name,
+        reason: "review",
         directionId: direction.id,
       })
     }
@@ -188,7 +243,12 @@ export function buildInbox(board: BoardEntry[], failures: DeliveryFailure[]): In
       title: direction?.name ?? entry.issue.title,
       reason: failure.reason,
       failureKey: deliveryFailureKey(failure),
-      ...(direction ? { directionId: direction.id } : {}),
+      ...(direction
+        ? {
+            directionId: direction.id,
+            threadId: directionThreadId(entry, direction.id, direction.codex_thread_id),
+          }
+        : { threadId: leadThreadId(entry) }),
     })
   }
 
