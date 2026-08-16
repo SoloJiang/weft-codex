@@ -674,6 +674,6 @@ workspace 让位几何（`nativePanelSize()`）开始依赖这两个锚点：
 
 6662 还新增了 `data-app-shell-tabs` / `tab-strip-controller` / `tab-controller` /
 `tab-panel-controller` / `tab-close-button` / `tab-separator`：右侧面板已经是**带原生
-tab 条的容器**（Review ⌃⇧G / Terminal ⌃` / Browser ⌘T / Files ⌘P），不再是
-2026-08-13 `host-slot-layout` 假设的那块「谁占谁的」单槽。那份文档 §6 里
-「Weft 详情 / Chats / Diff 三者互斥、共用一颗 Toggle」的设计前提已经不成立。
+tab 条的容器**（Review ⌃⇧G / Terminal ⌃` / Browser ⌘T / Files ⌘P），不再是一块
+「谁占谁的」单槽。容器侧的结论与落地顺序见
+`docs/specs/2026-08-16-host-container.md` §5。
