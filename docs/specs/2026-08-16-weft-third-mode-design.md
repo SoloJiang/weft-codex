@@ -360,7 +360,7 @@ issue → 任务 → artifact → thread。不新增接口。
 ### 8.7 Weft 模式 UI
 
 侧栏：workspace 切换、Kanban / 仓库入口、新建 issue、issue 树（Lead / Tasks /
-fork）。主行点击展开并打开 Primary Lead；chevron 只展开。收件箱里有条目的
+fork）。主行点击展开并打开 Primary Lead；列表行不放展开箭头。收件箱里有条目的
 issue 在主行标「需要你」，文案不只靠颜色。任务行带所属 issue 标题。打开任何
 绑定线程时切到对应 workspace、展开 issue、高亮该线程。`view=workspace` 时即使
 原生 DOM 仍暂时标着 active thread，也不能残留错误高亮。
