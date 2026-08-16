@@ -70,7 +70,8 @@ const en = {
   "issue.msgLead": "Message lead",
 
   "detail.title": "Issue details",
-  "detail.back": "Back to kanban",
+  "detail.close": "Close issue detail",
+  "stage.resizeDetail": "Resize the issue detail pane",
   "detail.directions": "Tasks",
   "detail.taskBrief": "Task brief",
   "detail.noTasks": "Tasks created from the lead chat will appear here.",

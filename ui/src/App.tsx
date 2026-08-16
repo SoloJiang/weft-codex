@@ -4,6 +4,7 @@ import { IssueDetailView } from "@/components/issue-detail-view"
 import { ArtifactView } from "@/components/artifact-view"
 import { KanbanView, type WorkActions } from "@/components/kanban-view"
 import { RepositoriesView } from "@/components/repositories-view"
+import { StageSplit } from "@/components/stage-split"
 import { useI18n } from "@/i18n"
 import { useWeftSession } from "@/session"
 import { useWeftWorkspace } from "@/workspace-store"
@@ -101,26 +102,31 @@ export default function App() {
         onError={notifyError}
       />
     )
-  } else if (view === "issue") {
-    mainContent = (
-      <IssueDetailView
-        entry={detailEntry}
-        repos={repos}
-        revision={revision}
-        actions={workActions}
-        onBack={() => switchView("kanban")}
-      />
-    )
   } else {
+    // Kanban and issue detail are the same stage, not two routes that replace
+    // each other: opening a card must not take the board away.
     mainContent = (
-      <KanbanView
-        workspaceId={workspaceId}
-        repos={repos}
-        board={board}
-        actions={workActions}
-        onOpenCreateIssue={() => openDialog({ type: "issue" })}
-        onCreateWorkspace={() => openDialog({ type: "workspace" })}
-        onOpenIssue={(id) => session.navigate({ view: "issue", issueId: id })}
+      <StageSplit
+        board={
+          <KanbanView
+            workspaceId={workspaceId}
+            repos={repos}
+            board={board}
+            actions={workActions}
+            onOpenCreateIssue={() => openDialog({ type: "issue" })}
+            onCreateWorkspace={() => openDialog({ type: "workspace" })}
+            onOpenIssue={(id) => session.navigate({ view: "issue", issueId: id })}
+          />
+        }
+        detail={view === "issue" ? (
+          <IssueDetailView
+            entry={detailEntry}
+            repos={repos}
+            revision={revision}
+            actions={workActions}
+            onClose={() => switchView("kanban")}
+          />
+        ) : null}
       />
     )
   }

@@ -72,7 +72,8 @@ const zh = {
   "issue.msgLead": "给 lead 发消息",
 
   "detail.title": "Issue 详情",
-  "detail.back": "返回看板",
+  "detail.close": "关闭 issue 详情",
+  "stage.resizeDetail": "调整 issue 详情栏宽度",
   "detail.directions": "任务",
   "detail.taskBrief": "任务说明",
   "detail.noTasks": "在 lead 对话中拆解 issue 后，任务会出现在这里。",
