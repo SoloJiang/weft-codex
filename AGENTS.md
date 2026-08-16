@@ -29,6 +29,11 @@ weft-codex: Weft 的编排能力移植到 Codex Desktop 的独立项目。Rust w
 - `git diff --check`
 - Daemon 冒烟：隔离 `WEFT_CODEX_HOME` 启动 weftd，curl `/healthz` 与一个
   MCP roundtrip。
+- 动了 TS：`pnpm --dir launcher test`；动了 UI 再加 `pnpm --dir ui typecheck`
+  / `test` / `build`。
+- 改了外观必须真机看一眼：隔离 profile 起 Codex 注入，**先灌出能触发该 UI 的
+  数据**，再 CDP 截图核对。单测与 build 证明不了外观；空 workspace 的截图同样
+  证明不了 issue 行的改动。
 
 ## Git baseline
 
