@@ -30,6 +30,7 @@ const en = {
   "sidebar.unboundThread": "This chat is not linked to a Weft issue",
   "sidebar.noTasks": "No tasks yet",
   "sidebar.openIssueLead": "Open the primary lead chat for {title}",
+  "sidebar.openIssueLeadNeedsYou": "Open the primary lead chat for {title} (needs you)",
   "sidebar.expandIssue": "Expand {title}",
   "sidebar.collapseIssue": "Collapse {title}",
   "workspace.label": "Workspace",
