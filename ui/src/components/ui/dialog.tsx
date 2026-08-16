@@ -104,14 +104,11 @@ function DialogTitle({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Title>) {
   return (
-    <DialogPrimitive.Title
-      data-slot="dialog-title"
-      className={cn(
-        "text-[17px] leading-snug font-semibold tracking-[-0.01em]",
-        className
-      )}
-      {...props}
-    />
+    // Type lives in index.css, which addresses this by `data-slot`. The
+    // utilities shadcn ships here named a 17px size that is not in the scale
+    // and a negative tracking the host never uses; the size and weight were
+    // already being overridden, so only the tracking still reached the screen.
+    <DialogPrimitive.Title data-slot="dialog-title" className={className} {...props} />
   )
 }
 

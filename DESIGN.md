@@ -18,27 +18,19 @@ spacing:
   xl: 20px
 typography:
   root:
-    fontSize: 13px
-    lineHeight: 1.45
-  title:
     fontSize: 16px
-  subtitle:
-    fontSize: 14px
+    lineHeight: 1.45
   heading:
-    fontSize: 18px
-    lineHeight: 1.35
+    fontSize: 16px
+    lineHeight: 1.5
   body:
-    fontSize: 12px
+    fontSize: 14px
     lineHeight: 1.45
   label:
-    fontSize: 11px
-    fontWeight: 600
+    fontSize: 13px
   meta:
-    fontSize: 10.5px
+    fontSize: 12px
     lineHeight: 1.35
-  micro-caps:
-    fontSize: 9.5px
-    letterSpacing: 0.03em
 components:
   input:
     rounded: "{rounded.md}"
@@ -118,24 +110,34 @@ token，由 `ui/src/index.css` 统一声明；**组件中不出现字面颜色�
 字体族由宿主提供（`--font` / `--mono`），**不指定字体族**——用户自定义字体会改变
 实测值，字体 token 只断言非空。
 
-根字号 13px（宿主 16px，Weft 表面信息密度更高）。
+根字号 16px，与宿主一致。
 
-| 角色 | 字号 | 行高 | 用途 |
-|---|---|---|---|
-| `heading` | 18px | 1.35 | 视图标题 |
-| `title` | 16px | — | 详情页、产物、弹窗标题 |
-| `subtitle` | 14px | — | 仓库名、弹窗正文等需要高于正文的一档 |
-| `body` | 12px | 1.45 | 正文、行标题、控件文本、**分区标题** |
-| `label` | 11px | — | 计数、字段标签 |
-| `meta` | 10.5px | 1.35 | 次要说明、产物元信息 |
-| `micro-caps` | 9.5px | — | 全大写类型徽标，字距 0.03em |
+此处曾写「13px（宿主 16px，Weft 表面信息密度更高）」。那条自定的密度差是走样的
+源头：整张字号表都比宿主小一到两档，于是每次照宿主实测值落地都不敢直接用，只能
+按比例换算，换算又生出新的偏差。**2026-08-16 起不再自定密度**——尺寸直接取宿主
+实测值。
 
-新增文本从上表取值，**不要新增第八档**。
+宿主整个界面只有四个字号，层级几乎全部由**字重**承担（445 / 500 / 600），
+而不是由字号承担：
 
-**分区标题不缩小、不大写。** 宿主把 Projects / Recents 设成和会话行**同一字号**
-（14px，根 16px），只用字重与颜色拉开——500 对行的 445，`text-tertiary` 对行的
-85% 前景。没有大写，没有字距。Weft 的行标题是 `body`，所以分区标题也是 `body`
-配 500 与 `--dim-2`。此前那种更小的全大写 label 是 web 习惯，宿主不说这种话。
+| 角色 | 字号 | 行高 | 宿主实测依据 | 用途 |
+|---|---|---|---|---|
+| `heading` | 16px | 1.5 | turn 标签 `You said:` 16/445/24 | 视图标题、详情与弹窗标题 |
+| `body` | 14px | 1.45 | 侧栏会话行 14/445/20；消息正文 14/445/22 | 正文、行标题、控件文本、分区标题 |
+| `label` | 13px | — | 导航项 `Pull requests`、模型名、`Bash` 皆 13/445/18 | 计数、字段标签、次级 chrome |
+| `meta` | 12px | 1.35 | 时间戳 `Saturday 20:10` 12/445/16 | 次要说明、类型徽标 |
+
+新增文本从上表取值，**不要新增第五档**。原先的 `title` / `subtitle` 并入
+`heading` 与 `body`——宿主没有这两档，它靠字重区分。
+
+**宿主全界面零处全大写文本，也零处字距调整。** 采集范围覆盖侧栏、主区会话、
+composer 与模型选择器，`text-transform` 与 `letter-spacing` 全部是 `none` /
+`normal`。原先的 `micro-caps`（9.5px 全大写 + 0.03em）因此整档删除，类型徽标
+按 `meta` 走正常大小写；`entries.kind.*` 本来就写作 `Issue` / `Task`，去掉
+CSS 大写即按原文渲染。
+
+**分区标题不缩小、不大写。** 宿主把 Projects / Recents 设成和会话行同一字号，
+只用字重与颜色拉开——500 对行的 445，`--dim-2` 对行的前景。Weft 照此办理。
 
 ## Layout
 
