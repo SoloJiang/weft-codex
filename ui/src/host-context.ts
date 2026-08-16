@@ -1,6 +1,7 @@
 import * as React from "react"
 
 import { languageFromLocale, type Language } from "@/i18n"
+import { readUiSurface, documentColorScheme } from "@/surface"
 import type { ActiveDialogState, DialogState } from "@/types"
 
 const ALLOWED_TOKENS = new Set([
@@ -165,7 +166,7 @@ function applyHostContext(context: HostContextV1) {
   const root = document.documentElement
   root.dataset.hostTheme = context.theme
   root.dataset.hostCspBypass = context.security?.cspBypass ? "true" : "false"
-  root.style.colorScheme = context.theme
+  root.style.colorScheme = documentColorScheme(readUiSurface(), context.theme)
   for (const [token, value] of Object.entries(context.tokens)) {
     if (ALLOWED_TOKENS.has(token) && typeof value === "string") {
       root.style.setProperty(token, value)

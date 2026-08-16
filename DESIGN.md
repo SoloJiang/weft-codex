@@ -93,7 +93,8 @@ token，由 `ui/src/index.css` 统一声明；**组件中不出现字面颜色�
 | 描边 | `--border` | `--color-token-border` | 浮层轮廓、分隔线、焦点环 |
 | 强描边 | `--border-strong` | `--color-token-border-heavy` | 字段轮廓 |
 | 悬停 | `--hover` | `--color-token-list-hover-background` | 行与触发器的悬停底 |
-| 表面 | `--panel-2` | `--color-token-dropdown-background` | 浮层与字段底 |
+| 页面 | `--panel` | `--color-token-main-surface-primary` | 工作区、看板卡等贴页表面 |
+| 浮层 | `--panel-2` | `--color-token-dropdown-background` | 弹窗、下拉、toast、字段底 |
 | 主色 | `--accent` | `--color-token-primary` | 选中标记、角标 |
 | 焦点 | `--focus` | `--color-token-border` | 焦点环 |
 
@@ -103,6 +104,10 @@ token，由 `ui/src/index.css` 统一声明；**组件中不出现字面颜色�
 
 **强调用透明度表达，不换色相。** 悬停加前景 alpha 底色，字段悬停提升轮廓 alpha。
 不引入主色悬停。
+
+**页面与浮层不是同一层。** `--panel` 是贴在工作区上的表面；弹窗、下拉、toast
+必须用 `--panel-2`。暗色宿主的 `--color-token-main-surface-primary` 可以是近黑
+甚至纯黑，拿它做模态底会把对话框画成一块黑洞。
 
 **无宿主环境沿用同一套角色。** `--fb-*` 复刻宿主约定而非另立一套：焦点在宿主内是
 描边色，降级环境即取降级自身的描边色。
