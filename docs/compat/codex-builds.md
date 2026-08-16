@@ -32,7 +32,8 @@
 > Tier 取值与采集当时 `launcher/src/probes.ts` 的 `CompatibilityTier` 一致：
 > `safe-mode` / `additive` / `weft-mode`。**从 2026-08-16 起，`additive` 不再是
 > 产品档**（见 08-16 spec §4 / §8.4）：减法失败 = 不能进 Weft。本表历史行仍按
-> 当时分类记录，不要改写。
+> 当时分类记录，不要改写。当前代码把 token / locale 记成 `base`（缺失则不能进
+> Weft）；历史行里的 `additive` 与之同义，只是采集当时的词。
 >
 > 6321 这一行是在**未注入**的纯净原生 DOM 上采集的（`injection.mode === null`、
 > 无 `weft-codex-*` 根节点与样式），因此测到的是宿主自身结构，不含 Weft 影响。

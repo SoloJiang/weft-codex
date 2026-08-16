@@ -37,6 +37,12 @@ import {
   type SearchHit,
   searchBoard,
 } from "@/lib/sidebar-entries"
+import {
+  sidebarFooter,
+  THREAD_RESOLVE_DELAYS_MS,
+  threadLinkStatus,
+  type SidebarFooter,
+} from "@/lib/thread-resolve"
 import { isTypingTarget } from "@/lib/utils"
 import type { SurfaceRoute } from "@/route"
 import type {
@@ -203,6 +209,46 @@ function ThreadRow({
         <Star aria-hidden="true" />
       </AsyncButton>
     </div>
+  )
+}
+
+function SidebarStatusFooter({
+  footer,
+  onRetry,
+}: {
+  footer: SidebarFooter
+  onRetry: (threadId: string) => void
+}) {
+  const { t } = useI18n()
+  if (footer.kind === "none") return null
+  if (footer.kind === "retry") {
+    return (
+      <footer className="sidebar-footer">
+        <span className="sidebar-error" role="alert" title={t("err.prefix") + t("err.threadOpen")}>
+          {t("err.prefix") + t("err.threadOpen")}
+        </span>
+        <Button
+          variant="ghost"
+          size="xs"
+          className="sidebar-footer-retry"
+          onClick={() => onRetry(footer.threadId)}
+        >
+          {t("action.retryOpenThread")}
+        </Button>
+      </footer>
+    )
+  }
+  if (footer.kind === "linking") {
+    return (
+      <footer className="sidebar-footer">
+        <span className="sidebar-status" role="status">{t("sidebar.linkingThread")}</span>
+      </footer>
+    )
+  }
+  return (
+    <footer className="sidebar-footer">
+      <span className="sidebar-status" role="status">{t("sidebar.unboundThread")}</span>
+    </footer>
   )
 }
 
@@ -509,6 +555,7 @@ export default function SidebarApp() {
     () => new Map(),
   )
   const resolveSequence = React.useRef(0)
+  const [resolveExhausted, setResolveExhausted] = React.useState(false)
   const stateRef = React.useRef({ workspaceId, route })
   const threadMap = React.useMemo(
     () => buildThreadMap(board, resolvedThreads),
@@ -521,12 +568,16 @@ export default function SidebarApp() {
   stateRef.current = { workspaceId, route }
 
   React.useEffect(() => {
-    if (location.kind !== "unbound-thread") return
+    if (location.kind !== "unbound-thread") {
+      setResolveExhausted(false)
+      return
+    }
     const sequence = resolveSequence.current + 1
     resolveSequence.current = sequence
+    setResolveExhausted(false)
     let cancelled = false
     const resolve = async () => {
-      for (const delay of [0, 250, 750]) {
+      for (const delay of THREAD_RESOLVE_DELAYS_MS) {
         if (delay) await new Promise((done) => window.setTimeout(done, delay))
         if (cancelled || resolveSequence.current !== sequence) return
         let response: ThreadLocationResponse
@@ -554,10 +605,18 @@ export default function SidebarApp() {
         }
         return
       }
+      if (!cancelled && resolveSequence.current === sequence) {
+        setResolveExhausted(true)
+      }
     }
     void resolve()
     return () => { cancelled = true }
   }, [location, session])
+
+  const footer = sidebarFooter(
+    session.failedThreadId,
+    threadLinkStatus(location.kind, resolveExhausted),
+  )
 
   let activeIssueId: number | null = null
   let activeThreadId: string | null = null
@@ -894,21 +953,7 @@ export default function SidebarApp() {
         </section>
       )}
 
-      {session.failedThreadId ? (
-        <footer className="sidebar-footer">
-          <span className="sidebar-error" role="alert" title={t("err.prefix") + t("err.threadOpen")}>
-            {t("err.prefix") + t("err.threadOpen")}
-          </span>
-          <Button
-            variant="ghost"
-            size="xs"
-            className="sidebar-footer-retry"
-            onClick={() => openThread(session.failedThreadId as string)}
-          >
-            {t("action.retryOpenThread")}
-          </Button>
-        </footer>
-      ) : null}
+      <SidebarStatusFooter footer={footer} onRetry={openThread} />
     </aside>
   )
 }

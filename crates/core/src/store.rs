@@ -133,6 +133,10 @@ CREATE TABLE IF NOT EXISTS repo_relation (
     rationale TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_relation_ws ON repo_relation(workspace_id);
+CREATE TABLE IF NOT EXISTS ui_pref (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 ";
 
 /// A connected store handle. Cheap to clone (Arc inside the pool).
@@ -822,6 +826,60 @@ impl Store {
         .fetch_all(&self.pool)
         .await
         .context("list_workspaces")
+    }
+
+    pub async fn last_workspace_id(&self) -> anyhow::Result<Option<i64>> {
+        let row = sqlx::query("SELECT value FROM ui_pref WHERE key = ?")
+            .bind("last_workspace_id")
+            .fetch_optional(&self.pool)
+            .await
+            .context("last_workspace_id")?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let value = row.get::<String, _>("value");
+        if value.is_empty() {
+            return Ok(None);
+        }
+        let id = value
+            .parse::<i64>()
+            .context("invalid last_workspace_id")?;
+        if id <= 0 {
+            return Ok(None);
+        }
+        Ok(Some(id))
+    }
+
+    pub async fn set_last_workspace_id(&self, id: Option<i64>) -> anyhow::Result<()> {
+        if let Some(workspace_id) = id {
+            if workspace_id <= 0 {
+                anyhow::bail!("invalid last workspace id");
+            }
+            let exists = sqlx::query_scalar::<_, i64>("SELECT id FROM workspace WHERE id = ?")
+                .bind(workspace_id)
+                .fetch_optional(&self.pool)
+                .await
+                .context("check last workspace")?;
+            if exists.is_none() {
+                anyhow::bail!("unknown workspace {workspace_id}");
+            }
+            sqlx::query(
+                "INSERT INTO ui_pref (key, value) VALUES (?, ?)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            )
+            .bind("last_workspace_id")
+            .bind(workspace_id.to_string())
+            .execute(&self.pool)
+            .await
+            .context("set last_workspace_id")?;
+            return Ok(());
+        }
+        sqlx::query("DELETE FROM ui_pref WHERE key = ?")
+            .bind("last_workspace_id")
+            .execute(&self.pool)
+            .await
+            .context("clear last_workspace_id")?;
+        Ok(())
     }
 
     pub async fn list_repos(&self, workspace_id: i64) -> anyhow::Result<Vec<RepoRow>> {
@@ -1905,6 +1963,37 @@ mod tests {
         let dir = tempfile::tempdir().expect("tmp");
         let store = Store::open(&dir.path().join("t.db")).await.expect("open");
         (store, dir)
+    }
+
+    #[tokio::test]
+    async fn last_workspace_pref_round_trips() {
+        let (store, _dir) = fixture().await;
+        assert_eq!(store.last_workspace_id().await.expect("empty"), None);
+        let id = store
+            .create_workspace("alpha", "alpha")
+            .await
+            .expect("workspace");
+        store
+            .set_last_workspace_id(Some(id))
+            .await
+            .expect("remember");
+        assert_eq!(store.last_workspace_id().await.expect("read"), Some(id));
+        store
+            .set_last_workspace_id(None)
+            .await
+            .expect("forget");
+        assert_eq!(store.last_workspace_id().await.expect("cleared"), None);
+    }
+
+    #[tokio::test]
+    async fn last_workspace_pref_refuses_an_unknown_id() {
+        let (store, _dir) = fixture().await;
+        let error = store
+            .set_last_workspace_id(Some(9))
+            .await
+            .expect_err("unknown");
+        assert!(error.to_string().contains("unknown workspace"));
+        assert_eq!(store.last_workspace_id().await.expect("still empty"), None);
     }
 
     #[tokio::test]

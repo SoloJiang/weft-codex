@@ -27,6 +27,8 @@ const zh = {
   "sidebar.mainChat": "主会话",
   "sidebar.forkChat": "分支会话",
   "sidebar.leadStarting": "主会话准备中…",
+  "sidebar.linkingThread": "正在关联这条对话…",
+  "sidebar.unboundThread": "这条对话还没有关联到 Weft issue",
   "sidebar.noTasks": "暂无任务",
   "sidebar.openIssueLead": "打开 {title} 的 Lead 主会话",
   "sidebar.expandIssue": "展开 {title}",

@@ -1,6 +1,6 @@
 import * as React from "react"
 
-import { api, apiUrl } from "@/api"
+import { api, apiUrl, jsonRequest, slugify } from "@/api"
 import { useI18n } from "@/i18n"
 import {
   deliveryFailureKey,
@@ -8,8 +8,19 @@ import {
   rememberDeliveryFailure,
   type DeliveryFailure,
 } from "@/lib/sidebar-entries"
+import { pickWorkspaceId } from "@/lib/workspace-id"
 import { useWeftSession } from "@/session"
-import type { BoardEntry, Repo, RepoMap, ToastKind, Workspace } from "@/types"
+import type {
+  BoardEntry,
+  IssueKind,
+  MessageIntent,
+  Repo,
+  RepoImportResponse,
+  RepoMap,
+  ToastKind,
+  UiState,
+  Workspace,
+} from "@/types"
 
 export interface ToastMessage {
   id: number
@@ -29,6 +40,15 @@ export interface WeftWorkspace {
   refreshWorkspace: (id: number) => Promise<void>
   refreshCurrent: () => Promise<void>
   loadWorkspaces: (preferredId?: number) => Promise<Workspace[]>
+  createWorkspace: (name: string) => Promise<void>
+  createIssue: (title: string, kind: IssueKind) => Promise<void>
+  importRepositories: (paths: string[]) => Promise<RepoImportResponse>
+  sendMessage: (
+    target: "lead" | "task",
+    id: number,
+    text: string,
+    intent: MessageIntent,
+  ) => Promise<void>
   notify: (message: string, kind?: ToastKind) => void
   notifyError: (error: unknown) => void
   dismissDeliveryFailure: (key: string) => void
@@ -111,13 +131,19 @@ export function WeftWorkspaceProvider({ children }: { children: React.ReactNode 
   }, [])
 
   const loadWorkspaces = React.useCallback(async (preferredId?: number) => {
-    const rows = await api<Workspace[]>("/api/workspaces")
+    const [rows, uiState] = await Promise.all([
+      api<Workspace[]>("/api/workspaces"),
+      api<UiState>("/api/ui-state").catch(() => ({ lastWorkspaceId: null })),
+    ])
     setWorkspaces(rows)
-    const currentId = workspaceIdRef.current
-    let nextId: number | null = null
-    if (preferredId && rows.some((workspace) => workspace.id === preferredId)) nextId = preferredId
-    else if (currentId && rows.some((workspace) => workspace.id === currentId)) nextId = currentId
-    else nextId = rows[0]?.id ?? null
+    const nextId = pickWorkspaceId(
+      rows.map((workspace) => workspace.id),
+      {
+        preferredId,
+        currentId: workspaceIdRef.current,
+        persistedId: uiState.lastWorkspaceId,
+      },
+    )
     setWorkspaceId(nextId)
     return rows
   }, [setWorkspaceId])
@@ -195,6 +221,66 @@ export function WeftWorkspaceProvider({ children }: { children: React.ReactNode 
     await refreshWorkspace(id)
   }, [refreshWorkspace])
 
+  React.useEffect(() => {
+    if (!workspaceId) return
+    void api("/api/ui-state", jsonRequest("POST", { lastWorkspaceId: workspaceId })).catch(() => {
+      // Remembering the last workspace is best-effort; the board still loads.
+    })
+  }, [workspaceId])
+
+  const createWorkspace = React.useCallback(async (name: string) => {
+    const created = await api<{ id: number }>("/api/workspaces", jsonRequest("POST", { name, slug: slugify(name) }))
+    await loadWorkspaces(created.id)
+    session.navigate({ view: "kanban", issueId: null })
+    notify(t("success.workspaceCreated"), "success")
+  }, [loadWorkspaces, notify, session, t])
+
+  const createIssue = React.useCallback(async (title: string, kind: IssueKind) => {
+    const id = workspaceIdRef.current
+    if (!id) throw new Error(t("err.unknown"))
+    const created = await api<{ id: number; codexThreadId?: string | null }>("/api/issues", jsonRequest("POST", {
+      workspace_id: id,
+      title,
+      slug: slugify(title),
+      kind,
+    }))
+    await refreshCurrent()
+    session.navigate({ view: "issue", issueId: created.id })
+    notify(t("success.issueCreated"), "success")
+    if (created.codexThreadId) {
+      window.setTimeout(() => {
+        void session.openThread(created.codexThreadId as string).catch(() => {
+          notifyError(new Error(t("err.threadOpen")))
+        })
+      }, 0)
+    }
+  }, [notify, notifyError, refreshCurrent, session, t])
+
+  const importRepositories = React.useCallback(async (paths: string[]) => {
+    const id = workspaceIdRef.current
+    if (!id) throw new Error(t("err.unknown"))
+    const response = await api<RepoImportResponse>(
+      `/api/workspaces/${id}/repos/import`,
+      jsonRequest("POST", { paths }),
+    )
+    await refreshCurrent()
+    if (response.added) notify(t("success.reposAdded", { count: response.added }), "success")
+    else if (!response.failed) notify(t("success.reposExisting"), "info")
+    return response
+  }, [notify, refreshCurrent, t])
+
+  const sendMessage = React.useCallback(async (
+    target: "lead" | "task",
+    id: number,
+    text: string,
+    intent: MessageIntent,
+  ) => {
+    const path = target === "lead" ? `/api/issues/${id}/message` : `/api/directions/${id}/message`
+    await api(path, jsonRequest("POST", { text }))
+    await refreshCurrent()
+    notify(t(intent === "continue" ? "success.continueSent" : "success.messageSent"), "success")
+  }, [notify, refreshCurrent, t])
+
   const dismissDeliveryFailure = React.useCallback((key: string) => {
     setDeliveryFailures((current) => (
       current.filter((failure) => deliveryFailureKey(failure) !== key)
@@ -213,6 +299,10 @@ export function WeftWorkspaceProvider({ children }: { children: React.ReactNode 
     refreshWorkspace,
     refreshCurrent,
     loadWorkspaces,
+    createWorkspace,
+    createIssue,
+    importRepositories,
+    sendMessage,
     notify,
     notifyError,
     dismissDeliveryFailure,
@@ -228,6 +318,10 @@ export function WeftWorkspaceProvider({ children }: { children: React.ReactNode 
     refreshWorkspace,
     refreshCurrent,
     loadWorkspaces,
+    createWorkspace,
+    createIssue,
+    importRepositories,
+    sendMessage,
     notify,
     notifyError,
     dismissDeliveryFailure,
