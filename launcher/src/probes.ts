@@ -143,7 +143,8 @@ const FAILURE_REASONS: Record<
  * the durable choice and a value-preserving one: measured on 6662,
  * `--vscode-button-foreground` is `#fafafa` and `--vscode-input-background` is
  * `rgba(251, 251, 251, 0.96)`, byte-identical to what the aliases reported on
- * 6321. `theme.sidebarSurface` has always been sourced this way.
+ * 6321. `theme.sidebarSurface` has always been sourced this way. See
+ * docs/compat/codex-builds.md §8.1.
  */
 export const TOKEN_PROBES = {
   "theme.sidebarSurface": "--vscode-sideBar-background",
@@ -223,14 +224,16 @@ function threadAnchorProbe(
 }
 
 /**
- * The tokens spec §8.3 actually gates Weft on: core surfaces, foreground, fonts.
+ * The tokens Weft is actually gated on, per the 08-16 spec §8.3 / §8.4: core
+ * surfaces, foreground, fonts.
  *
  * The rest are cosmetic. Every one of them is consumed through a fallback in
  * `ui/src/index.css`, and `applyRadiusTokens` already skips radii it cannot
  * read, so losing one costs fidelity to the host palette — not usability.
  * Gating on all eighteen is what let build 6662 lock the whole product out by
- * renaming two colour aliases, which is the trade §5.8 warns against: a
- * cosmetic regression is not worth buying with a functional one.
+ * renaming two colour aliases; docs/compat/codex-builds.md §8 records the
+ * incident and §5.8 the rule it broke — size `requiredFor` to what the
+ * anchor's absence actually costs.
  */
 const CORE_TOKEN_PROBES = new Set([
   "theme.sidebarSurface",
