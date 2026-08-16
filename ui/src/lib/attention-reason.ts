@@ -45,11 +45,12 @@ export function deliveryAttentionKey(reason: string): MessageKey {
 }
 
 export function inboxAttentionKey(
-  kind: "lead" | "attention" | "delivery",
+  kind: "lead" | "attention" | "delivery" | "review",
   reason: string,
 ): MessageKey {
   if (kind === "lead") return leadAttentionKey(reason)
   if (kind === "delivery") return deliveryAttentionKey(reason)
+  if (kind === "review") return "inbox.review"
   return directionAttentionKey(reason)
 }
 

@@ -1,6 +1,7 @@
 import * as React from "react"
 import {
   AlertTriangle,
+  CircleCheck,
   ChevronDown,
   ChevronRight,
   CornerDownRight,
@@ -34,6 +35,7 @@ import { useWeftWorkspace } from "@/workspace-store"
 import { inboxAttentionKey } from "@/lib/attention-reason"
 import {
   buildInbox,
+  inboxFollow,
   type InboxItem,
   type SearchHit,
   searchBoard,
@@ -544,9 +546,10 @@ function InboxPanel({
           key={item.key}
           type="button"
           className="sidebar-attention-row"
+          data-kind={item.kind}
           onClick={() => onOpenItem(item)}
         >
-          <AlertTriangle aria-hidden="true" />
+          {item.kind === "review" ? <CircleCheck aria-hidden="true" /> : <AlertTriangle aria-hidden="true" />}
           <span>
             <span className="sidebar-row-title">{item.title}</span>
             <span
@@ -760,19 +763,6 @@ export default function SidebarApp() {
     return () => window.removeEventListener("keydown", onKeyDown)
   }, [panel, closePanel])
 
-  const openDirectionThread = React.useCallback((issueId: number, directionId?: number) => {
-    const entry = board.find((candidate) => candidate.issue.id === issueId)
-    setExpandedIssueId(issueId)
-    const binding = entry && directionId !== undefined
-      ? primaryBranch(entry, directionId)
-      : undefined
-    if (binding) {
-      openThread(binding.thread_id)
-      return
-    }
-    navigate({ view: "issue", issueId })
-  }, [board, navigate, openThread])
-
   const openHit = React.useCallback((hit: SearchHit) => {
     closePanel()
     if (hit.threadId) {
@@ -799,8 +789,15 @@ export default function SidebarApp() {
       // not fire again for a failure that already happened.
       store.dismissDeliveryFailure(item.failureKey)
     }
-    openDirectionThread(item.issueId, item.directionId)
-  }, [closePanel, openDirectionThread, store])
+    setExpandedIssueId(item.issueId)
+    const follow = inboxFollow(item)
+    if (follow.action === "open-thread") {
+      session.setRoute({ view: "issue", issueId: follow.issueId })
+      openThread(follow.threadId)
+      return
+    }
+    navigate({ view: "issue", issueId: follow.issueId })
+  }, [closePanel, navigate, openThread, session, store])
 
   const headerActionsAreNative = session.headerActions === "native"
 

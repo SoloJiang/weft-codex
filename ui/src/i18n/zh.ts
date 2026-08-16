@@ -16,6 +16,7 @@ const zh = {
   "entries.inbox": "收件箱",
   "entries.inboxCount": "收件箱，{count} 项待处理",
   "entries.inboxEmpty": "暂时没有需要处理的事",
+  "inbox.review": "待你验收",
   "entries.close": "关闭",
   "entries.kind.issue": "Issue",
   "entries.kind.direction": "任务",

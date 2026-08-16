@@ -3,6 +3,7 @@ import test from "node:test"
 
 import {
   buildInbox,
+  inboxFollow,
   parseDeliveryFailure,
   rememberDeliveryFailure,
   searchBoard,
@@ -195,6 +196,56 @@ test("a stalled lead reaches the inbox ahead of its tasks", () => {
 
 test("an issue with a healthy lead contributes nothing to the inbox", () => {
   assert.deepEqual(buildInbox(board(), []), [])
+})
+
+test("a task waiting for accept reaches the inbox", () => {
+  const items = buildInbox(
+    board({ directions: [direction({ status: "review", attention: 0 })] }),
+    [],
+  )
+  assert.equal(items.length, 1)
+  assert.equal(items[0]?.kind, "review")
+  assert.equal(inboxFollow(items[0]!).action, "show-issue")
+})
+
+test("a failed review turn is listed once as attention, not again as review", () => {
+  const items = buildInbox(
+    board({
+      directions: [direction({ status: "review", attention: 1, attention_reason: "turn failed" })],
+    }),
+    [],
+  )
+  assert.deepEqual(items.map((item) => item.kind), ["attention"])
+})
+
+test("a stalled lead with a thread opens that chat instead of covering it", () => {
+  const items = buildInbox(
+    board({
+      issue: issue({
+        lead_attention: 1,
+        lead_attention_reason: "turn-error",
+        lead_codex_thread_id: "thr_lead",
+      }),
+      directions: [],
+    }),
+    [],
+  )
+  assert.deepEqual(inboxFollow(items[0]!), {
+    action: "open-thread",
+    threadId: "thr_lead",
+    issueId: 12,
+  })
+})
+
+test("a stalled lead without a thread shows the issue page", () => {
+  const items = buildInbox(
+    board({
+      issue: issue({ lead_attention: 1, lead_attention_reason: "start-failed" }),
+      directions: [],
+    }),
+    [],
+  )
+  assert.deepEqual(inboxFollow(items[0]!), { action: "show-issue", issueId: 12 })
 })
 
 test("an undelivered bus payload becomes a delivery failure", () => {

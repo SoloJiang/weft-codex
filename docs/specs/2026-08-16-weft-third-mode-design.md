@@ -350,9 +350,12 @@ Electron 菜单 accelerator，renderer 拦不住）。
 搜索：对当前 workspace 已拉取的 `/api/issues` 看板做客户端过滤。种类顺序
 issue → 任务 → artifact → thread。不新增接口。
 
-收件箱 = `lead_attention` + `direction.attention` + `bus.undelivered`。
+收件箱 = `lead_attention` + `direction.attention` + 待验收（`status=review`
+且无 attention）+ `bus.undelivered`。
 `bus.parked` 不进：人正在该线程上说话，turn 结束会自动 flush。Lead 停滞排在
-任务前面。已有 attention 的任务不再重复列一条 undelivered。
+任务前面。失败 turn 也落在 review，但已有 attention 行，不再重复。点 Lead /
+失败任务且有线程时只记路由并开口，不 `showWorkspace()`；待验收打开 issue
+详情，因为验收在 Weft 表面。
 
 ### 8.7 Weft 模式 UI
 
@@ -527,7 +530,7 @@ MCP bus 仍是 `/bus/:thread/:dir/mcp`，身份在 path 上，不加 CORS（agen
 | 减法失败回 Tier 1 additive | 不能进 Weft |
 | 自有 toggle 保 Weft 可达 | 删除。菜单挂不上即不可用 |
 | `frame-src` CSP bypass | 不为 iframe 开。只可能为 `connect-src` / `script-src` |
-| 收件箱 = attention + undelivered | 加上 `lead_attention`；`parked` 仍不进 |
+| 收件箱 = attention + undelivered | 加上 `lead_attention` 与待验收；`parked` 仍不进 |
 | `HostContextV1.projectId` | 不存在 |
 | 相对路径 `/api` | `host.weftdOrigin` 绝对地址 + CORS |
 | 编排 / bus / curator / binding | 不变 |
