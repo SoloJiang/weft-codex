@@ -179,27 +179,31 @@ select,
 textarea { font: inherit; }
 
 /**
- * One focus treatment for the whole UI.
+ * Focus outline is for controls that have no caret.
+ *
+ * Buttons, links, select triggers and summaries need a ring because nothing
+ * else moves when they take focus. Text fields already have a caret — a second
+ * outline just frames the box you are typing into. That is the standard, not
+ * a command-menu or kanban-search exception.
  *
  * This used to fight shadcn's `focus-visible:ring-3`: that utility paints a
  * box-shadow, which these rules never set, so it survived the cascade and
- * stacked a 3px halo inside this 2px outline — about 7px of ring on one field.
- * The components no longer carry ring utilities; this is the only ring.
- *
- * Geometry and colour are the host's: it writes
- * `focus-visible:outline-2 outline-offset-2 outline-token-border` on its own
- * controls. Its command-menu input carries no ring, but that is the exception
- * rather than the rule — it is auto-focused and alone in a modal, so it has
- * nothing to distinguish itself from.
+ * stacked a 3px halo inside this 2px outline. The components no longer carry
+ * ring utilities; buttons keep this one ring, fields keep none.
  */
 button:focus-visible,
 .thread-link:focus-visible,
 select:focus-visible,
-input:focus-visible,
-textarea:focus-visible,
 summary:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+
+input:focus,
+input:focus-visible,
+textarea:focus,
+textarea:focus-visible {
+  outline: none;
 }
 
 button:disabled { cursor: default; }
@@ -2049,9 +2053,8 @@ main {
 .form-field textarea,
 .form-field .select-trigger { width: 100%; }
 
-/* Modal fields sit on a larger surface, so they take the next radius up. The
-   focus treatment is deliberately not overridden here — one outline, everywhere
-   (see DESIGN.md, Elevation & Depth). */
+/* Modal fields sit on a larger surface, so they take the next radius up.
+   Text fields still follow the no-outline standard; the caret is the signal. */
 .modal-body [data-slot="input"],
 .modal-body [data-slot="textarea"],
 .modal-body [data-slot="select-trigger"] {

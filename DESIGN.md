@@ -179,15 +179,18 @@ chip / tag / 徽标用 **inset ring**：`box-shadow: inset 0 0 0 0.5px …`。�
 
 ### 焦点环
 
+按钮、链接、下拉触发器、`summary` 没有光标，焦点用一圈 outline 表达：
+
 ```css
 outline: 2px solid var(--focus);
 outline-offset: 2px;
 ```
 
-全站唯一焦点表现，由 `index.css` 单条规则统管，**不叠加 ring 或 box-shadow**。
+由 `index.css` 单条规则统管，**不叠加 ring 或 box-shadow**。
 
-输入框同样带环。宿主的 command menu 输入框无环属**例外**——模态内自动聚焦、独此
-一个；其按钮、侧栏行、下拉触发器均带环，密集并列的字段适用通则。
+**文本字段不画 outline。** 光标就是焦点信号。字段已有 hairline ring 表达可交互，
+再套一圈 outline 只是给正在输入的盒子描边。这是通则，不是 command menu 或看板
+搜索的例外。Select 触发器没有光标，仍走焦点环。
 
 ## Shapes
 
@@ -221,7 +224,7 @@ outline-offset: 2px;
 |---|---|
 | 默认 | 表面底 + 字段级 ring |
 | 悬停 | ring 提至 26% 前景 alpha |
-| 焦点 | 叠加焦点环，ring 不变 |
+| 焦点 | 无 outline，ring 不变；光标即焦点信号 |
 | 错误 | ring 转 `--danger` |
 | 禁用 | `opacity: .5`，`cursor: not-allowed` |
 
@@ -295,7 +298,8 @@ Weft 搜索使用 `/`，无修饰键，需守卫输入类元素。
 **Do** 用 ring 与投影表达边界。
 **Don't** 用 `border` 画字段与浮层的边。
 
-**Do** 让焦点只有一层 outline。
+**Do** 让按钮与触发器的焦点只有一层 outline。
+**Don't** 给文本字段叠加 outline——光标已经说明焦点在哪。
 **Don't** 叠加组件自带的 ring 工具类——它们走 box-shadow，不会被元素规则覆盖。
 
 **Do** 把视觉属性写在 `ui/src/index.css`，组件只保留结构与行为。
