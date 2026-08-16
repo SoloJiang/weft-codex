@@ -33,3 +33,27 @@ export function sidebarFooter(
   if (linkStatus === "unbound") return { kind: "unbound" }
   return { kind: "none" }
 }
+
+export type WorkspaceFollow =
+  | { action: "none" }
+  | { action: "adopt"; workspaceId: number }
+
+/**
+ * How to move the sidebar onto a thread's workspace.
+ *
+ * In thread view the native chat is the main surface: switch the workspace
+ * under the sidebar, but do not call showWorkspace — that would cover the
+ * chat with the kanban. In workspace view a leftover native active row must
+ * not steal the workspace the person is already looking at.
+ */
+export function workspaceFollowForThread(options: {
+  hostView: "workspace" | "thread"
+  currentWorkspaceId: number | null
+  threadWorkspaceId: number | null
+}): WorkspaceFollow {
+  const threadWorkspaceId = options.threadWorkspaceId
+  if (!threadWorkspaceId) return { action: "none" }
+  if (threadWorkspaceId === options.currentWorkspaceId) return { action: "none" }
+  if (options.hostView !== "thread") return { action: "none" }
+  return { action: "adopt", workspaceId: threadWorkspaceId }
+}

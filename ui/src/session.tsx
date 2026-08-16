@@ -16,6 +16,8 @@ export interface WeftSession {
   workspaceId: number | null
   setWorkspaceId: (id: number | null) => void
   selectWorkspace: (id: number) => void
+  /** Switch workspace without leaving the native thread. */
+  adoptWorkspace: (id: number) => void
   route: SurfaceRoute
   navigate: (route: SurfaceRoute) => void
   dialog: DialogState
@@ -76,6 +78,11 @@ export function WeftSessionProvider({
     setRoute({ view: "kanban", issueId: null })
   }, [host])
 
+  const adoptWorkspace = React.useCallback((id: number) => {
+    setWorkspaceId(id)
+    setRoute({ view: "kanban", issueId: null })
+  }, [])
+
   const navigate = React.useCallback((next: SurfaceRoute) => {
     host.showWorkspace()
     setThreadOpen(clearThreadOpenFailure)
@@ -119,6 +126,7 @@ export function WeftSessionProvider({
     workspaceId,
     setWorkspaceId,
     selectWorkspace,
+    adoptWorkspace,
     route,
     navigate,
     dialog,
@@ -134,6 +142,7 @@ export function WeftSessionProvider({
   }), [
     workspaceId,
     selectWorkspace,
+    adoptWorkspace,
     route,
     navigate,
     dialog,

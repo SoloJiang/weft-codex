@@ -41,6 +41,7 @@ import {
   sidebarFooter,
   THREAD_RESOLVE_DELAYS_MS,
   threadLinkStatus,
+  workspaceFollowForThread,
   type SidebarFooter,
 } from "@/lib/thread-resolve"
 import { isTypingTarget } from "@/lib/utils"
@@ -88,6 +89,20 @@ function buildThreadMap(
   }
   for (const [threadId, location] of resolved) bindings.set(threadId, location.binding)
   return bindings
+}
+
+function workspaceForThread(
+  threadId: string,
+  board: BoardEntry[],
+  resolved: ReadonlyMap<string, ResolvedThread>,
+): number | null {
+  const remembered = resolved.get(threadId)
+  if (remembered) return remembered.workspaceId
+  const entry = board.find((candidate) => (
+    candidate.threads.some((binding) => binding.thread_id === threadId)
+    || candidate.issue.lead_codex_thread_id === threadId
+  ))
+  return entry?.issue.workspace_id ?? null
 }
 
 function deriveLocation(
@@ -599,10 +614,12 @@ export default function SidebarApp() {
           return next
         })
         setExpandedIssueId(response.binding.issue_id)
-        if (response.workspaceId !== stateRef.current.workspaceId) {
-          session.setWorkspaceId(response.workspaceId)
-          session.navigate({ view: "kanban", issueId: null })
-        }
+        const follow = workspaceFollowForThread({
+          hostView: session.hostView,
+          currentWorkspaceId: stateRef.current.workspaceId,
+          threadWorkspaceId: response.workspaceId,
+        })
+        if (follow.action === "adopt") session.adoptWorkspace(follow.workspaceId)
         return
       }
       if (!cancelled && resolveSequence.current === sequence) {
@@ -630,6 +647,16 @@ export default function SidebarApp() {
   React.useEffect(() => {
     if (activeIssueId) setExpandedIssueId(activeIssueId)
   }, [activeIssueId])
+
+  React.useEffect(() => {
+    if (location.kind !== "bound-thread") return
+    const follow = workspaceFollowForThread({
+      hostView: session.hostView,
+      currentWorkspaceId: workspaceId,
+      threadWorkspaceId: workspaceForThread(location.threadId, board, resolvedThreads),
+    })
+    if (follow.action === "adopt") session.adoptWorkspace(follow.workspaceId)
+  }, [board, location, resolvedThreads, session, workspaceId])
 
   const navigate = React.useCallback((next: SurfaceRoute) => {
     session.navigate(next)
