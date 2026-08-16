@@ -1,5 +1,10 @@
 # launcher
 
+产品形态与壳层以
+[`docs/specs/2026-08-16-weft-third-mode-design.md`](../docs/specs/2026-08-16-weft-third-mode-design.md)
+为准。当前源码仍是 08-08 的三 iframe Host；迁到同文档 `mountWeft` 之前，下列
+命令与探针仍然可用。
+
 Codex Desktop 的外置 Host。它不修改、重签名或覆盖官方应用，而是：
 
 - 以独立 profile 和仅 loopback 可见的 CDP 端口启动官方 Codex；

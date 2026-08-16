@@ -1,5 +1,14 @@
 # Weft 迁移至 Codex Desktop 设计（2026-08-08）
 
+> **产品形态与 Desktop 壳层已被
+> [`2026-08-16-weft-third-mode-design.md`](2026-08-16-weft-third-mode-design.md)
+> 取代。** 新实现以 08-16 为准。本文仍保留：编排 / bus / curator 决策、
+> §5–6 线程绑定、§9 协议经验。历史 Stage 记录与当时的 iframe / Tier 1 假设
+> 不再约束实现。
+>
+> 产品范围与用户可见决策以 [`PRODUCT.md`](../../PRODUCT.md) 为准。
+> 协议字段以本机 `codex app-server generate-json-schema` 为准（见 §9）。
+
 ## 1. 背景与目标
 
 停发 Weft Tauri 客户端，把产品能力移植进 Codex Desktop。聊天表面全部委托给
@@ -53,8 +62,9 @@ Codex Desktop（官方，不修改安装包）
 关键性质：
 
 - 所有业务逻辑在 weftd，对 Codex 升级免疫；扩展 UI 是纯展示层。
-- kanban 首先是一个独立 web app（浏览器可用），Desktop 嵌入只是宿主之一；
-  注入被 Sparkle 更新打破时降级为浏览器标签页，不是瘫痪。
+- 产品形态是 Desktop 第三种模式（见 `PRODUCT.md`）。浏览器页不是降级面；
+  注入失败则 Weft 不可用，ChatGPT / Codex 仍可用。React UI 仍是同一份构建，
+  `standalone` 只作开发预览。
 - 每个 direction 与"一个 Codex 线程 + 一个 worktree"一一对应，与现有
   `direction` 实体（单 repo 写入、branch、mandate、五态状态机）天然吻合。
 
@@ -254,7 +264,7 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
 - 全部 i18n 字符串沿用 en/zh 双文件约束。
 - **Surface 拆分（2026-08-09 已实现并实测）**：同一份 React 构建按 URL
   参数形成三种外壳，不复制业务组件：
-  - `standalone`：浏览器降级面，保留 workspace selector、Kanban / 仓库入口
+  - `standalone`：开发预览面，保留 workspace selector、Kanban / 仓库入口
     topbar；weftd / SSE 健康状态不作为常驻产品元素，真实失败在具体操作处提示；
   - `sidebar`：Codex sidebar 内的全局导航，只放 workspace selector、Kanban、
     仓库、issue 列表和 attention 摘要；不放 Weft 品牌、语言/主题开关、聊天、
@@ -302,10 +312,12 @@ lead/worker 会话即 Codex 线程，由 weftd 经 app-server 创建与驱动：
 
 ## 7.5 模式切换（Weft mode）
 
+产品形态以 `PRODUCT.md`「Product Form」为准：Weft 是与 ChatGPT / Codex 同级的
+第三种模式，不是插件或浮层。本节只写 Desktop 怎么把这个形态挂上宿主开关。
+
 入口级模式开关，挂载到应用既有的顶层模式切换上：应用本身已有
-Work（everyday work）/ Codex 双模式（bundle 实证：`isEverydayWorkMode`、
-跨模式 handoff 链接），Weft 作为**第三个并列模式**加入，而不是自造一套
-独立开关：
+ChatGPT（everyday work / `isEverydayWorkMode`）与 Codex 双模式，Weft 作为
+**第三个并列模式**加入，而不是自造一套独立开关：
 
 - Weft 模式下隐藏 Codex 常规会话列表与无关聊天入口，只保留 workspace /
   issue / kanban / repo map 表面；线程聊天仍使用原生线程视图（唯一不隐藏
@@ -326,7 +338,7 @@ Work（everyday work）/ Codex 双模式（bundle 实证：`isEverydayWorkMode`�
     做任何事；把它列出来只会让收件箱塞满"读着读着就自己好了"的条目。
   - 槽位锚点是 `optional` 而非 `subtractive`：它缺失只应让两个入口改在 Weft
     sidebar 自己的头部渲染（Host Context 的 `headerActions: "fallback"`），
-    **能力不丢，只降级位置**。浏览器降级路径天然走这一支。
+    **能力不丢，只降级位置**。开发预览没有宿主头部，也走这一支。
   - **不要给这两个入口绑快捷键。** 实测宿主已占用 `⌘K` / `⇧⌘P`（Command
     menu）与 `⌥⌘U`（activity view），且绑在 Electron 菜单 accelerator 层，
     renderer 大概率收不到、也就拦不掉。Weft 搜索改用 `/` 聚焦。详见
@@ -345,13 +357,14 @@ Work（everyday work）/ Codex 双模式（bundle 实证：`isEverydayWorkMode`�
   2. launcher flag 决定启动默认模式；
   3. 自有 toggle（持久化在 weftd 侧）——模式切换器结构 probe 失败时的
      回退，保证 Weft mode 永远可达。
-- 浏览器降级路径天然就是 Weft mode 的完整形态（没有任何 Codex chrome）；
-  只有 Desktop 嵌入路径需要 Tier 2。
+- 产品不提供浏览器降级。Tier 2 是唯一产品形态；模式开关或减法探针失败则
+  fail-closed，不能进入 Weft，不能退回“浏览器里的 Weft”或 Codex 模式里的
+  附加行。`standalone` 只作开发预览。
 
 桌面嵌入：launcher 以 `--remote-debugging-port` 启动 ChatGPT.app（不改包、
 不破签名），经 CDP 挂载上述 web app 到侧边栏入口；Host 在 launcher 进程，
 renderer 仅 thin surface agent，通信走 CDP binding。未知版本 fail-closed
-进入 safe mode（不注入，提示用浏览器打开）。
+进入 safe mode（不注入，Weft 不可用，官方 Codex 仍可开）。
 
 **已完成（2026-08-09，真实发行版）**：Launcher 已能独立启动/回收官方 Codex
 与 weftd，也能 attach 专用实例；两级 readiness gate 分开等待 CDP target 与 React
@@ -446,8 +459,8 @@ interface HostContextV1 {
   明确 API，SSE 只作提示并重新读取真值。
 - workspace → repositories → issue → tasks 是用户主路径；卡片状态、归属仓库、
   执行模式与 attention 都可扫读，但用户界面不暴露 `direction` 内部术语。
-- 独立 web app 是一等降级面，同一份 React 构建再嵌入 Desktop；不能维护一套
-  浏览器 UI 和一套 Desktop UI。
+- 同一份 React 构建服务 Desktop 第三种模式；`standalone` 只作开发预览，
+  不是产品降级面。不能维护一套“浏览器 Weft”和一套 Desktop Weft。
 - 交互 primitive 统一到 shadcn/ui 源码层，但不继承它的品牌视觉；宿主主题、
   locale、原生线程和模式入口仍由 Codex 决定。
 
@@ -533,8 +546,8 @@ Desktop 相关（1、3）仍需运行时闭环；app-server 相关（2、4、5�
 - weftd 自行持久化 thread_id 与活跃 turn_id，不依赖 `thread/list` 的
   索引时效。
 
-任何一条不成立：UI 通道降级为纯浏览器 web app（产品仍成立），bus/编排
-不受影响（不依赖注入）。
+任何一条不成立：不能进入 Weft 模式（产品壳不可用），bus/编排仍在 weftd
+内成立，但不向用户提供浏览器替代面。
 
 ## 10. 分阶段落地
 
@@ -563,7 +576,8 @@ Desktop 相关（1、3）仍需运行时闭环；app-server 相关（2、4、5�
 
 - Codex 平台演进吃掉编排层：编排逻辑在 weftd 内、UI 是薄皮，官方若推出
   原生多 agent 编排，迁移成本限于 UI 层。
-- 注入脆弱性：fail-closed + 浏览器降级路径（见第 3、9 节）。
+- 注入脆弱性：fail-closed。挂不上第三种模式则 Weft 不可用，ChatGPT / Codex
+  仍可用；不对用户提供浏览器降级。
 - iframe 隔离：主题 token、locale、当前 project/thread 不会天然跨 frame；
   必须通过版本化 Host Context Bridge 同步，不允许 UI 靠 DOM 猜测。
 - CDP 暴露：仅绑定 loopback 与专用 profile，launcher 退出即回收；CSP bypass

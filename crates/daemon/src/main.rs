@@ -1,5 +1,6 @@
-//! weftd — the weft-codex headless daemon (migration spec:
-//! docs/specs/2026-08-08-codex-desktop-migration-design.md).
+//! weftd — the weft-codex headless daemon (product shell:
+//! docs/specs/2026-08-16-weft-third-mode-design.md; protocol spikes:
+//! docs/specs/2026-08-08-codex-desktop-migration-design.md §5–6, §9).
 //!
 //! Boots: live-mode gate → store (fresh ~/.weft-codex schema) → UI event
 //! channel → thread-bus MCP server + kanban HTTP API on a STABLE address
