@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // Codex upgrade regression drill (N0-05).
 //
-// Renames a semantic anchor on a live Codex renderer and asserts the
-// compatibility tier degrades the way spec §7.5 promises, then reverts. This
-// covers what the unit fixtures cannot: that the anchors we classify actually
-// exist in the shipping DOM, and that losing one fails open instead of hiding
-// the host UI.
+// Breaks one anchor at a time on a live Codex renderer and asserts the
+// compatibility tier lands where 08-16 spec §4 / §8.4 promise, then reverts.
+// This covers what the unit fixtures cannot: that the anchors we classify
+// actually exist in the shipping DOM, that losing a required one stops
+// injection, and — since build 6662 — that losing a cosmetic one does not.
 //
 // It drives the shipped probe pipeline (buildProbeExpression +
 // reportFromSnapshot), so a classification change is picked up automatically.
@@ -30,19 +30,61 @@ const { buildProbeExpression, reportFromSnapshot } = await import(
 
 const PORT = process.argv[2] || "9227"
 
-/** Each case renames one anchor and states the tier it must produce. */
+const renameExpression = (from, to) => `(() => {
+  const nodes = [...document.querySelectorAll('[' + ${JSON.stringify(from)} + ']')];
+  for (const node of nodes) {
+    node.setAttribute(${JSON.stringify(to)}, node.getAttribute(${JSON.stringify(from)}) || "");
+    node.removeAttribute(${JSON.stringify(from)});
+  }
+  return nodes.length + " node(s)";
+})()`
+
+const attributeRename = (attribute) => ({
+  mutate: renameExpression(attribute, `${attribute}-drill`),
+  restore: renameExpression(`${attribute}-drill`, attribute),
+})
+
+/**
+ * An inline whitespace value computes to the empty string, which is exactly
+ * what `tokenProbe` reads as "absent" — and it beats the stylesheet without
+ * editing it, so `removeProperty` restores the original value verbatim.
+ */
+const tokenBlank = (token) => ({
+  mutate: `(document.documentElement.style.setProperty(${JSON.stringify(token)}, " "), ${JSON.stringify(token)})`,
+  restore: `(document.documentElement.style.removeProperty(${JSON.stringify(token)}), ${JSON.stringify(token)})`,
+})
+
+/** Each case breaks one anchor and states the tier it must produce. */
 const CASES = [
   {
-    name: "subtractive anchor renamed",
-    attribute: "data-app-action-sidebar-thread-id",
-    expect: "additive",
-    why: "losing a subtractive anchor must fail open to Tier 1, not hide native UI",
+    name: "base anchor renamed",
+    expect: "safe-mode",
+    why: "without the sidebar anchor there is nowhere to mount Weft",
+    ...attributeRename("data-app-action-sidebar-scroll"),
   },
   {
-    name: "base anchor renamed",
-    attribute: "data-app-action-sidebar-scroll",
+    name: "thread anchor renamed while conversations exist",
     expect: "safe-mode",
-    why: "losing a base anchor must stop injection entirely",
+    why: "no thread id means no deep link and no Issue resolution",
+    ...attributeRename("data-app-action-sidebar-thread-id"),
+  },
+  {
+    name: "optional anchor renamed",
+    expect: "weft-mode",
+    why: "the create-project affordance is leftover chrome, not an enter-Weft condition",
+    ...attributeRename("data-app-action-sidebar-project-create"),
+  },
+  {
+    name: "core surface token blanked",
+    expect: "safe-mode",
+    why: "spec §8.3 gates Weft on the core surfaces, foreground and fonts",
+    ...tokenBlank("--color-token-main-surface-primary"),
+  },
+  {
+    name: "cosmetic token blanked",
+    expect: "weft-mode",
+    why: "build 6662 deleted two of these; every consumption site falls back to --fb-*",
+    ...tokenBlank("--vscode-button-foreground"),
   },
 ]
 
@@ -72,15 +114,6 @@ async function evaluate(ws, expression) {
   return result.result?.value
 }
 
-const renameExpression = (from, to) => `(() => {
-  const nodes = [...document.querySelectorAll('[' + ${JSON.stringify(from)} + ']')];
-  for (const node of nodes) {
-    node.setAttribute(${JSON.stringify(to)}, node.getAttribute(${JSON.stringify(from)}) || "");
-    node.removeAttribute(${JSON.stringify(from)});
-  }
-  return nodes.length;
-})()`
-
 async function currentTier(ws) {
   const report = reportFromSnapshot(await evaluate(ws, buildProbeExpression()))
   return {
@@ -107,18 +140,17 @@ async function main() {
     }
 
     for (const drill of CASES) {
-      const shadow = `${drill.attribute}-drill`
-      const moved = await evaluate(ws, renameExpression(drill.attribute, shadow))
+      const broke = await evaluate(ws, drill.mutate)
       try {
         const degraded = await currentTier(ws)
         const ok = degraded.tier === drill.expect
         console.log(
-          `${ok ? "PASS" : "FAIL"}  ${drill.name}: renamed ${moved} node(s) -> tier=${degraded.tier}` +
+          `${ok ? "PASS" : "FAIL"}  ${drill.name}: broke ${broke} -> tier=${degraded.tier}` +
           ` (expected ${drill.expect})  failed=[${degraded.failed.join(", ")}]`,
         )
         if (!ok) failures.push(`${drill.name}: got ${degraded.tier}, expected ${drill.expect} — ${drill.why}`)
       } finally {
-        await evaluate(ws, renameExpression(shadow, drill.attribute))
+        await evaluate(ws, drill.restore)
       }
     }
 

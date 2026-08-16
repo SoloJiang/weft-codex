@@ -524,6 +524,27 @@ tier 已回到基线；但中途崩溃会留下被改过的 renderer，重新加
   `sidebar.closest("nav")`（`renderer-agent.ts`），sidebar 找不到时触发器也就找不到。
   因此 `mode.switcher` 的失败不一定代表菜单本身有问题，排障时应先看 `sidebar.scroll`。
 
+### build 6662 实测（2026-08-16）
+
+演练本身也随两档模型翻修过：原先第一条用例期待 `additive`，而该档 2026-08-16 起
+已不存在，脚本因此一直是坏的——6662 的回归没被它拦下，这是原因之一。现在改为覆盖
+四个分级方向，并新增 token 用例（置空手法见脚本注释：inline 空白值的 computed 值
+为空串，`removeProperty` 原样还原）。
+
+| 步骤 | tier | 失败探针 |
+|---|---|---|
+| 基线 | `weft-mode` | 无 |
+| 改名 `data-app-action-sidebar-scroll`（1 个节点） | **`safe-mode`** | `sidebar.scroll(base)`、`mode.switcher(base)`、`sidebar.headerActionSlot(optional)` |
+| 改名 `data-app-action-sidebar-thread-id`（32 个节点） | **`safe-mode`** | `sidebar.threadRoute(base)` |
+| 改名 `data-app-action-sidebar-project-create`（1 个节点） | `weft-mode` | `sidebar.projectCreate(optional)` |
+| 置空 `--color-token-main-surface-primary` | **`safe-mode`** | `theme.mainSurface(base)` |
+| 置空 `--vscode-button-foreground` | `weft-mode` | `theme.buttonForeground(optional)` |
+| 还原 | `weft-mode` | 无 |
+
+最后两行是 §8.2 那次降级的真机证据：核心表面缺失照样挡住，配色 token 缺失只报出
+失败、不再拦人。上一段记录的级联现象在 6662 上复现，只是 `mode.switcher` 现在报
+`base`（6321 时记为 `subtractive`）。
+
 ## 7. 维护规则
 
 - 只追加，不改写历史行。需订正历史行时另起一行并注明「订正 YYYY-MM-DD，原行见上」，
