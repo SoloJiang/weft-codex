@@ -628,3 +628,29 @@ Codex 的 `--color-token-*` 本就是架在 `--vscode-*` 上的一层别名，�
 
 历史行的 `additive` 与当时的 `base` 同义（见 §2 表头注），本次降级只体现在 6662
 行；6119 / 6321 行按采集当时的分级保留。
+
+### 8.3 右侧 / 底部面板：新的运行时依赖，且探针够不着
+
+workspace 让位几何（`nativePanelSize()`）开始依赖这两个锚点：
+
+| 锚点 | 运行时用途 | 6662 实测 |
+|---|---|---|
+| `[data-app-shell-focus-area="right-panel"]` | workspace root 的 `right` 内缩量 | `<aside>`，可见 `main` 的后代 |
+| `[data-app-shell-focus-area="bottom-panel"]` | workspace root 的 `bottom` 内缩量 | `<div>`，同上 |
+
+**它们按需渲染，被动探针永远看不到**——和 §2.2 的模式菜单同类。Codex 没打开过侧栏
+时整个 `data-app-shell-focus-area` 属性在文档里一次都不出现；第一次探到空数组不等于
+锚点消失。因此不给它们建 `SELECTORS` 探针，归 §2.1 的升级盲区。
+
+它们一旦创建就**留在 DOM 里**，关闭时塌成 inline `width: 0px` / `height: 0px` 并
+`opacity: 0`。这让「量盒子」成为完整判据：关着读 0，没创建过也读 0，两种情况下 Weft
+本来就不欠它空间。缺失即 0 是 fail-open 的正确方向，不需要额外的开合信号。
+
+面板带过渡动画，所以必须把面板本身喂给 `ResizeObserver`：只在 inline style 翻转那一刻
+量一次，会把 workspace 冻在动画中间尺寸。顺带也就免费拿到了用户拖分隔条的跟随。
+
+6662 还新增了 `data-app-shell-tabs` / `tab-strip-controller` / `tab-controller` /
+`tab-panel-controller` / `tab-close-button` / `tab-separator`：右侧面板已经是**带原生
+tab 条的容器**（Review ⌃⇧G / Terminal ⌃` / Browser ⌘T / Files ⌘P），不再是
+2026-08-13 `host-slot-layout` 假设的那块「谁占谁的」单槽。那份文档 §6 里
+「Weft 详情 / Chats / Diff 三者互斥、共用一颗 Toggle」的设计前提已经不成立。
