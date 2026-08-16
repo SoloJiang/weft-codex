@@ -47,13 +47,12 @@ use crate::{brief, events, runtime, worktree};
 /// translates this code instead of exposing backend error text as product copy.
 pub const WORKER_START_FAILED: &str = "worker-start-failed";
 
-/// Kanban status for a freshly spawned direction, by mandate.
-pub fn initial_status(mandate: &str) -> &'static str {
-    if mandate == "impl-only" {
-        "working"
-    } else {
-        "planning"
-    }
+/// Kanban status for a freshly spawned direction.
+///
+/// Planning and implementation share the in-progress column; mandate still
+/// chooses the brief, not the board column.
+pub fn initial_status() -> &'static str {
+    "working"
 }
 
 /// The status a direction lands in when its turn completes (success or not —
@@ -378,7 +377,7 @@ impl Orchestrator {
             }
         };
         client.set_active_turn(&thread_id, &turn_id).await;
-        let status = initial_status(&direction.mandate);
+        let status = initial_status();
         self.store
             .activate_direction_thread(direction.id, &thread_id, status)
             .await?;
@@ -1071,9 +1070,7 @@ mod tests {
 
     #[test]
     fn status_mapping() {
-        assert_eq!(initial_status("plan+impl"), "planning");
-        assert_eq!(initial_status("impl-only"), "working");
-        assert_eq!(initial_status("anything-else"), "planning");
+        assert_eq!(initial_status(), "working");
         assert_eq!(status_after_turn_end(), "review");
     }
 

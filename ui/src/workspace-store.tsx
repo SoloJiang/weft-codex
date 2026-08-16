@@ -8,6 +8,8 @@ import {
   rememberDeliveryFailure,
   type DeliveryFailure,
 } from "@/lib/sidebar-entries"
+import { createIssueFollow } from "@/lib/create-issue"
+import { normalizeDirectionStatus } from "@/lib/issue-board"
 import { pickWorkspaceId } from "@/lib/workspace-id"
 import { useWeftSession } from "@/session"
 import type {
@@ -81,6 +83,10 @@ function normalizeBoard(entries: BoardEntry[]): BoardEntry[] {
   return entries.map((entry) => ({
     ...entry,
     threads: Array.isArray(entry.threads) ? entry.threads : [],
+    directions: (Array.isArray(entry.directions) ? entry.directions : []).map((direction) => ({
+      ...direction,
+      status: normalizeDirectionStatus(direction.status),
+    })),
   }))
 }
 
@@ -245,15 +251,16 @@ export function WeftWorkspaceProvider({ children }: { children: React.ReactNode 
       kind,
     }))
     await refreshCurrent()
-    session.navigate({ view: "issue", issueId: created.id })
     notify(t("success.issueCreated"), "success")
-    if (created.codexThreadId) {
-      window.setTimeout(() => {
-        void session.openThread(created.codexThreadId as string).catch(() => {
-          notifyError(new Error(t("err.threadOpen")))
-        })
-      }, 0)
+    const follow = createIssueFollow(created)
+    if (follow.action === "open-thread") {
+      session.setRoute(follow.route)
+      void session.openThread(follow.threadId).catch(() => {
+        notifyError(new Error(t("err.threadOpen")))
+      })
+      return
     }
+    session.navigate(follow.route)
   }, [notify, notifyError, refreshCurrent, session, t])
 
   const importRepositories = React.useCallback(async (paths: string[]) => {

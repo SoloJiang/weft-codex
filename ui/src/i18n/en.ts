@@ -37,7 +37,6 @@ const en = {
   "ws.add": "New workspace",
 
   "status.queued": "Queued",
-  "status.planning": "Planning",
   "status.working": "Working",
   "status.review": "Review",
   "status.done": "Done",

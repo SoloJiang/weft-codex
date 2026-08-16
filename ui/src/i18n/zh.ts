@@ -39,7 +39,6 @@ const zh = {
   "ws.add": "新建工作区",
 
   "status.queued": "待开始",
-  "status.planning": "规划中",
   "status.working": "进行中",
   "status.review": "待审",
   "status.done": "已完成",

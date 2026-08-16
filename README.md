@@ -50,7 +50,7 @@ conversations; weft-codex owns the delivery context around them.
    isolated repository worktree.
 5. **Keep agents coordinated.** The lead and workers communicate through a durable,
    issue-scoped Thread Bus without sharing one transcript.
-6. **Follow the delivery.** Kanban shows queued, planning, working, review, and done
+6. **Follow the delivery.** Kanban shows queued, working, review, and done
    states while native Codex threads remain available for direct conversation.
 7. **Resume after interruption.** Thread identities, task state, worktrees, and
    pending bus messages survive daemon restarts.
