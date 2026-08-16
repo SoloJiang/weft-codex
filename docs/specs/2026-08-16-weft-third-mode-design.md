@@ -157,7 +157,9 @@ Lead 拥有 `task_create`。UI 不提供手工新建任务。Issue 可先于仓�
 
 未知原生线程的归属：先查 `thread_binding`；若无，用元数据级 `thread/read`
 读明确的 `forkedFromId`，有界向上追溯到已知祖先后写回整条链。无已知祖先的
-普通 Codex 线程保持 unbound，不猜测。UI 走 `POST /api/threads/resolve`。
+普通 Codex 线程保持 unbound，不猜测。UI 走 `POST /api/threads/resolve`：
+解析中显示「正在关联」；重试耗尽仍无 binding 则说明这条对话尚未关联到
+Weft issue。
 
 ## 6. 编排（不变的内核）
 
@@ -363,8 +365,7 @@ fork）。主行点击展开并打开 Primary Lead；chevron 只展开。打开�
 弹窗（新建 workspace / issue / 导入仓库 / 继续处理）走 overlay shadow 里的
 Radix Dialog。
 
-看板用户动作只有：打开、验收完成、继续处理、启动失败时重试。不拖拽、不任意
-改状态。
+看板用户动作只有：打开对话、验收完成、继续处理。不拖拽、不任意改状态。
 
 用户可见字符串只走 `ui/src/i18n/{en,zh}.ts`。语言跟宿主 `lang`。
 
@@ -412,6 +413,7 @@ UI 只读这些写路径。SSE 只作失效提示，真值重新 GET。
 | 方法 | 路径 | 作用 |
 |---|---|---|
 | GET/POST | `/api/workspaces` | 列表 / 新建 |
+| GET/POST | `/api/ui-state` | 上次选中的 workspace |
 | GET/POST | `/api/workspaces/{id}/repos` | 仓列表 / 单仓加 |
 | POST | `/api/workspaces/{id}/repos/import` | 批量导入 |
 | GET/POST | `/api/issues` | 看板 / 新建 issue（建完启 Lead） |

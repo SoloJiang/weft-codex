@@ -8,28 +8,19 @@ import { I18nProvider, languageFromLocale } from "@/i18n"
 import { PortalProvider } from "@/portal"
 import { WeftSessionProvider, useWeftSession } from "@/session"
 import SidebarApp from "@/SidebarApp"
-import { ToastStack, WeftWorkspaceProvider } from "@/workspace-store"
+import { ToastStack, WeftWorkspaceProvider, useWeftWorkspace } from "@/workspace-store"
 
 function OverlayDialogs() {
   const session = useWeftSession()
+  const store = useWeftWorkspace()
   return (
     <DialogLayer
       state={session.dialog}
       onClose={session.closeDialog}
-      onCreateWorkspace={async (name) => {
-        await session.submitDialog({ type: "workspace", name })
-      }}
-      onCreateIssue={async (title, kind) => {
-        await session.submitDialog({ type: "issue", title, kind })
-      }}
-      onImportRepositories={async (paths) => {
-        const result = await session.submitDialog({ type: "repositories", paths })
-        if (!result) throw new Error("Repository import returned no result")
-        return result
-      }}
-      onSendMessage={async (target, id, text, intent) => {
-        await session.submitDialog({ type: "message", target, id, text, intent })
-      }}
+      onCreateWorkspace={store.createWorkspace}
+      onCreateIssue={store.createIssue}
+      onImportRepositories={store.importRepositories}
+      onSendMessage={store.sendMessage}
     />
   )
 }
@@ -43,13 +34,14 @@ function HostedShell({
   mainTarget: HTMLElement
   overlayTarget: HTMLElement
 }) {
-  // Keep App mounted while view=thread. The workspace root is hidden by the
-  // agent; unmounting would drop the dialog submit handler the overlay still
-  // calls, and would refetch the board on every return from a native thread.
+  const session = useWeftSession()
+  // Dialog writes live on the workspace store, so the main tree can leave
+  // while a native thread is open. The board stays in the store; coming back
+  // does not refetch.
   return (
     <>
       {createPortal(<SidebarApp />, sidebarTarget)}
-      {createPortal(<App />, mainTarget)}
+      {session.hostView === "workspace" ? createPortal(<App />, mainTarget) : null}
       {createPortal(
         <>
           <OverlayDialogs />

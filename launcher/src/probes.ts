@@ -50,7 +50,7 @@ interface RendererSnapshot {
    * with no conversations renders a perfectly healthy sidebar that simply has no
    * rows to carry them. Without this count we cannot tell "Codex renamed the
    * attribute" from "this user has not started a chat yet", and a new profile
-   * would be pinned to the additive tier forever.
+   * would be locked out of Weft forever.
    */
   threadRowCount: number
   /**
@@ -60,9 +60,9 @@ interface RendererSnapshot {
    *
    * Deliberately `optional`: losing it costs the *placement* of those two
    * entries, not the capability. The sidebar renders them in its own header
-   * instead, so degrading the whole session to Tier 1 over this would trade a
-   * cosmetic regression for a functional one (see §5.8 on sizing `requiredFor`
-   * to the real cost of the anchor's absence).
+   * instead, so failing closed over this would trade a cosmetic regression for
+   * a functional one (see §5.8 on sizing `requiredFor` to the real cost of the
+   * anchor's absence).
    */
   headerActionSlot: boolean
   locale: string
@@ -219,7 +219,7 @@ function tokenProbe(snapshot: RendererSnapshot, id: string, token: string): Capa
     id,
     ok: Boolean(value),
     detail: value || `Missing ${token}`,
-    requiredFor: "additive",
+    requiredFor: "base",
   }
 }
 
@@ -286,7 +286,7 @@ export function reportFromSnapshot(snapshot: RendererSnapshot): ProbeReport {
       id: "host.locale",
       ok: Boolean(snapshot.locale.trim()),
       detail: snapshot.locale.trim() || "Document locale is empty",
-      requiredFor: "additive",
+      requiredFor: "base",
       ...(snapshot.locale.trim() ? {} : { reason: FAILURE_REASONS["host.locale"] }),
     },
     {

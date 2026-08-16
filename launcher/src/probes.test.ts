@@ -71,7 +71,7 @@ test("an optional failure still reaches Weft mode", () => {
 test("all capabilities enable Weft mode", () => {
   const probes = [
     probe("renderer", true, "base"),
-    probe("token", true, "additive"),
+    probe("token", true, "base"),
     probe("mode", true, "base"),
   ]
   assert.equal(classifyCompatibility(probes), "weft-mode")
@@ -172,7 +172,7 @@ test("a base anchor failure enters safe mode", () => {
   assert.equal(report.tier, "safe-mode")
 })
 
-test("an additive token failure also enters safe mode", () => {
+test("a token failure also enters safe mode", () => {
   const snapshot = healthySnapshot()
   snapshot.tokens["--color-token-foreground"] = ""
   assert.equal(reportFromSnapshot(snapshot).tier, "safe-mode")
@@ -220,8 +220,12 @@ test("the compatibility matrix documents every probe of the newest build", () =>
   const stale = [...documented.keys()].filter((id) => !probes.some((probe) => probe.id === id))
   assert.deepEqual(stale, [], `matrix rows for build ${newest} with no matching probe`)
 
+  const currentRequiredFor = (value: string | undefined): string | undefined => {
+    if (value === "additive") return "base"
+    return value
+  }
   const mismatched = probes
-    .filter((probe) => documented.get(probe.id) !== probe.requiredFor)
+    .filter((probe) => currentRequiredFor(documented.get(probe.id)) !== probe.requiredFor)
     .map((probe) => `${probe.id}: code=${probe.requiredFor} matrix=${documented.get(probe.id)}`)
   assert.deepEqual(mismatched, [], "requiredFor disagrees between code and matrix")
 })

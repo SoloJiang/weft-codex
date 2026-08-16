@@ -10,9 +10,7 @@ import {
   type ThreadOpenState,
 } from "@/lib/thread-open"
 import { readInitialRoute, readInitialWorkspaceId, type SurfaceRoute } from "@/route"
-import type { ActiveDialogState, DialogState, DialogSubmission, RepoImportResponse } from "@/types"
-
-export type DialogSubmit = (submission: DialogSubmission) => Promise<RepoImportResponse | undefined>
+import type { ActiveDialogState, DialogState } from "@/types"
 
 export interface WeftSession {
   workspaceId: number | null
@@ -23,8 +21,6 @@ export interface WeftSession {
   dialog: DialogState
   openDialog: (dialog: ActiveDialogState) => void
   closeDialog: () => void
-  registerDialogSubmit: (handler: DialogSubmit) => void
-  submitDialog: DialogSubmit
   host: WeftHost
   hostView: HostView
   threadId?: string
@@ -50,7 +46,6 @@ export function WeftSessionProvider({
   const [threadId, setThreadId] = React.useState<string | undefined>(host.threadId)
   const [headerActions, setHeaderActions] = React.useState<HeaderActions>(host.headerActions)
   const [threadOpen, setThreadOpen] = React.useState<ThreadOpenState>(idleThreadOpen)
-  const submitRef = React.useRef<DialogSubmit | null>(null)
   const inFlightRef = React.useRef<{ threadId: string; promise: Promise<void> } | null>(null)
   const generationRef = React.useRef(0)
 
@@ -120,15 +115,6 @@ export function WeftSessionProvider({
     setDialog(null)
   }, [])
 
-  const registerDialogSubmit = React.useCallback((handler: DialogSubmit) => {
-    submitRef.current = handler
-  }, [])
-
-  const submitDialog = React.useCallback<DialogSubmit>(async (submission) => {
-    if (!submitRef.current) throw new Error("Dialog handler is not registered")
-    return submitRef.current(submission)
-  }, [])
-
   const value = React.useMemo<WeftSession>(() => ({
     workspaceId,
     setWorkspaceId,
@@ -138,8 +124,6 @@ export function WeftSessionProvider({
     dialog,
     openDialog,
     closeDialog,
-    registerDialogSubmit,
-    submitDialog,
     host,
     hostView,
     threadId,
@@ -155,8 +139,6 @@ export function WeftSessionProvider({
     dialog,
     openDialog,
     closeDialog,
-    registerDialogSubmit,
-    submitDialog,
     host,
     hostView,
     threadId,

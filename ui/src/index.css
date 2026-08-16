@@ -962,13 +962,21 @@ a { color: var(--link); }
   font-size: 11px;
 }
 
-.sidebar-error {
+.sidebar-error,
+.sidebar-status {
   min-width: 0;
   flex: 1;
   overflow: hidden;
-  color: var(--danger);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sidebar-error {
+  color: var(--danger);
+}
+
+.sidebar-status {
+  color: var(--dim);
 }
 
 .sidebar-footer-retry {

@@ -202,3 +202,7 @@ export type DialogSubmission =
     }
 
 export type ToastKind = "info" | "success" | "error"
+
+export interface UiState {
+  lastWorkspaceId: number | null
+}

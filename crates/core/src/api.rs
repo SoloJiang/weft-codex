@@ -35,6 +35,7 @@ pub fn router(state: ApiState) -> Router {
             "/api/workspaces",
             post(create_workspace).get(list_workspaces),
         )
+        .route("/api/ui-state", get(get_ui_state).post(set_ui_state))
         .route("/api/workspaces/{id}/repos", post(add_repo).get(list_repos))
         .route("/api/workspaces/{id}/repos/import", post(import_repos))
         .route("/api/issues", post(create_issue).get(kanban))
@@ -397,6 +398,26 @@ async fn create_workspace(
 async fn list_workspaces(State(state): State<ApiState>) -> Response {
     match state.store.list_workspaces().await {
         Ok(rows) => ok(json!(rows)),
+        Err(e) => fail(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct SetUiState {
+    #[serde(rename = "lastWorkspaceId")]
+    last_workspace_id: Option<i64>,
+}
+
+async fn get_ui_state(State(state): State<ApiState>) -> Response {
+    match state.store.last_workspace_id().await {
+        Ok(last_workspace_id) => ok(json!({ "lastWorkspaceId": last_workspace_id })),
+        Err(e) => fail(e),
+    }
+}
+
+async fn set_ui_state(State(state): State<ApiState>, Json(body): Json<SetUiState>) -> Response {
+    match state.store.set_last_workspace_id(body.last_workspace_id).await {
+        Ok(()) => ok(json!({ "lastWorkspaceId": body.last_workspace_id })),
         Err(e) => fail(e),
     }
 }

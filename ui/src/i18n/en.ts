@@ -25,6 +25,8 @@ const en = {
   "sidebar.mainChat": "Main chat",
   "sidebar.forkChat": "Fork",
   "sidebar.leadStarting": "Main chat is getting ready…",
+  "sidebar.linkingThread": "Linking this chat…",
+  "sidebar.unboundThread": "This chat is not linked to a Weft issue",
   "sidebar.noTasks": "No tasks yet",
   "sidebar.openIssueLead": "Open the primary lead chat for {title}",
   "sidebar.expandIssue": "Expand {title}",
