@@ -225,6 +225,46 @@ daemon**——当时机器上另有一个 launcher 在跑，于是本次验证�
 |---|---|---|---|---|---|
 | 6119 | 是 | 是（走 `renderer-host.ts` 的 fallback 路径） | 是（对已提交文档不追溯生效） | 通过 | spec L335–338、L452–459 |
 | 6321 | **是** | 是（同 6119，必然进入 fallback） | **是** | **通过** | 2026-08-10 直接测量，见下 |
+| 6662 | **不适用**——Weft 已无 iframe | 是 | **是** | 通过 | 2026-08-16，见 §3.1 |
+
+### 3.1 拦我们的已经不是 `frame-src`（6662，2026-08-16）
+
+PR #72 之后 Weft 不再用 iframe。agent 现在只做两件事：`fetch()` 取 `/web/weft.css`
+注入 shadow，`<script src>` 载 `/web/weft.js`。**因此 `frame-src` 这一列对 6662
+已经没有意义**，上表保留历史行只为可审计。
+
+6662 实测（专用 profile、`--safe-mode` 未注入，判定依据 `securitypolicyviolation`
+事件而非 `load` / `error`）：
+
+| 步骤 | 违规 | fetch | script | bundle |
+|---|---|---|---|---|
+| baseline（未 bypass） | `connect-src`（css）、`script-src-elem`（js），均 `enforce` | 失败 | error | 未载入 |
+| `setBypassCSP(true)`，不 reload | 同上两条 | 失败 | error | 未载入 |
+| `setBypassCSP(true)` + `reload` | **无** | **成功** | **成功** | **已载入** |
+
+第二行说明「对已提交文档不追溯生效」在 6662 上依然成立，与 6119 / 6321 一致。
+
+6662 完整策略（经 `<meta http-equiv>` 下发，这正是它不追溯的原因）：
+
+```
+default-src 'none';
+script-src  'self' 'sha256-Z2/iFzh9VMlVkEOar1f/oSHWwQk3ve1qk/C2WdsC4Xk=' 'wasm-unsafe-eval';
+connect-src 'self' https://ab.chatgpt.com https://api.mapbox.com https://cdn.openai.com
+            https://events.mapbox.com https://learn.chatgpt.com
+            wss://chatgpt.com wss://ws.chatgpt-staging.com wss://ws.chatgpt.com;
+style-src   'self' 'unsafe-inline';
+worker-src  'self' blob:;
+frame-src   'self' blob: codex-sandbox://…;
+```
+
+`script-src` 与 `connect-src` 都是**显式**指令，都不含 `http://127.0.0.1`，文档
+origin 为 `app://-`。**没有任何白名单条目可以让 loopback 通过**，所以
+`Page.setBypassCSP` 不是权宜之计而是结构性必需——除非宿主主动加白名单。
+
+> 踩坑记录：第一次测得「违规为零但 fetch 仍失败」，差点写成「bypass 只解了一半」。
+> 真实原因是探针把路径写成了 `/weft.css`，而 weftd 挂在 `/web/` 下，返回 404。
+> **CSP 拦截与 404 在 `fetch()` 里都表现为 `TypeError: Failed to fetch`**，无法靠
+> 错误文本区分；必须看违规事件，并且独立确认目标 URL 真的可达（`curl` 一次）。
 
 6321 的四列是用 `securitypolicyviolation` 事件直接测的，不是靠观察 launcher 是否进入
 bypass 分支反推——后者只能间接推断，前者拿得到策略原文。四步实测结果：
@@ -267,6 +307,7 @@ build」列只作交叉参考，不表示绑定关系。
 | 0.145.0 | `probe_turn_started.py` | 同进程 `turn/started` 必然到达（启动确认防线的前提） | 6119（同期机器） | 2026-08-09 |
 | 0.145.0 | `probe_takeover.py` | turn 生命周期通知不跨 app-server 进程；第二进程接管时己方 watcher 收不到对方的 `turn/started` / `turn/completed` | 6119（同期机器） | 2026-08-09 |
 | 0.145.0 | *（未重跑脚本）* | `codex --version` 实测仍为 `0.145.0`，**与 spike 时同一版本**，因此上面四行的协议结论按版本沿用，无需重跑消耗 turn 的脚本。改用零副作用的结构核对：`codex app-server generate-json-schema --out` 生成 39 个文件 / v2 共 532 个定义，逐一确认结论所依赖的形状仍在（见下） | 6321 | 2026-08-10 |
+| 0.145.0 | *（未重跑脚本）* | 版本仍是 `0.145.0`，按同一判据沿用。结构核对复现：`ls` 39 条、v2 汇总 532 个定义，与 08-10 完全一致；下表五个形状逐一确认仍在 | **6662** | 2026-08-17 |
 
 2026-08-10 的结构核对结果（v2 schema）：
 
@@ -283,6 +324,23 @@ build」列只作交叉参考，不表示绑定关系。
 ```
 35f55ce111453c826d3ad43d940e8c299cd016060c1dc7ed2847cad63c06986a
 ```
+
+> **这个哈希复现不出来，别拿它当回归信号。** 2026-08-16 用同一版本
+> （`codex-cli 0.145.0`）重跑，两个结构数字精确复现——`ls` 39 条、v2 汇总文件
+> 532 个定义——但三种拼接口径（顶层 `*.json` 按名、全部文件按路径、含目录）算出的
+> 都不是它。当初没记录拼接方式，所以它只是一串无法验证的字符。
+>
+> 换成可复现的口径，命令写在这里：
+>
+> ```
+> codex app-server generate-json-schema --out <dir>
+> cd <dir> && find . -type f | sort | xargs cat | shasum -a 256
+> ```
+>
+> 6662 / 0.145.0 实测：`daa0e817ed213fe83301696e474c666777878971282239ad0b1f872577efd8ec`
+>
+> 教训比哈希本身重要：**回归基线必须连同计算方式一起记录**，否则下一个人只能
+> 推倒重来。
 
 > 这条哈希才是协议轴的回归信号。**注意它只证明形状未变，不证明运行时行为未变**——
 > 「活跃 turn 期间 `turn/start` 被静默丢弃」这类语义结论无法从 schema 读出，只有重跑
