@@ -45,13 +45,66 @@ const SUBTRACTIVE_RULES = [
   /\[data-weft-codex-tier="weft-mode"\]\[data-weft-codex-mode="weft"\] \[data-app-action-sidebar-scroll\] > :not\(#weft-codex-sidebar-root\)/,
   /\[data-weft-codex-tier="weft-mode"\]\[data-weft-codex-mode="weft"\] \[data-app-action-sidebar-scroll\] \{/,
   /\[data-weft-codex-tier="weft-mode"\]\[data-weft-codex-mode="weft"\] \[data-weft-codex-native-header-action\]/,
+  /\[data-weft-codex-tier="weft-mode"\]\[data-weft-codex-mode="weft"\]\[data-weft-codex-view="workspace"\] \[data-testid="app-shell-header-context-menu-surface"\]/,
 ]
+
+test("the workspace never claims the whole main again", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  // `inset-inline: 0` plus `bottom: 0` is the rule that swallowed the dock and
+  // the side panel: it pinned the workspace to every edge of main regardless of
+  // what Codex had open there.
+  assert.doesNotMatch(source, /inset-inline: 0/)
+  assert.match(source, /root\.style\.right !== rightValue/)
+  assert.match(source, /root\.style\.bottom !== bottomValue/)
+})
+
+test("the space Codex owns is measured, never assumed", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(source, /nativePanelSize\(mainRoute, "right-panel", "width"\)/)
+  assert.match(source, /nativePanelSize\(mainRoute, "bottom-panel", "height"\)/)
+  // Scoped to the visible main, so the inert duplicate route cannot answer.
+  assert.match(source, /mainRoute\.querySelector\('\[data-app-shell-focus-area="' \+ area \+ '"\]'\)/)
+  assert.match(source, /getBoundingClientRect\(\)/)
+  // Absent or collapsed both have to read as "Codex is using nothing here".
+  assert.match(source, /if \(!\(panel instanceof HTMLElement\)\) return 0;/)
+})
+
+test("the native panels are observed so their animation is followed to rest", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(source, /state\.observedPanels\.has\(panel\)/)
+  assert.match(source, /state\.resizeObserver\.observe\(panel\)/)
+})
 
 test("every subtractive rule is gated on the weft-mode tier", () => {
   const source = buildRendererAgentSource(baseConfig)
   for (const rule of SUBTRACTIVE_RULES) assert.match(source, rule)
   assert.doesNotMatch(source, /html\[data-weft-codex-mode="weft"\] \[data-app-action-sidebar-scroll\] > :not\(/)
   assert.doesNotMatch(source, /html\[data-weft-codex-mode="weft"\] \[data-weft-codex-native-header-action\]/)
+})
+
+/**
+ * The agent is assembled from nested template literals — the CSS block is a
+ * template literal inside the one that builds the script — so a stray backtick
+ * anywhere in it silently closes the wrong string. The regex assertions here
+ * all still passed while the renderer refused the script outright; only
+ * parsing catches that.
+ */
+test("the generated agent source parses", () => {
+  assert.doesNotThrow(() => new Function(buildRendererAgentSource(baseConfig)))
+})
+
+test("the stale thread title is hidden on the workspace stage, not collapsed", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  // Collapsing it would take the header's drag band with it, so the workspace
+  // root would compute a top of 0 and slide under the window controls.
+  assert.match(
+    source,
+    /\[data-testid="app-shell-header-context-menu-surface"\] \{\s*visibility: hidden;/,
+  )
+  assert.doesNotMatch(
+    source,
+    /\[data-testid="app-shell-header-context-menu-surface"\] \{\s*display: none/,
+  )
 })
 
 test("the agent has no additive product path", () => {

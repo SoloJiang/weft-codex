@@ -167,6 +167,16 @@ export const TOKEN_PROBES = {
   "theme.radiusSmall": "--radius-sm",
 } as const
 
+/**
+ * Everything `ui/src/index.css` reads off the host, probed values included.
+ *
+ * The four `--color-token-*` names at the end resolve to nothing on build 6662
+ * — the same alias-layer contraction that took `button-foreground` and
+ * `input-background` (docs/compat/codex-builds.md §8.1). They stay listed
+ * because older builds still publish them and the stylesheet still tries them
+ * first; each is followed by the `--vscode-*` name that survived, which is
+ * what actually answers on 6662.
+ */
 export const ALLOWED_CODEX_TOKENS = [
   ...Object.values(TOKEN_PROBES),
   "--vscode-button-hoverBackground",
@@ -174,9 +184,13 @@ export const ALLOWED_CODEX_TOKENS = [
   "--vscode-font-family",
   "--vscode-editor-font-family",
   "--color-token-input-placeholder-foreground",
+  "--vscode-input-placeholderForeground",
   "--color-token-charts-yellow",
+  "--vscode-charts-yellow",
   "--color-token-charts-red",
+  "--vscode-charts-red",
   "--color-token-charts-green",
+  "--vscode-charts-green",
 ] as const
 
 function selectorProbe(

@@ -96,6 +96,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       pendingPick: new Map(),
       mutationObserver: null,
       resizeObserver: null,
+      observedPanels: new WeakSet(),
       mediaQuery: null,
       mountTimer: 0,
       disposed: false,
@@ -453,6 +454,32 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
 
     ${VISIBLE_MAIN_HELPERS_SOURCE}
 
+    /**
+     * How much of the visible main Codex's own panels are occupying.
+     *
+     * Both the side panel and the bottom panel are rendered on demand and then
+     * *stay* in the DOM, collapsing to an inline \`width: 0\` / \`height: 0\` box
+     * when closed. Measuring the box is therefore the entire test — a closed
+     * panel reads 0 without needing a separate open/closed signal, and a panel
+     * Codex has never opened is simply absent and also reads 0. That is the
+     * fail-open direction we want: when we cannot measure, we claim nothing.
+     *
+     * The panel is observed on the way past because it *animates*. A single
+     * measurement taken when the inline style flips would freeze the workspace
+     * at a mid-transition size; feeding the panel to the resize observer keeps
+     * the geometry following it to rest, and picks up resizer drags for free.
+     */
+    function nativePanelSize(mainRoute, area, axis) {
+      const panel = mainRoute.querySelector('[data-app-shell-focus-area="' + area + '"]');
+      if (!(panel instanceof HTMLElement)) return 0;
+      if (state.resizeObserver && !state.observedPanels.has(panel)) {
+        state.observedPanels.add(panel);
+        state.resizeObserver.observe(panel);
+      }
+      const rect = panel.getBoundingClientRect();
+      return Math.max(0, Math.round(axis === "width" ? rect.width : rect.height));
+    }
+
     function ensureWorkspaceRoot() {
       const mainRoute = visibleMainRoute();
       if (!(mainRoute instanceof HTMLElement)) return false;
@@ -476,6 +503,10 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       }
       const topValue = Math.max(0, Math.round(top)) + "px";
       if (root.style.top !== topValue) root.style.top = topValue;
+      const rightValue = nativePanelSize(mainRoute, "right-panel", "width") + "px";
+      if (root.style.right !== rightValue) root.style.right = rightValue;
+      const bottomValue = nativePanelSize(mainRoute, "bottom-panel", "height") + "px";
+      if (root.style.bottom !== bottomValue) root.style.bottom = bottomValue;
       decorateHost(root);
       return true;
     }
@@ -653,7 +684,8 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         }
         #${WORKSPACE_ROOT_ID} {
           position: absolute;
-          inset-inline: 0;
+          left: 0;
+          right: 0;
           bottom: 0;
           z-index: 20;
           display: none;
@@ -681,6 +713,14 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         }
         html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] [data-weft-codex-native-header-action] {
           display: none !important;
+        }
+        /* The header title belongs to the thread that is on stage, and on the
+           workspace stage there is none — leaving it up hangs the last Lead's
+           first line above the board. Hidden rather than removed: the header
+           itself is the window drag band, and collapsing the box would take
+           that band down with it. */
+        html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"][data-weft-codex-view="workspace"] [data-testid="app-shell-header-context-menu-surface"] {
+          visibility: hidden;
         }
         html[data-weft-codex-tier="weft-mode"][data-weft-codex-mode="weft"] [data-app-action-sidebar-scroll] > :not(#${SIDEBAR_ROOT_ID}) {
           display: none !important;

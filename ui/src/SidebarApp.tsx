@@ -732,8 +732,17 @@ export default function SidebarApp() {
     })
   }, [session.host])
 
-  // Slash focuses Weft search. ⌘K is not ours to take: the host binds it to
-  // its command menu.
+  // The one owner of slash in Weft. ⌘K is not ours to take — the host binds it
+  // to its command menu — and the kanban used to bind slash as well, which was
+  // harmless only while the surfaces were separate iframes with separate
+  // windows; the same-document shell made one keystroke open two search
+  // surfaces at once.
+  //
+  // Deliberately unadvertised: Codex parks focus in its ProseMirror composer,
+  // which `isTypingTarget` correctly refuses to steal from, so slash does
+  // nothing at all in the app's default state. A badge here would promise what
+  // the host will not give — the same mistake the ⌘K hint made
+  // (docs/compat/codex-builds.md §5.10).
   React.useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
       if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return

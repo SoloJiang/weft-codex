@@ -609,6 +609,29 @@ Codex 的 `--color-token-*` 本就是架在 `--vscode-*` 上的一层别名，�
 上。`ui/src/index.css` 的 5 处消费点都带 `--fb-*` 兜底，因此只损失宿主保真度
 （`--fb-on-accent: #ffffff` vs 宿主 `#fafafa`），不影响可用性。
 
+**收缩的不止这两个。** 2026-08-16 把 UI 消费的 15 个 `--color-token-*` 与 6662
+实测清单逐个对账，共 **6 个**已不存在——除探针那两个外，还有三条语义色和占位符色，
+它们一直在静默走 `--fb-*`，也就是说 Weft 的成败/警告/占位符颜色早已与宿主脱钩：
+
+| UI 变量 | 失效的别名 | 6662 仍在的底层 |
+|---|---|---|
+| `--on-accent` | `--color-token-button-foreground` | `--vscode-button-foreground` |
+| 字段底（4 处） | `--color-token-input-background` | `--vscode-input-background` |
+| `--danger` | `--color-token-charts-red` | `--vscode-charts-red` |
+| `--ok` | `--color-token-charts-green` | `--vscode-charts-green` |
+| `--warn` | `--color-token-charts-yellow` | `--vscode-charts-yellow` |
+| `--placeholder` | `--color-token-input-placeholder-foreground` | `--vscode-input-placeholderForeground` |
+
+`--color-token-charts-blue` 反而还在，说明这不是整族下线而是逐个收缩，**下次升级
+仍需逐名对账**，不能按族推断。
+
+消费点改为三段兜底链：别名（旧构建）→ `--vscode-*`（6662）→ `--fb-*`（无宿主）。
+链尾不变，所以这个改动只可能提高保真度、不可能比原状更差。
+
+采集说明：`button-foreground` / `input-background` 在明暗两套主题下都实测过；
+三条 charts 与 placeholder 只在暗色主题实测。它们是 VS Code 标准色注册表里的名字，
+但本文件不据此推断——**未实测就是未记录**，明色一栏留待下次采集。
+
 ### 8.2 token 分级收回 spec 的核心档
 
 真正让两个配色别名足以杀死整个产品的，是 `tokenProbe()` 把 18 个 token **一律**
@@ -628,3 +651,29 @@ Codex 的 `--color-token-*` 本就是架在 `--vscode-*` 上的一层别名，�
 
 历史行的 `additive` 与当时的 `base` 同义（见 §2 表头注），本次降级只体现在 6662
 行；6119 / 6321 行按采集当时的分级保留。
+
+### 8.3 右侧 / 底部面板：新的运行时依赖，且探针够不着
+
+workspace 让位几何（`nativePanelSize()`）开始依赖这两个锚点：
+
+| 锚点 | 运行时用途 | 6662 实测 |
+|---|---|---|
+| `[data-app-shell-focus-area="right-panel"]` | workspace root 的 `right` 内缩量 | `<aside>`，可见 `main` 的后代 |
+| `[data-app-shell-focus-area="bottom-panel"]` | workspace root 的 `bottom` 内缩量 | `<div>`，同上 |
+
+**它们按需渲染，被动探针永远看不到**——和 §2.2 的模式菜单同类。Codex 没打开过侧栏
+时整个 `data-app-shell-focus-area` 属性在文档里一次都不出现；第一次探到空数组不等于
+锚点消失。因此不给它们建 `SELECTORS` 探针，归 §2.1 的升级盲区。
+
+它们一旦创建就**留在 DOM 里**，关闭时塌成 inline `width: 0px` / `height: 0px` 并
+`opacity: 0`。这让「量盒子」成为完整判据：关着读 0，没创建过也读 0，两种情况下 Weft
+本来就不欠它空间。缺失即 0 是 fail-open 的正确方向，不需要额外的开合信号。
+
+面板带过渡动画，所以必须把面板本身喂给 `ResizeObserver`：只在 inline style 翻转那一刻
+量一次，会把 workspace 冻在动画中间尺寸。顺带也就免费拿到了用户拖分隔条的跟随。
+
+6662 还新增了 `data-app-shell-tabs` / `tab-strip-controller` / `tab-controller` /
+`tab-panel-controller` / `tab-close-button` / `tab-separator`：右侧面板已经是**带原生
+tab 条的容器**（Review ⌃⇧G / Terminal ⌃` / Browser ⌘T / Files ⌘P），不再是
+2026-08-13 `host-slot-layout` 假设的那块「谁占谁的」单槽。那份文档 §6 里
+「Weft 详情 / Chats / Diff 三者互斥、共用一颗 Toggle」的设计前提已经不成立。
