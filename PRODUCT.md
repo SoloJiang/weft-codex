@@ -47,8 +47,10 @@ Weft 的产品形态是：**Codex Desktop 里与 ChatGPT / Codex 同级的第三
    原生主表面，对应 Codex 模式里“点开线程就是聊天”的同一件事。
 4. **默认可以停在 Weft。** 启动默认模式可以是 Weft，和宿主记住上次停在
    ChatGPT 还是 Codex 是同一类产品行为。
-5. **浏览器降级仍是 Weft 模式本身。** 没有模式开关，因为另外两种模式不存在；
-   不是另一种产品。Desktop 嵌入只是把同一模式挂进宿主开关。
+5. **没有浏览器降级。** 产品只存在于 Desktop 第三种模式。模式开关挂不上、
+   注入失败或宿主结构对不上时，Weft 不可用，走修复 / `doctor`，不把用户
+   送到浏览器标签页，也不把 Weft 降级成 Codex 模式里的附加行。独立浏览器
+   页只允许作为开发预览，不是产品面。
 
 ### Weft 模式独占与共享
 
@@ -68,10 +70,14 @@ Codex Local Project 的别名。
 产品形态是“第三种模式”，实现可以借 Codex 原生底座来显示编码线程（进入 Weft
 前先切到 Codex 底座），但用户看到的必须是三个并列项，不能是“Codex 里开了
 Weft”。官方 plugin 目前没有模式级 contribution point，因此 Desktop 上的模式
-项属于 adapter；形态本身不依赖注入细节。注入失败时 fail-open：宁可只剩浏览器
-里的 Weft 模式，不可把 Weft 降级成 Codex 模式里的附加行。
+项就是产品壳，不是可选适配器。
+
+**失败策略是 fail-closed。** 模式开关、Codex 底座或主表面挂不上：不能进入
+Weft，提示修复，保持 ChatGPT / Codex 可用。禁止两条假降级：打开浏览器当
+Weft，或在 Codex 模式里塞一行入口冒充第三种模式。
 
 实现分层与探针见 `docs/specs/2026-08-08-codex-desktop-migration-design.md` §7.5。
+`standalone` surface 不是产品形态的一部分。
 
 ## Brand Personality
 
@@ -79,7 +85,8 @@ Weft”。官方 plugin 目前没有模式级 contribution point，因此 Deskto
 
 ## Anti-references
 
-- 不呈现成另一个 Weft 客户端、嵌在 Codex 模式里的附加面板，或第二扇窗口。
+- 不呈现成另一个 Weft 客户端、嵌在 Codex 模式里的附加面板、第二扇窗口，
+  或“请到浏览器打开”的降级产品。
 - 不向用户暴露 direction、bus 等内部实现概念。
 - 不使用“在 Codex 中打开”等暗示当前体验不属于 Codex 的文案。
 - 不重复 Codex 已有的主题、语言、聊天或模式能力。
