@@ -32,6 +32,7 @@ const zh = {
   "sidebar.unboundThread": "这条对话还没有关联到 Weft issue",
   "sidebar.noTasks": "暂无任务",
   "sidebar.openIssueLead": "打开 {title} 的 Lead 主会话",
+  "sidebar.openIssueLeadNeedsYou": "打开 {title} 的主对话（需要你处理）",
   "sidebar.expandIssue": "展开 {title}",
   "sidebar.collapseIssue": "收起 {title}",
   "workspace.label": "工作区",

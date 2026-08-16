@@ -726,7 +726,13 @@ a { color: var(--link); }
   min-height: 30px;
   display: flex;
   align-items: center;
+  gap: 6px;
   padding: 4px 1px 4px 8px;
+}
+
+.sidebar-issue-main .sidebar-issue-title-viewport {
+  flex: 1 1 0;
+  width: auto;
 }
 
 .sidebar-issue-toggle {
@@ -868,6 +874,21 @@ a { color: var(--link); }
 .sidebar-status-chip {
   color: var(--dim);
   background: var(--hover);
+}
+
+.sidebar-needs-you-chip {
+  flex: 0 0 auto;
+  max-width: 72px;
+  overflow: hidden;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--hover);
+  color: var(--warn);
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sidebar-status-chip.status-working { color: var(--warn); }

@@ -36,6 +36,9 @@ import { inboxAttentionKey } from "@/lib/attention-reason"
 import {
   buildInbox,
   inboxFollow,
+  inboxIssueIds,
+  inboxRowMeta,
+  searchFollow,
   type InboxItem,
   type SearchHit,
   searchBoard,
@@ -556,7 +559,7 @@ function InboxPanel({
               className="sidebar-row-meta"
               data-attention-reason={item.reason || undefined}
             >
-              {t(inboxAttentionKey(item.kind, item.reason))}
+              {inboxRowMeta(item.issueTitle, t(inboxAttentionKey(item.kind, item.reason)))}
             </span>
           </span>
         </button>
@@ -722,6 +725,7 @@ export default function SidebarApp() {
     () => buildInbox(board, deliveryFailures),
     [board, deliveryFailures],
   )
+  const needingYou = React.useMemo(() => inboxIssueIds(inboxItems), [inboxItems])
 
   React.useEffect(() => {
     return session.host.onCommand((command) => {
@@ -765,22 +769,28 @@ export default function SidebarApp() {
 
   const openHit = React.useCallback((hit: SearchHit) => {
     closePanel()
-    if (hit.threadId) {
-      setExpandedIssueId(hit.issueId)
-      openThread(hit.threadId)
+    setExpandedIssueId(hit.issueId)
+    const follow = searchFollow(hit)
+    if (follow.action === "open-thread") {
+      session.setRoute({ view: "issue", issueId: follow.issueId })
+      openThread(follow.threadId)
       return
     }
-    if (hit.artifactId !== undefined) {
-      navigate({ view: "artifact", issueId: hit.issueId, artifactId: hit.artifactId })
+    if (follow.action === "show-artifact") {
+      navigate({ view: "artifact", issueId: follow.issueId, artifactId: follow.artifactId })
       return
     }
-    const entry = board.find((candidate) => candidate.issue.id === hit.issueId)
+    if (follow.action === "show-issue") {
+      navigate({ view: "issue", issueId: follow.issueId })
+      return
+    }
+    const entry = board.find((candidate) => candidate.issue.id === follow.issueId)
     if (entry) {
       openIssue(entry)
       return
     }
-    navigate({ view: "issue", issueId: hit.issueId })
-  }, [board, closePanel, navigate, openIssue, openThread])
+    navigate({ view: "issue", issueId: follow.issueId })
+  }, [board, closePanel, navigate, openIssue, openThread, session])
 
   const openInboxItem = React.useCallback((item: InboxItem) => {
     closePanel()
@@ -810,8 +820,12 @@ export default function SidebarApp() {
     issueList = board.map((entry) => {
       const expanded = expandedIssueId === entry.issue.id
       const selected = activeIssueId === entry.issue.id
+      const needsYou = needingYou.has(entry.issue.id)
       const leadThreadId = primaryBranch(entry, null)?.thread_id || entry.issue.lead_codex_thread_id
       const opening = Boolean(leadThreadId) && session.openingThreadId === leadThreadId
+      const openLabel = needsYou
+        ? t("sidebar.openIssueLeadNeedsYou", { title: entry.issue.title })
+        : t("sidebar.openIssueLead", { title: entry.issue.title })
       return (
         <div
           key={entry.issue.id}
@@ -824,12 +838,13 @@ export default function SidebarApp() {
             data-opening={opening ? "true" : "false"}
             aria-busy={opening}
             disabled={opening}
-            aria-label={opening
-              ? t("loading.openingThread")
-              : t("sidebar.openIssueLead", { title: entry.issue.title })}
+            aria-label={opening ? t("loading.openingThread") : openLabel}
             onClick={() => openIssue(entry)}
           >
             <ScrollingIssueTitle title={entry.issue.title} />
+            {needsYou ? (
+              <span className="sidebar-needs-you-chip">{t("kanban.issueNeedsYou")}</span>
+            ) : null}
           </button>
           <button
             type="button"

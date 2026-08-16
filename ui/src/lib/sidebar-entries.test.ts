@@ -4,9 +4,12 @@ import test from "node:test"
 import {
   buildInbox,
   inboxFollow,
+  inboxIssueIds,
+  inboxRowMeta,
   parseDeliveryFailure,
   rememberDeliveryFailure,
   searchBoard,
+  searchFollow,
 } from "./sidebar-entries.ts"
 import type {
   ArtifactSummary,
@@ -158,6 +161,7 @@ test("the inbox lists directions flagged for attention, with their reason", () =
   assert.equal(items.length, 1)
   assert.equal(items[0]?.kind, "attention")
   assert.equal(items[0]?.reason, "needs a decision")
+  assert.equal(items[0]?.issueTitle, "Ship the importer")
 })
 
 test("a delivery failure surfaces against the direction it was bound for", () => {
@@ -246,6 +250,44 @@ test("a stalled lead without a thread shows the issue page", () => {
     [],
   )
   assert.deepEqual(inboxFollow(items[0]!), { action: "show-issue", issueId: 12 })
+})
+
+test("task inbox rows name the parent issue; lead rows do not repeat it", () => {
+  const items = buildInbox(
+    board({
+      issue: issue({ lead_attention: 1, lead_attention_reason: "start-failed" }),
+      directions: [direction({ status: "review", attention: 0 })],
+    }),
+    [],
+  )
+  assert.equal(items[0]?.issueTitle, undefined)
+  assert.equal(items[1]?.issueTitle, "Ship the importer")
+  assert.equal(inboxRowMeta(items[1]?.issueTitle, "Ready for you to accept"), "Ship the importer · Ready for you to accept")
+  assert.deepEqual([...inboxIssueIds(items)], [12])
+})
+
+test("a direction search hit without a thread opens the issue page", () => {
+  const hits = searchBoard(board(), [repo()], "parser")
+  assert.equal(hits[0]?.kind, "direction")
+  assert.deepEqual(searchFollow(hits[0]!), { action: "show-issue", issueId: 12 })
+})
+
+test("a direction search hit with a thread opens that chat", () => {
+  const hits = searchBoard(
+    board({ threads: [thread({ direction_id: 1, is_primary: 1, thread_id: "t-primary" })] }),
+    [repo()],
+    "parser",
+  )
+  assert.deepEqual(searchFollow(hits[0]!), {
+    action: "open-thread",
+    threadId: "t-primary",
+    issueId: 12,
+  })
+})
+
+test("an issue search hit still opens the lead", () => {
+  const hits = searchBoard(board(), [repo()], "importer")
+  assert.deepEqual(searchFollow(hits[0]!), { action: "open-issue", issueId: 12 })
 })
 
 test("an undelivered bus payload becomes a delivery failure", () => {

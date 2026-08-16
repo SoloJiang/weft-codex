@@ -30,6 +30,8 @@ export interface InboxItem {
   title: string
   /** Daemon code. The panel maps it; the raw value never becomes copy. */
   reason: string
+  /** Parent issue title on task rows, so the inbox names the work without opening it. */
+  issueTitle?: string
   directionId?: number
   /** Present when opening the row should land on a native thread. */
   threadId?: string
@@ -54,6 +56,37 @@ export function inboxFollow(item: InboxItem): InboxFollow {
     return { action: "open-thread", threadId: item.threadId, issueId: item.issueId }
   }
   return { action: "show-issue", issueId: item.issueId }
+}
+
+export function inboxIssueIds(items: readonly InboxItem[]): Set<number> {
+  return new Set(items.map((item) => item.issueId))
+}
+
+/** Task rows name the issue; lead rows already are the issue. */
+export function inboxRowMeta(issueTitle: string | undefined, reasonText: string): string {
+  if (!issueTitle) return reasonText
+  return `${issueTitle} · ${reasonText}`
+}
+
+export type SearchFollow =
+  | { action: "open-thread"; threadId: string; issueId: number }
+  | { action: "show-artifact"; issueId: number; artifactId: number }
+  | { action: "open-issue"; issueId: number }
+  | { action: "show-issue"; issueId: number }
+
+/**
+ * A direction hit without a thread has nowhere to talk. The issue page is
+ * where retry / accept live. An issue hit still opens the lead.
+ */
+export function searchFollow(hit: SearchHit): SearchFollow {
+  if (hit.threadId) {
+    return { action: "open-thread", threadId: hit.threadId, issueId: hit.issueId }
+  }
+  if (hit.artifactId !== undefined) {
+    return { action: "show-artifact", issueId: hit.issueId, artifactId: hit.artifactId }
+  }
+  if (hit.kind === "direction") return { action: "show-issue", issueId: hit.issueId }
+  return { action: "open-issue", issueId: hit.issueId }
 }
 
 function nonEmptyThread(value: string | undefined): string | undefined {
@@ -207,6 +240,7 @@ export function buildInbox(board: BoardEntry[], failures: DeliveryFailure[]): In
         issueId: entry.issue.id,
         title: direction.name,
         reason: direction.attention_reason,
+        issueTitle: entry.issue.title,
         directionId: direction.id,
         threadId: directionThreadId(entry, direction.id, direction.codex_thread_id),
       })
@@ -221,6 +255,7 @@ export function buildInbox(board: BoardEntry[], failures: DeliveryFailure[]): In
         issueId: entry.issue.id,
         title: direction.name,
         reason: "review",
+        issueTitle: entry.issue.title,
         directionId: direction.id,
       })
     }
@@ -242,6 +277,7 @@ export function buildInbox(board: BoardEntry[], failures: DeliveryFailure[]): In
       issueId: failure.issueId,
       title: direction?.name ?? entry.issue.title,
       reason: failure.reason,
+      issueTitle: direction ? entry.issue.title : undefined,
       failureKey: deliveryFailureKey(failure),
       ...(direction
         ? {
