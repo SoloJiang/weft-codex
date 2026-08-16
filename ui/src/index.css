@@ -7,7 +7,7 @@
   --color-foreground: var(--text);
   --color-card: var(--panel-2);
   --color-card-foreground: var(--text);
-  --color-popover: var(--panel);
+  --color-popover: var(--panel-2);
   --color-popover-foreground: var(--text);
   --color-primary: var(--accent);
   --color-primary-foreground: var(--on-accent);
@@ -433,7 +433,13 @@ html[data-ui-surface="workspace"] .embedded-main {
 
 /* The host mounts this dedicated iframe over the complete app window. Its
    document must remain transparent; the Radix overlay is the only scrim, so
-   the real sidebar and workspace stay visible beneath it. */
+   the real sidebar and workspace stay visible beneath it.
+   `color-scheme: dark` on this document paints Chromium's iframe canvas
+   black, which reads as a solid void behind the dialog. Keep the document
+   `normal` and theme the card instead. */
+html[data-ui-surface="modal"] {
+  color-scheme: normal;
+}
 html[data-ui-surface="modal"],
 html[data-ui-surface="modal"] body,
 html[data-ui-surface="modal"] #root {
@@ -446,6 +452,12 @@ html[data-ui-surface="modal"] #root {
 html[data-ui-surface="modal"] body {
   padding: 0 !important;
   overflow: hidden;
+}
+html[data-ui-surface="modal"][data-host-theme="dark"] .modal-body {
+  color-scheme: dark;
+}
+html[data-ui-surface="modal"][data-host-theme="light"] .modal-body {
+  color-scheme: light;
 }
 
 .sidebar-surface {
@@ -1981,7 +1993,7 @@ main {
   padding: 20px;
   border: 0;
   border-radius: var(--r-xl);
-  background: var(--panel);
+  background: var(--panel-2);
   color: var(--text);
   box-shadow: 0 0 0 0.5px var(--border), 0 24px 64px rgb(0 0 0 / 0.18);
   animation: modal-in 150ms ease-out;

@@ -22,6 +22,20 @@ export function readUiSurface(): UiSurface {
   return "standalone"
 }
 
+/**
+ * The dedicated modal iframe is a transparent overlay. Chromium paints an
+ * opaque black canvas when that document's `color-scheme` is `dark`, even if
+ * html/body are `background: transparent`. Keep the document `normal` and put
+ * the theme on the dialog card instead.
+ */
+export function documentColorScheme(
+  surface: UiSurface,
+  theme: "light" | "dark",
+): "light" | "dark" | "normal" {
+  if (surface === "modal") return "normal"
+  return theme
+}
+
 export function readInitialWorkspaceId(): number | null {
   return positiveInteger(new URLSearchParams(window.location.search).get("workspace_id"))
 }
