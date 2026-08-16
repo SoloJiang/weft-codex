@@ -833,6 +833,12 @@ a { color: var(--link); }
   color: var(--link);
 }
 
+.sidebar-thread-row[data-opening="true"],
+.sidebar-issue-main[data-opening="true"] {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
 .sidebar-thread-title {
   min-width: 0;
   overflow: hidden;
@@ -963,6 +969,18 @@ a { color: var(--link); }
   color: var(--danger);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sidebar-footer-retry {
+  flex: none;
+  height: 22px;
+  padding-inline: 8px;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.sidebar-footer-retry:hover {
+  background: var(--hover);
 }
 
 .embedded-main { padding: var(--space-4); }

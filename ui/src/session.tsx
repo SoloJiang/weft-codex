@@ -1,6 +1,14 @@
 import * as React from "react"
 
 import type { WeftHost, HeaderActions, HostView } from "@/host"
+import {
+  beginThreadOpen,
+  clearThreadOpenFailure,
+  finishThreadOpen,
+  idleThreadOpen,
+  openCodexThread,
+  type ThreadOpenState,
+} from "@/lib/thread-open"
 import { readInitialRoute, readInitialWorkspaceId, type SurfaceRoute } from "@/route"
 import type { ActiveDialogState, DialogState, DialogSubmission, RepoImportResponse } from "@/types"
 
@@ -21,6 +29,9 @@ export interface WeftSession {
   hostView: HostView
   threadId?: string
   headerActions: HeaderActions
+  openingThreadId: string | null
+  failedThreadId: string | null
+  openThread: (threadId: string) => Promise<void>
 }
 
 const SessionContext = React.createContext<WeftSession | null>(null)
@@ -38,7 +49,10 @@ export function WeftSessionProvider({
   const [hostView, setHostView] = React.useState<HostView>(host.view)
   const [threadId, setThreadId] = React.useState<string | undefined>(host.threadId)
   const [headerActions, setHeaderActions] = React.useState<HeaderActions>(host.headerActions)
+  const [threadOpen, setThreadOpen] = React.useState<ThreadOpenState>(idleThreadOpen)
   const submitRef = React.useRef<DialogSubmit | null>(null)
+  const inFlightRef = React.useRef<{ threadId: string; promise: Promise<void> } | null>(null)
+  const generationRef = React.useRef(0)
 
   React.useEffect(() => {
     return host.onView((view, nextThreadId) => {
@@ -60,14 +74,43 @@ export function WeftSessionProvider({
 
   const selectWorkspace = React.useCallback((id: number) => {
     host.showWorkspace()
+    generationRef.current += 1
+    inFlightRef.current = null
+    setThreadOpen(idleThreadOpen)
     setWorkspaceId(id)
     setRoute({ view: "kanban", issueId: null })
   }, [host])
 
   const navigate = React.useCallback((next: SurfaceRoute) => {
     host.showWorkspace()
+    setThreadOpen(clearThreadOpenFailure)
     setRoute(next)
   }, [host])
+
+  const openThread = React.useCallback(async (threadId: string) => {
+    const inflight = inFlightRef.current
+    if (inflight && inflight.threadId === threadId) return inflight.promise
+
+    const generation = generationRef.current + 1
+    generationRef.current = generation
+    setThreadOpen(beginThreadOpen(threadId))
+
+    const run = (async () => {
+      try {
+        await openCodexThread(threadId)
+        if (generationRef.current !== generation) return
+        setThreadOpen((current) => finishThreadOpen(current, threadId, true))
+      } catch (error) {
+        if (generationRef.current !== generation) return
+        setThreadOpen((current) => finishThreadOpen(current, threadId, false))
+        throw error
+      } finally {
+        if (inFlightRef.current?.threadId === threadId) inFlightRef.current = null
+      }
+    })()
+    inFlightRef.current = { threadId, promise: run }
+    return run
+  }, [])
 
   const openDialog = React.useCallback((next: ActiveDialogState) => {
     setDialog(next)
@@ -101,6 +144,9 @@ export function WeftSessionProvider({
     hostView,
     threadId,
     headerActions,
+    openingThreadId: threadOpen.openingThreadId,
+    failedThreadId: threadOpen.failedThreadId,
+    openThread,
   }), [
     workspaceId,
     selectWorkspace,
@@ -115,6 +161,8 @@ export function WeftSessionProvider({
     hostView,
     threadId,
     headerActions,
+    threadOpen,
+    openThread,
   ])
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>

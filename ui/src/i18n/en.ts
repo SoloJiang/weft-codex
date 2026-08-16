@@ -133,6 +133,7 @@ const en = {
   "sidebar.makePrimary": "Make “{label}” the main chat",
   "sidebar.makingPrimary": "Switching…",
   "sidebar.artifacts": "Artifacts",
+  "action.retryOpenThread": "Try again",
 
   "repo.add": "Add repository",
   "repo.chooseFolders": "Choose folders",
