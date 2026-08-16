@@ -69,6 +69,27 @@ export default function App() {
     onContinueTask: (direction: Direction) => openDialog({ type: "message", target: "task", id: direction.id, intent: "continue" }),
   }), [notifyError, session, store, completeTask, launchLead, openDialog, t])
 
+  // Conversations moved out of the sidebar and into the detail, so the
+  // handlers that used to live beside the sidebar tree live here now.
+  const conversationActions = React.useMemo(() => ({
+    activeThreadId: session.threadId ?? null,
+    openingThreadId: session.openingThreadId,
+    onOpenThread: (threadId: string) => {
+      void session.openThread(threadId).catch(() => {
+        // Session keeps the failure so the sidebar footer can offer a retry.
+      })
+    },
+    onPromoteLead: async (issueId: number, threadId: string) => {
+      await api(`/api/issues/${issueId}/lead-thread`, jsonRequest("POST", { thread_id: threadId }))
+      await store.refreshCurrent()
+    },
+    // Reading a document must not switch the native conversation; only the
+    // workspace surface moves.
+    onOpenArtifact: (artifact: { id: number; issue_id: number }) => {
+      session.navigate({ view: "artifact", issueId: artifact.issue_id, artifactId: artifact.id })
+    },
+  }), [session, store])
+
   const analyzeRepository = async (id: number) => {
     await api(`/api/repos/${id}/analyze`, jsonRequest("POST"))
     notify(t("success.analysisStarted"), "success")
@@ -124,6 +145,7 @@ export default function App() {
             repos={repos}
             revision={revision}
             actions={workActions}
+            conversations={conversationActions}
             onClose={() => switchView("kanban")}
           />
         ) : null}

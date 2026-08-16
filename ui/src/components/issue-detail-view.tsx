@@ -5,9 +5,25 @@ import { api } from "@/api"
 import { Button } from "@/components/ui/button"
 import { useI18n } from "@/i18n"
 import { directionAttentionKey, leadAttentionKey } from "@/lib/attention-reason"
-import type { BoardEntry, BusMessage, Direction, Repo } from "@/types"
+import type { ArtifactSummary, BoardEntry, BusMessage, Direction, Repo } from "@/types"
 import { EmptyState } from "./shared"
+import { IssueArtifacts, LeadConversations } from "./issue-conversations"
 import { DirectionActions, directionMeta, IssueActions, type WorkActions } from "./kanban-view"
+
+/**
+ * What the detail needs in order to own the issue's conversations.
+ *
+ * Kept separate from `WorkActions` because these are navigation, not work:
+ * they move the human between surfaces rather than changing orchestration
+ * state.
+ */
+export interface IssueConversationActions {
+  activeThreadId: string | null
+  openingThreadId: string | null
+  onOpenThread: (threadId: string) => void
+  onPromoteLead: (issueId: number, threadId: string) => Promise<void>
+  onOpenArtifact: (artifact: ArtifactSummary) => void
+}
 
 function partyLabel(party: string, directions: Direction[], t: ReturnType<typeof useI18n>["t"]): string {
   if (party === "human") return t("party.you")
@@ -79,12 +95,14 @@ export function IssueDetailView({
   repos,
   revision,
   actions,
+  conversations,
   onClose,
 }: {
   entry?: BoardEntry
   repos: Repo[]
   revision: number
   actions: WorkActions
+  conversations: IssueConversationActions
   onClose: () => void
 }) {
   const { t } = useI18n()
@@ -134,6 +152,21 @@ export function IssueDetailView({
             </div>
             <IssueActions issue={entry.issue} actions={actions} />
           </header>
+          <h2 className="section-title">{t("detail.conversations")}</h2>
+          <LeadConversations
+            entry={entry}
+            activeThreadId={conversations.activeThreadId}
+            openingThreadId={conversations.openingThreadId}
+            onOpenThread={conversations.onOpenThread}
+            onPromoteLead={(threadId) => conversations.onPromoteLead(entry.issue.id, threadId)}
+            onError={actions.onError}
+          />
+          {entry.artifacts?.length ? (
+            <>
+              <h2 className="section-title">{t("sidebar.artifacts")}</h2>
+              <IssueArtifacts artifacts={entry.artifacts} onOpen={conversations.onOpenArtifact} />
+            </>
+          ) : null}
           <h2 className="section-title">{t("detail.directions")}</h2>
           <div className="task-list">
             {!entry.directions.length ? <p className="meta">{t("detail.noTasks")}</p> : null}

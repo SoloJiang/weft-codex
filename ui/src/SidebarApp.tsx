@@ -2,14 +2,9 @@ import * as React from "react"
 import {
   AlertTriangle,
   CircleCheck,
-  ChevronDown,
-  CornerDownRight,
-  Star,
-  FileText,
   FolderGit2,
   Inbox,
   KanbanSquare,
-  MessageCircle,
   Plus,
   Search,
   SquarePen,
@@ -17,8 +12,7 @@ import {
 } from "lucide-react"
 
 import { api, jsonRequest } from "@/api"
-import { kindLabel, statusLabel } from "@/components/artifact-view"
-import { AsyncButton } from "@/components/shared"
+import { primaryBranch } from "@/components/issue-conversations"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -52,7 +46,6 @@ import {
 import { isTypingTarget } from "@/lib/utils"
 import type { SurfaceRoute } from "@/route"
 import type {
-  ArtifactSummary,
   BoardEntry,
   ThreadBinding,
   ThreadLocationResponse,
@@ -70,19 +63,6 @@ type SidebarLocation =
   | { kind: "workspace"; route: SurfaceRoute }
   | { kind: "bound-thread"; threadId: string; binding: ThreadBinding }
   | { kind: "unbound-thread"; threadId: string }
-
-interface ThreadRowProps {
-  /** Present only on lead forks that can become the primary chat. */
-  onPromote?: (threadId: string) => Promise<void>
-  onError?: (error: unknown) => void
-  label: string
-  threadId: string
-  active: boolean
-  opening?: boolean
-  primary?: boolean
-  nested?: boolean
-  onOpen: (threadId: string) => void
-}
 
 function buildThreadMap(
   board: BoardEntry[],
@@ -124,21 +104,6 @@ function deriveLocation(
   return { kind: "unbound-thread", threadId }
 }
 
-function branchesFor(entry: BoardEntry, directionId: number | null): ThreadBinding[] {
-  return entry.threads.filter((binding) => binding.direction_id === directionId)
-}
-
-function primaryBranch(entry: BoardEntry, directionId: number | null): ThreadBinding | undefined {
-  return branchesFor(entry, directionId).find((binding) => binding.is_primary === 1)
-}
-
-function branchTitle(binding: ThreadBinding, forkIndex: number, fallback: string): string {
-  if (binding.is_primary === 1) return fallback
-  const title = binding.title.trim()
-  if (title) return title
-  return `${fallback} ${forkIndex}`
-}
-
 function ScrollingIssueTitle({ title }: { title: string }) {
   const viewportRef = React.useRef<HTMLSpanElement>(null)
 
@@ -175,60 +140,6 @@ function ScrollingIssueTitle({ title }: { title: string }) {
     >
       <span className="sidebar-row-title">{title}</span>
     </span>
-  )
-}
-
-function ThreadRow({
-  label,
-  threadId,
-  active,
-  opening = false,
-  primary = false,
-  nested = false,
-  onOpen,
-  onPromote,
-  onError,
-}: ThreadRowProps) {
-  const { t } = useI18n()
-  const openingLabel = t("loading.openingThread")
-  const row = (
-    <button
-      type="button"
-      className="sidebar-thread-row"
-      data-active={active ? "true" : "false"}
-      data-nested={nested ? "true" : "false"}
-      data-opening={opening ? "true" : "false"}
-      aria-busy={opening}
-      aria-current={active ? "page" : undefined}
-      disabled={opening}
-      onClick={() => onOpen(threadId)}
-    >
-      {nested ? <CornerDownRight aria-hidden="true" /> : <MessageCircle aria-hidden="true" />}
-      <span className="sidebar-thread-title" title={opening ? openingLabel : label}>
-        {opening ? openingLabel : label}
-      </span>
-      {primary ? <span className="sidebar-primary-chip">{t("sidebar.primary")}</span> : null}
-    </button>
-  )
-  if (!onPromote) return row
-  // The promote control is a sibling, not a child: a button inside a button is
-  // invalid and screen readers flatten it unpredictably.
-  return (
-    <div className="sidebar-thread-row-wrap">
-      {row}
-      <AsyncButton
-        variant="ghost"
-        size="icon-sm"
-        className="sidebar-thread-promote"
-        label={t("sidebar.makePrimary", { label })}
-        pendingLabel={t("sidebar.makingPrimary")}
-        onAction={() => onPromote(threadId)}
-        onError={onError ?? (() => {})}
-        iconOnly
-      >
-        <Star aria-hidden="true" />
-      </AsyncButton>
-    </div>
   )
 }
 
@@ -269,155 +180,6 @@ function SidebarStatusFooter({
     <footer className="sidebar-footer">
       <span className="sidebar-status" role="status">{t("sidebar.unboundThread")}</span>
     </footer>
-  )
-}
-
-function IssueConversationTree({
-  entry,
-  activeThreadId,
-  openingThreadId,
-  onOpenThread,
-  onPromoteLead,
-  onError,
-}: {
-  entry: BoardEntry
-  activeThreadId: string | null
-  openingThreadId: string | null
-  onOpenThread: (threadId: string) => void
-  onPromoteLead: (threadId: string) => Promise<void>
-  onError: (error: unknown) => void
-}) {
-  const { t } = useI18n()
-  const leadBranches = branchesFor(entry, null)
-  const leadPrimary = leadBranches.find((binding) => binding.is_primary === 1)
-  const leadForks = leadBranches.filter((binding) => binding.is_primary !== 1)
-
-  return (
-    <div className="sidebar-conversation-tree">
-      <section className="sidebar-chat-group" aria-label={t("party.lead")}>
-        <div className="sidebar-chat-group-heading">
-          <MessageCircle aria-hidden="true" />
-          <span>{t("party.lead")}</span>
-        </div>
-        <div className="sidebar-chat-group-rows">
-          {leadPrimary ? (
-            <ThreadRow
-              label={t("sidebar.mainChat")}
-              threadId={leadPrimary.thread_id}
-              active={activeThreadId === leadPrimary.thread_id}
-              opening={openingThreadId === leadPrimary.thread_id}
-              primary
-              nested
-              onOpen={onOpenThread}
-            />
-          ) : (
-            <span className="sidebar-chat-pending">{t("sidebar.leadStarting")}</span>
-          )}
-          {leadForks.map((binding, index) => (
-            <ThreadRow
-              key={binding.thread_id}
-              label={branchTitle(binding, index + 1, t("sidebar.forkChat"))}
-              threadId={binding.thread_id}
-              active={activeThreadId === binding.thread_id}
-              opening={openingThreadId === binding.thread_id}
-              nested
-              onOpen={onOpenThread}
-              onPromote={onPromoteLead}
-              onError={onError}
-            />
-          ))}
-        </div>
-      </section>
-
-      <section className="sidebar-chat-group" aria-label={t("detail.directions")}>
-        <div className="sidebar-chat-group-heading">
-          <span>{t("detail.directions")}</span>
-          <span className="sidebar-chat-group-count">{entry.directions.length}</span>
-        </div>
-        {entry.directions.length ? (
-          <div className="sidebar-chat-group-rows">
-            {entry.directions.map((direction) => {
-              const taskBranches = branchesFor(entry, direction.id)
-              const taskPrimary = taskBranches.find((binding) => binding.is_primary === 1)
-              const taskForks = taskBranches.filter((binding) => binding.is_primary !== 1)
-              if (!taskPrimary) {
-                return (
-                  <div key={direction.id} className="sidebar-thread-row sidebar-thread-unavailable">
-                    <MessageCircle aria-hidden="true" />
-                    <span className="sidebar-thread-title" title={direction.name}>{direction.name}</span>
-                  </div>
-                )
-              }
-              return (
-                <div key={direction.id} className="sidebar-task-chat">
-                  <ThreadRow
-                    label={direction.name}
-                    threadId={taskPrimary.thread_id}
-                    active={activeThreadId === taskPrimary.thread_id}
-                    opening={openingThreadId === taskPrimary.thread_id}
-                    onOpen={onOpenThread}
-                  />
-                  {taskForks.map((binding, index) => (
-                    <ThreadRow
-                      key={binding.thread_id}
-                      label={branchTitle(binding, index + 1, t("sidebar.forkChat"))}
-                      threadId={binding.thread_id}
-                      active={activeThreadId === binding.thread_id}
-                      opening={openingThreadId === binding.thread_id}
-                      nested
-                      onOpen={onOpenThread}
-                    />
-                  ))}
-                </div>
-              )
-            })}
-          </div>
-        ) : (
-          <p className="sidebar-chat-pending">{t("sidebar.noTasks")}</p>
-        )}
-      </section>
-    </div>
-  )
-}
-
-/**
- * Progressive disclosure: the sidebar says an artifact exists, what state it is
- * in and which revision — the document itself opens in the workspace. Status is
- * text, not a colour, because the product bar forbids colour-only state.
- */
-function ArtifactSummaryList({
-  artifacts,
-  onOpen,
-}: {
-  artifacts: ArtifactSummary[]
-  onOpen: (artifact: ArtifactSummary) => void
-}) {
-  const { t } = useI18n()
-  if (!artifacts.length) return null
-  return (
-    <div className="sidebar-artifacts">
-      <div className="sidebar-artifacts-heading">
-        <h3>{t("sidebar.artifacts")}</h3>
-        <span>{artifacts.length}</span>
-      </div>
-      {artifacts.map((artifact) => (
-        <button
-          key={artifact.id}
-          type="button"
-          className="sidebar-artifact-row"
-          data-status={artifact.status}
-          onClick={() => onOpen(artifact)}
-        >
-          <FileText aria-hidden="true" />
-          <span className="sidebar-artifact-name">
-            {artifact.title || kindLabel(artifact.kind, t)}
-          </span>
-          <span className="sidebar-artifact-meta">
-            {statusLabel(artifact.status, t)} · {t("artifact.revision", { revision: artifact.revision })}
-          </span>
-        </button>
-      ))}
-    </div>
   )
 }
 
@@ -576,7 +338,6 @@ export default function SidebarApp() {
   const { workspaces, board, repos, loading, deliveryFailures } = store
   const [panel, setPanel] = React.useState<SidebarPanel>("none")
   const [query, setQuery] = React.useState("")
-  const [expandedIssueId, setExpandedIssueId] = React.useState<number | null>(null)
   const [resolvedThreads, setResolvedThreads] = React.useState<Map<string, ResolvedThread>>(
     () => new Map(),
   )
@@ -624,7 +385,6 @@ export default function SidebarApp() {
           })
           return next
         })
-        setExpandedIssueId(response.binding.issue_id)
         const follow = workspaceFollowForThread({
           hostView: session.hostView,
           currentWorkspaceId: stateRef.current.workspaceId,
@@ -647,17 +407,11 @@ export default function SidebarApp() {
   )
 
   let activeIssueId: number | null = null
-  let activeThreadId: string | null = null
   if (location.kind === "bound-thread") {
     activeIssueId = location.binding.issue_id
-    activeThreadId = location.threadId
   } else if (location.kind === "workspace" && location.route.view === "issue") {
     activeIssueId = location.route.issueId
   }
-
-  React.useEffect(() => {
-    if (activeIssueId) setExpandedIssueId(activeIssueId)
-  }, [activeIssueId])
 
   React.useEffect(() => {
     if (location.kind !== "bound-thread") return
@@ -674,7 +428,6 @@ export default function SidebarApp() {
   }, [session])
 
   const selectWorkspace = React.useCallback((id: number) => {
-    setExpandedIssueId(null)
     session.selectWorkspace(id)
   }, [session])
 
@@ -684,28 +437,7 @@ export default function SidebarApp() {
     })
   }, [session])
 
-  /**
-   * Opening an artifact must NOT change the native thread: the human is reading
-   * a document, not switching conversations. Only the workspace surface moves.
-   */
-  const openArtifact = React.useCallback((artifact: ArtifactSummary) => {
-    navigate({ view: "artifact", issueId: artifact.issue_id, artifactId: artifact.id })
-  }, [navigate])
-
-  /**
-   * Make a lead fork the issue's primary chat.
-   *
-   * The canonical pointer is what `thread_for` reads, so every later bus
-   * delivery follows immediately — no other bookkeeping, and the fork keeps its
-   * ancestry.
-   */
-  const promoteLead = React.useCallback(async (issueId: number, threadId: string) => {
-    await api(`/api/issues/${issueId}/lead-thread`, jsonRequest("POST", { thread_id: threadId }))
-    await store.refreshCurrent()
-  }, [store])
-
   const openIssue = React.useCallback((entry: BoardEntry) => {
-    setExpandedIssueId(entry.issue.id)
     const primary = primaryBranch(entry, null)
     const threadId = primary?.thread_id || entry.issue.lead_codex_thread_id
     if (threadId) {
@@ -777,7 +509,6 @@ export default function SidebarApp() {
 
   const openHit = React.useCallback((hit: SearchHit) => {
     closePanel()
-    setExpandedIssueId(hit.issueId)
     const follow = searchFollow(hit)
     if (follow.action === "open-thread") {
       session.setRoute({ view: "issue", issueId: follow.issueId })
@@ -807,7 +538,6 @@ export default function SidebarApp() {
       // not fire again for a failure that already happened.
       store.dismissDeliveryFailure(item.failureKey)
     }
-    setExpandedIssueId(item.issueId)
     const follow = inboxFollow(item)
     if (follow.action === "open-thread") {
       session.setRoute({ view: "issue", issueId: follow.issueId })
@@ -826,7 +556,6 @@ export default function SidebarApp() {
     issueList = <p className="sidebar-empty">{t("sidebar.noIssues")}</p>
   } else {
     issueList = board.map((entry) => {
-      const expanded = expandedIssueId === entry.issue.id
       const selected = activeIssueId === entry.issue.id
       const needsYou = needingYou.has(entry.issue.id)
       const leadThreadId = primaryBranch(entry, null)?.thread_id || entry.issue.lead_codex_thread_id
@@ -838,7 +567,7 @@ export default function SidebarApp() {
         <div
           key={entry.issue.id}
           className="sidebar-issue-row"
-          data-active={selected || expanded ? "true" : "false"}
+          data-active={selected ? "true" : "false"}
         >
           <button
             type="button"
@@ -858,10 +587,6 @@ export default function SidebarApp() {
       )
     })
   }
-
-  const expandedEntry = expandedIssueId
-    ? board.find((entry) => entry.issue.id === expandedIssueId)
-    : undefined
 
   return (
     <aside className="sidebar-surface" aria-label={t("sidebar.title")}>
@@ -940,34 +665,6 @@ export default function SidebarApp() {
             <h2 id="sidebar-issues-heading">{t("sidebar.issues")}</h2>
           </div>
           <div className="sidebar-list">{issueList}</div>
-          {expandedEntry ? (
-            <section className="sidebar-expanded-issue" aria-label={expandedEntry.issue.title}>
-              <div className="sidebar-expanded-issue-header">
-                <ScrollingIssueTitle title={expandedEntry.issue.title} />
-                <button
-                  type="button"
-                  className="sidebar-issue-toggle"
-                  aria-label={t("sidebar.collapseIssue", { title: expandedEntry.issue.title })}
-                  aria-expanded={true}
-                  onClick={() => setExpandedIssueId(null)}
-                >
-                  <ChevronDown aria-hidden="true" />
-                </button>
-              </div>
-              <IssueConversationTree
-                entry={expandedEntry}
-                activeThreadId={activeThreadId}
-                openingThreadId={session.openingThreadId}
-                onOpenThread={openThread}
-                onPromoteLead={(threadId) => promoteLead(expandedEntry.issue.id, threadId)}
-                onError={store.notifyError}
-              />
-              <ArtifactSummaryList
-                artifacts={expandedEntry.artifacts ?? []}
-                onOpen={openArtifact}
-              />
-            </section>
-          ) : null}
         </section>
 
       </div>

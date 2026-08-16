@@ -359,18 +359,18 @@ issue → 任务 → artifact → thread。不新增接口。
 
 ### 8.7 Weft 模式 UI
 
-> 会话树的归属已改：`2026-08-16-host-container.md` §6 决定 issue 的会话数据不再
-> 由 Weft 在侧栏自绘，改为进原生右侧面板的 Weft tab。本节描述的是迁移前的现状，
-> 迁移落地时同步修订。
+**侧栏只做导航。** workspace 切换、Kanban / 仓库入口、新建 issue、issue 列表。
+一行一个点击目标，打开该 issue 的 Primary Lead；不放展开箭头，也**不在侧栏里画
+会话树**——会话属于 issue 详情，理由见 `2026-08-16-host-container.md` §6。收件箱
+里有条目的 issue 在主行标「需要你」，文案不只靠颜色。打开任何绑定线程时切到对应
+workspace 并高亮该行。`view=workspace` 时即使原生 DOM 仍暂时标着 active thread，
+也不能残留错误高亮。
 
-侧栏：workspace 切换、Kanban / 仓库入口、新建 issue、issue 树（Lead / Tasks /
-fork）。主行点击展开并打开 Primary Lead；列表行不放展开箭头。收件箱里有条目的
-issue 在主行标「需要你」，文案不只靠颜色。任务行带所属 issue 标题。打开任何
-绑定线程时切到对应 workspace、展开 issue、高亮该线程。`view=workspace` 时即使
-原生 DOM 仍暂时标着 active thread，也不能残留错误高亮。
-
-主区 `view=workspace`：看板 / 仓库 / issue 详情 / repo map。不重复侧栏的
-新建 issue 表单。详情不提供手工新建任务。主区顶部避开 titlebar drag region。
+主区 `view=workspace`：看板与 issue 详情是**同一块 stage 的两栏**，不是互相替换的
+两个路由——点看板卡片时看板一直在（容器文档 §5.1）。详情里依次是会话、产物、
+任务、活动：会话只列 Lead 的主会话与 fork，任务各自带自己的会话入口，不重复列。
+仓库 / repo map 仍是整块视图。不重复侧栏的新建 issue 表单。详情不提供手工新建
+任务。主区顶部避开 titlebar drag region。
 
 主区 `view=thread`：不盖原生线程。侧栏仍在。
 
