@@ -38,6 +38,7 @@ use weft_app_server::client as codex;
 use weft_app_server::client::{Client, ThreadInfo, ThreadMsg};
 use weft_app_server::proto::ChatEvent;
 
+use crate::api_error::ApiError;
 use crate::bus::{BusRegistry, Msg};
 use crate::store::{Store, ThreadBindingRow};
 use crate::{brief, events, runtime, worktree};
@@ -280,7 +281,7 @@ impl Orchestrator {
             .store
             .get_direction(direction_id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("unknown direction {direction_id}"))?;
+            .ok_or(ApiError::not_found("direction", direction_id))?;
         if !direction.codex_thread_id.is_empty() {
             return Ok(direction.codex_thread_id);
         }
@@ -291,12 +292,12 @@ impl Orchestrator {
             .store
             .get_issue(direction.issue_id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("unknown issue {}", direction.issue_id))?;
+            .ok_or(ApiError::not_found("issue", direction.issue_id))?;
         let repo = self
             .store
             .get_repo(direction.repo_id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("unknown repo {}", direction.repo_id))?;
+            .ok_or(ApiError::not_found("repo", direction.repo_id))?;
 
         let branch = worktree::branch_name(&issue.slug, &direction.slug);
         let wt_path = worktree::worktree_path(&self.home, &issue.slug, &direction.slug);
@@ -455,7 +456,7 @@ impl Orchestrator {
             .store
             .get_issue(issue_id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("unknown issue {issue_id}"))?;
+            .ok_or(ApiError::not_found("issue", issue_id))?;
         if !issue.lead_codex_thread_id.is_empty() {
             return Ok(issue.lead_codex_thread_id);
         }
@@ -732,9 +733,13 @@ impl Orchestrator {
             .store
             .get_direction(direction_id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("unknown direction {direction_id}"))?;
+            .ok_or(ApiError::not_found("direction", direction_id))?;
         if direction.codex_thread_id.is_empty() {
-            anyhow::bail!("task {direction_id} has no Codex thread yet");
+            return Err(ApiError::conflict(
+                "no_thread",
+                format!("task {direction_id} has no Codex thread yet"),
+            )
+            .into());
         }
         let party = brief::direction_party(direction.id);
         let message_id = self
@@ -751,9 +756,9 @@ impl Orchestrator {
             .store
             .get_issue(issue_id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("unknown issue {issue_id}"))?;
+            .ok_or(ApiError::not_found("issue", issue_id))?;
         if issue.lead_codex_thread_id.is_empty() {
-            anyhow::bail!("lead has no Codex thread yet");
+            return Err(ApiError::conflict("no_thread", "lead has no Codex thread yet").into());
         }
         let message_id = self
             .store
@@ -771,7 +776,11 @@ impl Orchestrator {
         text: &str,
     ) -> anyhow::Result<()> {
         if self.thread_for(issue_id, party).await?.is_none() {
-            anyhow::bail!("{party} has no Codex thread yet");
+            return Err(ApiError::conflict(
+                "no_thread",
+                format!("{party} has no Codex thread yet"),
+            )
+            .into());
         }
         let msg = Msg {
             id: message_id,
@@ -795,15 +804,19 @@ impl Orchestrator {
             .store
             .get_direction(direction_id)
             .await?
-            .ok_or_else(|| anyhow::anyhow!("unknown direction {direction_id}"))?;
+            .ok_or(ApiError::not_found("direction", direction_id))?;
         if direction.status == "done" {
             return Ok(());
         }
         if direction.status != "review" {
-            anyhow::bail!(
-                "cannot complete task {direction_id} from status {:?}; expected review",
-                direction.status
-            );
+            return Err(ApiError::conflict(
+                "cannot_complete",
+                format!(
+                    "cannot complete task {direction_id} from status {:?}; expected review",
+                    direction.status
+                ),
+            )
+            .into());
         }
         if !self
             .store
@@ -814,14 +827,18 @@ impl Orchestrator {
                 .store
                 .get_direction(direction_id)
                 .await?
-                .ok_or_else(|| anyhow::anyhow!("unknown direction {direction_id}"))?;
+                .ok_or(ApiError::not_found("direction", direction_id))?;
             if current.status == "done" {
                 return Ok(());
             }
-            anyhow::bail!(
-                "cannot complete task {direction_id} from status {:?}; expected review",
-                current.status
-            );
+            return Err(ApiError::conflict(
+                "cannot_complete",
+                format!(
+                    "cannot complete task {direction_id} from status {:?}; expected review",
+                    current.status
+                ),
+            )
+            .into());
         }
         events::emit(
             "direction.updated",
