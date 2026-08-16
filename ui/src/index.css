@@ -1824,6 +1824,16 @@ main {
   font-size: 12px;
 }
 
+.task-attention,
+.issue-lead-attention {
+  color: var(--warn);
+  font-size: 12px;
+}
+
+.task-attention {
+  margin: var(--space-2) 0 0;
+}
+
 .task-brief { margin-top: var(--space-3); }
 .task-brief h4 { margin: 0 0 6px; color: var(--dim); font-size: 12px; font-weight: 600; }
 .task-brief .spec {
