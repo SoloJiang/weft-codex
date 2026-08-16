@@ -132,6 +132,18 @@ test("installing twice disposes the previous agent first", () => {
   )
 })
 
+test("opening another thread while already in thread view still notifies", () => {
+  const source = buildRendererAgentSource(baseConfig)
+  assert.match(
+    source,
+    /if \(state.view === nextView && state.notifiedThreadId === threadId\) return/,
+  )
+  assert.doesNotMatch(source, /if \(state.view === nextView\) return;/)
+  assert.match(source, /function syncThreadView\(\)/)
+  assert.match(source, /state.mode !== "weft" \|\| state.view !== "thread"/)
+  assert.match(source, /syncModeMenus\(\);\s*syncThreadView\(\);/)
+})
+
 test("dialogs live in the overlay shadow, not a third iframe", () => {
   const source = buildRendererAgentSource(baseConfig)
   assert.match(source, /root\.id = OVERLAY_ROOT_ID/)

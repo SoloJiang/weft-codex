@@ -52,7 +52,7 @@ In：
 - 多仓库 workspace、录入、curator 画像与 repo map
 - issue → lead + 多任务（内部 `direction`）的编排
 - lead / worker 都是真实 Codex 线程，聊天原生渲染
-- bus、worktree、验收 / 继续 / 重试启动
+- bus、worktree、验收 / 继续 / 打开对话
 - Weft 模式下的 sidebar、看板、仓库、issue 详情、搜索、收件箱
 
 Out：
@@ -504,7 +504,7 @@ MCP bus 仍是 `/bus/:thread/:dir/mcp`，身份在 path 上，不加 CORS（agen
 - 建 issue → Lead 线程出现并打开。
 - Lead `task_create` → 自动 worktree + Worker。
 - 空闲 `turn/start`、活跃 `turn/steer`。
-- 验收 / 继续 / 重试启动。
+- 验收 / 继续 / 打开对话。
 - daemon 重启后 binding、watcher、未结算 bus 恢复。
 
 视觉：
