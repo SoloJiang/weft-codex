@@ -92,6 +92,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       usedLengths: new Map(),
       commandHandlers: new Set(),
       viewHandlers: new Set(),
+      notifiedThreadId: undefined,
       pendingPick: new Map(),
       mutationObserver: null,
       resizeObserver: null,
@@ -300,6 +301,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
 
     function notifyView() {
       const threadId = activeThreadId();
+      state.notifiedThreadId = threadId;
       for (const handler of state.viewHandlers) {
         try { handler(state.view, threadId); } catch { /* React handler */ }
       }
@@ -406,9 +408,19 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
 
     function setView(nextView) {
       if (nextView !== "workspace" && nextView !== "thread") return;
-      if (state.view === nextView) return;
+      const threadId = activeThreadId();
+      // Same view is not a no-op: opening another chat while already in
+      // thread view must still tell React which row is active.
+      if (state.view === nextView && state.notifiedThreadId === threadId) return;
       state.view = nextView;
       setDocumentState();
+      notifyView();
+    }
+
+    function syncThreadView() {
+      if (state.mode !== "weft" || state.view !== "thread") return;
+      const threadId = activeThreadId();
+      if (threadId === state.notifiedThreadId) return;
       notifyView();
     }
 
@@ -887,6 +899,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       }
       setDocumentState();
       syncModeMenus();
+      syncThreadView();
       if (state.mode === "weft") void ensureWeftMounted();
     }
 
