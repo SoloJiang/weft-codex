@@ -142,6 +142,58 @@ function surfacesReady(status: RendererAgentStatus | null): boolean {
 }
 
 /**
+ * Readiness is mode-dependent.
+ *
+ * Weft has to handshake the shell. Work and Codex must not — they never
+ * mount it — and treating a missing shell as failure used to dispose the
+ * agent, which took the mode menu's third item with it (08-16 spec §4).
+ */
+export function installReady(wantsShell: boolean, status: RendererAgentStatus | null): boolean {
+  if (wantsShell) return surfacesReady(status)
+  return status !== null
+}
+
+/**
+ * Name the phase that actually failed.
+ *
+ * A generic "handshake" used to be reported even when the roots never
+ * attached, which points debugging at the bundle when the host shell is what
+ * never arrived.
+ */
+export function attachFailureReason(wantsShell: boolean, status: RendererAgentStatus | null): string {
+  if (!wantsShell) return "The Weft agent did not attach to the host document"
+  if (surfacesMounted(status)) return "Weft UI did not finish mounting into the host document"
+  return "Codex did not render its shell in time for the Weft surfaces to mount"
+}
+
+/**
+ * Wait for the agent itself, without waiting for a Weft shell.
+ *
+ * In Work or Codex the agent never mounts the shell — `ensureWeftMounted`
+ * returns immediately unless the mode is Weft — so the only thing to wait for
+ * is the agent answering at all. That is what keeps the third item in the
+ * native mode menu alive, which is the whole point of running in those modes
+ * (08-16 spec §4).
+ */
+export async function waitForAgent(
+  readStatus: () => Promise<RendererAgentStatus | null>,
+  budgetMs: number,
+): Promise<RendererAgentStatus | null> {
+  const deadline = Date.now() + budgetMs
+  let latest: RendererAgentStatus | null = null
+  while (Date.now() < deadline) {
+    try {
+      latest = await readStatus()
+    } catch {
+      // A renderer reload briefly has no execution context.
+    }
+    if (latest) return latest
+    await new Promise((resolve) => setTimeout(resolve, 120))
+  }
+  return latest
+}
+
+/**
  * Wait for the injected surfaces, in two phases with separate budgets.
  *
  * Mounting and handshaking fail for unrelated reasons and on unrelated clocks.
@@ -377,9 +429,25 @@ class AttachedRenderer {
       cspBypass: false,
     })
 
-    let status = await waitForSurfaces(() => agentStatus(this.session), { mountMs: 4500, handshakeMs: 4500 })
-    if (!surfacesReady(status)) {
-      options.onWarning?.("Weft bundle could not load; enabling dedicated-instance CSP compatibility mode")
+    // Work and Codex do not put Weft on stage, so there is no shell to wait
+    // for. Waiting anyway spent both budgets on something that cannot happen
+    // and then tore the agent down — taking the mode menu's third item with
+    // it, which left no way into Weft at all.
+    const wantsShell = options.initialMode === "weft"
+
+    let status = wantsShell
+      ? await waitForSurfaces(() => agentStatus(this.session), { mountMs: 4500, handshakeMs: 4500 })
+      : null
+
+    // Weft waits for the shell; if it never arrives, CSP is the usual cause
+    // on 6662. Work and Codex skip that wait — there is no shell — but they
+    // still take this path so the next document already has the bypass. The
+    // user can then pick Weft without a reload that would drop their thread.
+    const needsCspFallback = wantsShell ? !surfacesReady(status) : true
+    if (needsCspFallback) {
+      options.onWarning?.(wantsShell
+        ? "Weft bundle could not load; enabling dedicated-instance CSP compatibility mode"
+        : "Enabling dedicated-instance CSP compatibility mode so Weft can mount when chosen")
       this.cspBypass = true
       await this.session.send("Page.setBypassCSP", { enabled: true })
       await this.installAgentScript({
@@ -394,22 +462,19 @@ class AttachedRenderer {
       // A reload restarts host hydration from nothing, so the mount phase needs
       // the longer budget here — the bundle load itself is no slower than before.
       await this.session.send("Page.reload", { ignoreCache: true })
-      status = await waitForSurfaces(() => agentStatus(this.session), { mountMs: 15000, handshakeMs: 8000 })
+      status = wantsShell
+        ? await waitForSurfaces(() => agentStatus(this.session), { mountMs: 15000, handshakeMs: 8000 })
+        : await waitForAgent(() => agentStatus(this.session), 15000)
     }
 
-    if (!surfacesReady(status)) {
+    if (!installReady(wantsShell, status)) {
       await this.disposeAgent()
       return {
         target: this.publicTarget(),
         probe: this.probe,
         status,
         safeMode: true,
-        // Name the phase that actually failed. A generic "handshake" used to
-        // be reported even when the roots never attached, which points
-        // debugging at the bundle when the host shell is what never arrived.
-        reason: surfacesMounted(status)
-          ? "Weft UI did not finish mounting into the host document"
-          : "Codex did not render its shell in time for the Weft surfaces to mount",
+        reason: attachFailureReason(wantsShell, status),
       }
     }
 

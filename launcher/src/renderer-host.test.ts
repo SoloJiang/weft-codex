@@ -2,7 +2,13 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { buildRendererAgentSource } from "./renderer-agent.js"
-import { waitForSurfaces, type RendererAgentStatus } from "./renderer-host.js"
+import {
+  attachFailureReason,
+  installReady,
+  waitForAgent,
+  waitForSurfaces,
+  type RendererAgentStatus,
+} from "./renderer-host.js"
 
 function status(partial: Partial<RendererAgentStatus> = {}): RendererAgentStatus {
   return {
@@ -25,6 +31,48 @@ function scripted(steps: RendererAgentStatus[]): () => Promise<RendererAgentStat
   let index = 0
   return async () => steps[Math.min(index++, steps.length - 1)] ?? null
 }
+
+/**
+ * Work and Codex never mount the Weft shell, so readiness there means "the
+ * agent answered" and nothing more. Requiring `uiReady` in those modes made
+ * install give up and dispose the agent, which took the mode menu's third item
+ * down with it and left no way into Weft at all — the launcher could only ever
+ * enter Weft via `--mode=weft`.
+ */
+test("an agent that never mounts a shell still counts as attached", async () => {
+  const result = await waitForAgent(scripted([status({ mode: "codex" })]), 400)
+  assert.equal(result?.mode, "codex")
+  assert.equal(result?.uiReady, false)
+})
+
+test("a renderer that never answers is not attached", async () => {
+  const result = await waitForAgent(async () => null, 300)
+  assert.equal(result, null)
+})
+
+test("waiting for the agent stops at the first answer, not at the budget", async () => {
+  const started = Date.now()
+  await waitForAgent(scripted([status({ mode: "work" })]), 5000)
+  assert.ok(Date.now() - started < 1000, "should not wait out a budget it does not need")
+})
+
+test("work and codex are ready once the agent answers, even without a shell", () => {
+  assert.equal(installReady(false, status({ mode: "codex", uiReady: false })), true)
+  assert.equal(installReady(false, status({ mode: "work", uiReady: false })), true)
+  assert.equal(installReady(false, null), false)
+})
+
+test("weft is ready only after the shell handshakes", () => {
+  assert.equal(installReady(true, status({ uiMounted: true, uiReady: false })), false)
+  assert.equal(installReady(true, status(READY)), true)
+  assert.equal(installReady(true, null), false)
+})
+
+test("failure reasons name the phase that actually failed", () => {
+  assert.match(attachFailureReason(false, null), /agent did not attach/)
+  assert.match(attachFailureReason(true, status(MOUNTED)), /finish mounting/)
+  assert.match(attachFailureReason(true, status()), /did not render its shell/)
+})
 
 test("host hydration does not spend the handshake budget", async () => {
   const steps = [...Array(6)].map(() => status()).concat([status(MOUNTED), status(READY)])

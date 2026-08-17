@@ -72,7 +72,7 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
 
     const state = {
       mode: config.initialMode,
-      nativeMode: "codex",
+      nativeMode: config.initialMode === "work" ? "work" : "codex",
       view: "workspace",
       cspBypass: Boolean(config.cspBypass),
       sidebarRoot: null,
@@ -792,7 +792,12 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
         ? [...menu.querySelectorAll('[role="menuitem"]:not([' + MODE_ITEM_ATTR + '])')]
             .find((item) => /^Codex/i.test(item.textContent || ""))
         : null;
-      if (nativeCodex instanceof HTMLElement && state.nativeMode !== "codex") nativeCodex.click();
+      // The live button is the source of truth. nativeMode used to start as
+      // "codex" even when the host was still on ChatGPT, so the first Weft
+      // click skipped the native switch and mounted on the wrong base.
+      const onCodex = state.modeButton instanceof HTMLElement
+        && inferNativeMode(state.modeButton) === "codex";
+      if (nativeCodex instanceof HTMLElement && !onCodex) nativeCodex.click();
       state.nativeMode = "codex";
       setMode("weft");
       if (state.modeButton instanceof HTMLElement) state.modeButton.focus();
@@ -923,12 +928,13 @@ export function buildRendererAgentSource(input: RendererAgentConfig): string {
       if (state.modeButton !== nextModeButton) {
         restoreModeButton();
         state.modeButton = nextModeButton;
-        if (state.mode === "weft" && nextModeButton) applyWeftModeButton(nextModeButton);
-      } else if (state.mode === "weft" && nextModeButton) {
-        applyWeftModeButton(nextModeButton);
-      } else if (state.mode !== "weft" && nextModeButton) {
+      }
+      if (state.mode === "weft") {
+        if (nextModeButton) applyWeftModeButton(nextModeButton);
+      } else if (nextModeButton) {
         const inferred = inferNativeMode(nextModeButton);
-        if (inferred !== state.mode) state.mode = inferred;
+        state.mode = inferred;
+        state.nativeMode = inferred;
       }
       if (nextModeButton) {
         markModeHeader(nextModeButton);

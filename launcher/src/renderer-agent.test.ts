@@ -210,3 +210,32 @@ test("a failed Weft bundle is removed so the next mount can retry", () => {
   assert.match(source, /script\.onerror = \(\) => \{\s*script\.remove\(\)/)
   assert.match(source, /if \(existing\) existing\.remove\(\)/)
 })
+
+test("work and codex start without mounting the Weft shell", () => {
+  for (const initialMode of ["work", "codex"] as const) {
+    const source = buildRendererAgentSource({ ...baseConfig, initialMode })
+    assert.doesNotThrow(() => new Function(source))
+    assert.match(source, /if \(state\.disposed \|\| state\.mode !== "weft"\) return false/)
+    assert.match(source, /if \(state\.mode === "weft"\) void ensureWeftMounted\(\)/)
+    assert.match(source, /if \(nextMode === "weft"\) void ensureWeftMounted\(\)/)
+  }
+})
+
+test("picking Weft from the menu follows the live host button, not a stale nativeMode", () => {
+  const source = buildRendererAgentSource({ ...baseConfig, initialMode: "work" })
+  // nativeMode used to default to "codex" even on ChatGPT, so the first Weft
+  // click skipped the native switch and mounted on the everyday-work base.
+  assert.doesNotMatch(
+    source,
+    /nativeCodex instanceof HTMLElement && state\.nativeMode !== "codex"/,
+  )
+  assert.match(source, /inferNativeMode\(state\.modeButton\) === "codex"/)
+  assert.match(source, /nativeCodex\.click\(\)/)
+  assert.match(source, /setMode\("weft"\)/)
+})
+
+test("work and codex keep nativeMode in sync with the host button", () => {
+  const source = buildRendererAgentSource({ ...baseConfig, initialMode: "work" })
+  assert.match(source, /nativeMode: config\.initialMode === "work" \? "work" : "codex"/)
+  assert.match(source, /state\.nativeMode = inferred/)
+})
